@@ -1,4 +1,4 @@
-"""vmauth gives one bearer token one instant query and refuses everything else."""
+"""vmauth gives a reader one instant query, a writer one import path, and refuses everything else."""
 
 import json
 from pathlib import Path
@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "roles/grafana_stack"
 QUERY = '{__name__=~"agent_quota_(used_percent|window_seconds|reset_timestamp_seconds)"}'
 SAMPLE_TOKEN = "fixture-quota-reader-token"
+SAMPLE_WRITE_TOKEN = "fixture-quota-writer-token"
 HOST_CONFIG = "/opt/grafana-stack/vmauth.yml"
 CONTAINER_CONFIG = "/etc/vmauth/config.yml"
 VMAUTH_TOKEN_TASKS = yaml.safe_load((ROLE / "tasks/vmauth_token.yml").read_text(encoding="utf-8"))
@@ -22,6 +23,10 @@ VMAUTH_TOKEN_TASKS = yaml.safe_load((ROLE / "tasks/vmauth_token.yml").read_text(
 
 def _defaults():
     return yaml.safe_load((ROLE / "defaults/main.yml").read_text(encoding="utf-8"))
+
+
+def _token_task(name):
+    return next(task for task in VMAUTH_TOKEN_TASKS if task.get("name") == name)
 
 
 def _render(template_name, context):
@@ -54,11 +59,13 @@ def test_quota_expression_is_the_one_allowed_selector():
     assert _defaults()["grafana_stack_vmauth_quota_expr"] == QUERY
 
 
-def test_quota_token_is_read_from_the_agent_quota_bucket_only_when_enabled():
+def test_quota_tokens_are_read_from_the_agent_quota_bucket_only_when_enabled():
     defaults = _defaults()
     assert defaults["grafana_stack_vmauth_enabled"] is False
     assert defaults["grafana_stack_vmauth_quota_token"] == ""
-    read, resolve, require = VMAUTH_TOKEN_TASKS
+    assert defaults["grafana_stack_vmauth_write_token"] == ""
+    assert defaults["grafana_stack_vmauth_writer_label"] == "agent-quota-mac"
+    read = _token_task("Read the vmauth quota tokens from OpenBao")
     request = read["ansible.builtin.uri"]
     assert request["method"] == "GET"
     assert request["url"].endswith("/v1/secret/data/apps/agent-quota")
@@ -66,36 +73,62 @@ def test_quota_token_is_read_from_the_agent_quota_bucket_only_when_enabled():
     assert request["status_code"] == [200, 404]
     assert read["delegate_to"] == "localhost"
     assert read["no_log"] is True
+    resolve = _token_task("Resolve the vmauth quota reader and writer tokens")
+    assert set(resolve["ansible.builtin.set_fact"]) == {
+        "grafana_stack_vmauth_quota_token",
+        "grafana_stack_vmauth_write_token",
+    }
     assert resolve["no_log"] is True
-    assert require["ansible.builtin.assert"]["fail_msg"] == (
+    assert _token_task("Require the vmauth quota reader token")["ansible.builtin.assert"]["fail_msg"] == (
         "OpenBao bucket apps/agent-quota is missing field agent_quota_reader_token"
+    )
+    assert _token_task("Require the vmauth quota writer token")["ansible.builtin.assert"]["fail_msg"] == (
+        "OpenBao bucket apps/agent-quota is missing field agent_quota_write_token"
     )
     for task in VMAUTH_TOKEN_TASKS:
         assert task["when"] == "grafana_stack_vmauth_enabled | bool"
 
 
 @pytest.mark.parametrize(
-    "response, expected",
+    "response, reader_ok, writer_ok",
     [
-        ({"status": 404}, False),
-        ({"json": {"data": {"data": {}}}}, False),
-        ({"json": {"data": {"data": {"agent_quota_reader_token": ""}}}}, False),
-        ({"json": {"data": {"data": {"agent_quota_reader_token": "  "}}}}, False),
-        ({"json": {"data": {"data": {"agent_quota_reader_token": SAMPLE_TOKEN}}}}, True),
+        ({"status": 404}, False, False),
+        ({"json": {"data": {"data": {}}}}, False, False),
+        (
+            {"json": {"data": {"data": {"agent_quota_reader_token": "", "agent_quota_write_token": SAMPLE_WRITE_TOKEN}}}},
+            False,
+            True,
+        ),
+        (
+            {"json": {"data": {"data": {"agent_quota_reader_token": SAMPLE_TOKEN, "agent_quota_write_token": "  "}}}},
+            True,
+            False,
+        ),
+        (
+            {"json": {"data": {"data": {"agent_quota_reader_token": SAMPLE_TOKEN, "agent_quota_write_token": SAMPLE_WRITE_TOKEN}}}},
+            True,
+            True,
+        ),
     ],
 )
-def test_missing_quota_token_fails_the_assertion(response, expected):
+def test_each_quota_token_is_resolved_from_its_own_field(response, reader_ok, writer_ok):
     templar = Templar(loader=DataLoader(), variables={"grafana_stack_vmauth_secret": response})
-    expression = VMAUTH_TOKEN_TASKS[1]["ansible.builtin.set_fact"]["grafana_stack_vmauth_quota_token"]
-    token = templar.template(trust_as_template(expression))
-    templar.available_variables = {"grafana_stack_vmauth_quota_token": token}
-    assertion = VMAUTH_TOKEN_TASKS[2]["ansible.builtin.assert"]
-    assert templar.evaluate_conditional(trust_as_template(assertion["that"][0])) is expected
-    if expected:
-        assert token == SAMPLE_TOKEN
+    expressions = _token_task("Resolve the vmauth quota reader and writer tokens")["ansible.builtin.set_fact"]
+    tokens = {name: templar.template(trust_as_template(expression)) for name, expression in expressions.items()}
+    templar.available_variables = tokens
+    for assert_name, expected in (
+        ("Require the vmauth quota reader token", reader_ok),
+        ("Require the vmauth quota writer token", writer_ok),
+    ):
+        assertion = _token_task(assert_name)["ansible.builtin.assert"]
+        assert templar.evaluate_conditional(trust_as_template(assertion["that"][0])) is expected
+    if reader_ok:
+        assert tokens["grafana_stack_vmauth_quota_token"] == SAMPLE_TOKEN
+    if writer_ok:
+        assert tokens["grafana_stack_vmauth_write_token"] == SAMPLE_WRITE_TOKEN
 
 
-def test_deploy_reads_the_quota_token_before_the_config_renders():
+def test_deploy_reads_the_quota_tokens_before_the_config_renders():
     deploy = yaml.safe_load((ROLE / "tasks/deploy.yml").read_text(encoding="utf-8"))
     read_index = next(
         index for index, task in enumerate(deploy)
@@ -108,23 +141,35 @@ def test_deploy_reads_the_quota_token_before_the_config_renders():
     assert read_index < render_index
 
 
-def test_vmauth_config_has_one_user_and_one_exact_query_route():
+def test_vmauth_config_has_two_users_one_query_route_and_one_writer_route():
+    defaults = _defaults()
     rendered = yaml.safe_load(_render("vmauth.yml.j2", {
         "grafana_stack_vmauth_quota_token": SAMPLE_TOKEN,
-        "grafana_stack_vmauth_quota_expr": _defaults()["grafana_stack_vmauth_quota_expr"],
+        "grafana_stack_vmauth_write_token": SAMPLE_WRITE_TOKEN,
+        "grafana_stack_vmauth_quota_expr": defaults["grafana_stack_vmauth_quota_expr"],
+        "grafana_stack_vmauth_writer_label": defaults["grafana_stack_vmauth_writer_label"],
         "grafana_stack_vm_port": 8428,
     }))
     assert list(rendered) == ["users"]
-    assert len(rendered["users"]) == 1
-    user = rendered["users"][0]
-    assert set(user) == {"bearer_token", "url_map"}
-    assert user["bearer_token"] == SAMPLE_TOKEN
-    assert len(user["url_map"]) == 1
-    route = user["url_map"][0]
+    assert len(rendered["users"]) == 2
+    reader, writer = rendered["users"]
+
+    assert set(reader) == {"bearer_token", "url_map"}
+    assert reader["bearer_token"] == SAMPLE_TOKEN
+    assert len(reader["url_map"]) == 1
+    route = reader["url_map"][0]
     assert set(route) == {"src_paths", "src_query_args", "url_prefix"}
     assert route["src_paths"] == ["/api/v1/query"]
     assert route["src_query_args"] == [f"query={QUERY}"]
     assert route["url_prefix"] == "http://127.0.0.1:8428/"
+
+    assert set(writer) == {"bearer_token", "url_map"}
+    assert writer["bearer_token"] == SAMPLE_WRITE_TOKEN
+    assert len(writer["url_map"]) == 1
+    assert writer["url_map"][0] == {
+        "src_paths": ["/api/v1/import/prometheus"],
+        "url_prefix": "http://127.0.0.1:8428/?extra_label=writer=agent-quota-mac",
+    }
 
 
 def test_compose_vmauth_service_renders_only_when_enabled():
@@ -153,11 +198,29 @@ def test_config_task_is_mode_0600_no_log_and_removed_when_disabled():
     assert remove["when"] == "not (grafana_stack_vmauth_enabled | bool)"
 
 
-def test_verify_expects_the_authorized_query_refusals_and_a_missing_token_refusal():
+def test_verify_expects_the_reader_and_writer_routes_and_the_refusals():
     outer = yaml.safe_load((ROLE / "tasks/verify.yml").read_text(encoding="utf-8"))
     deploy_block = outer[0]["block"]
     quota = next(task for task in deploy_block if task.get("name") == "Verify the vmauth quota route")
     checks = {task["name"]: task["ansible.builtin.uri"] for task in quota["block"]}
+
     assert checks["Verify vmauth answers the authorized quota query"]["status_code"] == 200
     assert checks["Verify vmauth refuses another query with the same token"]["status_code"] == [400, 401, 403]
     assert checks["Verify vmauth refuses a request without a token"]["status_code"] == 401
+
+    write = checks["Verify vmauth accepts a writer import"]
+    assert write["method"] == "POST"
+    assert write["url"].endswith("/api/v1/import/prometheus")
+    assert write["headers"]["Authorization"] == "Bearer {{ grafana_stack_vmauth_write_token }}"
+    assert write["status_code"] == 204
+
+    write_on_query = checks["Verify vmauth refuses the writer token on the query route"]
+    assert write_on_query["headers"]["Authorization"] == "Bearer {{ grafana_stack_vmauth_write_token }}"
+    assert "/api/v1/query?" in write_on_query["url"]
+    assert write_on_query["status_code"] == [400, 401, 403]
+
+    read_on_import = checks["Verify vmauth refuses the reader token on the import path"]
+    assert read_on_import["method"] == "POST"
+    assert read_on_import["url"].endswith("/api/v1/import/prometheus")
+    assert read_on_import["headers"]["Authorization"] == "Bearer {{ grafana_stack_vmauth_quota_token }}"
+    assert read_on_import["status_code"] == [400, 401, 403]

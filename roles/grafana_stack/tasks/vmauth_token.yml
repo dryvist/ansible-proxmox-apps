@@ -1,5 +1,5 @@
 ---
-- name: Read the vmauth quota reader token from OpenBao
+- name: Read the vmauth quota tokens from OpenBao
   ansible.builtin.uri:
     url: "{{ lookup('env', 'BAO_ADDR') | regex_replace('/+$', '') }}/v1/secret/data/apps/agent-quota"
     method: GET
@@ -22,11 +22,14 @@
     ansible_become: false
   no_log: true
 
-- name: Resolve the vmauth quota reader token
+- name: Resolve the vmauth quota reader and writer tokens
   ansible.builtin.set_fact:
     grafana_stack_vmauth_quota_token: >-
       {{ (grafana_stack_vmauth_secret.json | default({}))
          .get('data', {}).get('data', {}).get('agent_quota_reader_token', '') }}
+    grafana_stack_vmauth_write_token: >-
+      {{ (grafana_stack_vmauth_secret.json | default({}))
+         .get('data', {}).get('data', {}).get('agent_quota_write_token', '') }}
   when: grafana_stack_vmauth_enabled | bool
   no_log: true
 
@@ -35,5 +38,13 @@
     that:
       - grafana_stack_vmauth_quota_token | default('', true) | trim | length > 0
     fail_msg: "OpenBao bucket apps/agent-quota is missing field agent_quota_reader_token"
+    quiet: true
+  when: grafana_stack_vmauth_enabled | bool
+
+- name: Require the vmauth quota writer token
+  ansible.builtin.assert:
+    that:
+      - grafana_stack_vmauth_write_token | default('', true) | trim | length > 0
+    fail_msg: "OpenBao bucket apps/agent-quota is missing field agent_quota_write_token"
     quiet: true
   when: grafana_stack_vmauth_enabled | bool
