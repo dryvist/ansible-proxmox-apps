@@ -1,7 +1,6 @@
-"""Guard the pr_reconcile role's owner, token, pin, and unit contracts."""
+"""Guard the pr_reconcile role's owner, token, pin, fence, and unit contracts."""
 
 from pathlib import Path
-import re
 import unittest
 
 import yaml
@@ -9,7 +8,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "roles/pr_reconcile"
-FORBIDDEN_OWNERS = ("VisiCore", "X10")
+FAKE_FENCE = "example-owner,example-repo*"
 
 
 def load_defaults():
@@ -44,24 +43,47 @@ def assert_hardened(test, service):
 
 
 class PrReconcileContract(unittest.TestCase):
-    def test_owners_and_token_paths(self):
+    def test_owner_entries_are_well_formed_and_unique(self):
         owners = load_defaults()["pr_reconcile_owners"]
-        self.assertEqual(
-            [(item["owner"], item["token_path"]) for item in owners],
-            [
-                ("JacobPEvans-ai", "github-admin/token/pr-reconcile-JacobPEvans-ai"),
-                ("JacobPEvans", "github-admin/token/pr-reconcile-JacobPEvans"),
-            ],
-        )
+        self.assertTrue(owners)
+        names = [item["owner"] for item in owners]
+        self.assertEqual(len(names), len(set(names)))
         for item in owners:
+            self.assertRegex(item["owner"], r"^[A-Za-z0-9-]+$")
             self.assertRegex(item["token_path"], r"^[A-Za-z0-9_/-]+$")
+            self.assertTrue(item["token_path"].startswith("github-admin/token/pr-reconcile-"))
 
-    def test_no_forbidden_owner_is_configured(self):
-        for item in load_defaults()["pr_reconcile_owners"]:
-            owner = item["owner"]
-            self.assertFalse(owner.startswith("vct-"), owner)
-            for forbidden in FORBIDDEN_OWNERS:
-                self.assertNotEqual(owner, forbidden)
+    def test_fence_is_read_from_the_environment_with_an_empty_default(self):
+        text = (ROLE / "defaults/main.yml").read_text()
+        self.assertIn(
+            "pr_reconcile_fence: \"{{ lookup('env', 'PR_RECONCILE_FENCE') | default('', true) }}\"",
+            text,
+        )
+
+    def test_fence_is_asserted_non_empty_and_well_formed(self):
+        tasks = (ROLE / "tasks/main.yml").read_text()
+        self.assertIn("pr_reconcile_fence | length > 0", tasks)
+        self.assertIn("pr_reconcile_fence is match('^[A-Za-z0-9._*,-]+$')", tasks)
+
+    def test_service_loads_the_fence_from_a_root_only_environment_file(self):
+        unit = (ROLE / "templates/pr-reconcile.service.j2").read_text()
+        service = unit_section(unit, "Service")
+        self.assertEqual(service["EnvironmentFile"], "{{ pr_reconcile_fence_env_file }}")
+        self.assertNotIn("PR_RECONCILE_FENCE", unit)
+        tasks = (ROLE / "tasks/main.yml").read_text()
+        self.assertIn('dest: "{{ pr_reconcile_fence_env_file }}"', tasks)
+        self.assertIn('mode: "0400"', tasks.split("Deploy the pr-reconcile fence list", 1)[1].split("- name:", 1)[0])
+
+    def test_fence_environment_file_carries_the_variable_only(self):
+        env_file = (ROLE / "templates/pr-reconcile-fence.env.j2").read_text()
+        lines = [line for line in env_file.splitlines() if line and not line.startswith("{{")]
+        self.assertEqual(lines, ["PR_RECONCILE_FENCE={{ pr_reconcile_fence }}"])
+        rendered = env_file.replace("{{ pr_reconcile_fence }}", FAKE_FENCE)
+        self.assertRegex(rendered, r"(?m)^PR_RECONCILE_FENCE=[A-Za-z0-9._*,-]+$")
+
+    def test_dry_run_passes_the_fence_to_the_cli(self):
+        verify = (ROLE / "tasks/verify.yml").read_text()
+        self.assertIn('PR_RECONCILE_FENCE: "{{ pr_reconcile_fence }}"', verify)
 
     def test_ref_and_commit_are_empty_until_deployment_sets_them(self):
         defaults = load_defaults()
