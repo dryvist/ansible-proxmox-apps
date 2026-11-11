@@ -2,6 +2,7 @@
 port and capability, credentials, Docker limits and the loopback health probe."""
 
 from pathlib import Path
+import re
 import unittest
 
 import yaml
@@ -95,8 +96,9 @@ class OpenHandsServiceUnit(unittest.TestCase):
 
     def test_the_launcher_loads_its_keys_only_while_enabled(self):
         text = UNIT.read_text(encoding="utf-8")
-        gate = text[text.index("{% if openhands_service_enabled | bool %}"):text.index("{% endif %}")]
-        outside = text.replace(gate, "")
+        blocks = re.findall(r"\{% if openhands_service_enabled \| bool %\}.*?\{% endif %\}", text, re.S)
+        gate = "".join(blocks)
+        outside = re.sub(r"\{% if openhands_service_enabled \| bool %\}.*?\{% endif %\}", "", text, flags=re.S)
         for credential in (
             "LoadCredential=openhands-backend-key:{{ openhands_backend_key_file }}",
             "LoadCredential=openhands-secret-key:{{ openhands_secrets_dir }}/secret-key",

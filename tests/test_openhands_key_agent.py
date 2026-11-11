@@ -64,14 +64,18 @@ class OpenHandsKeyAgentUnits(unittest.TestCase):
 
     def test_launcher_orders_after_and_wants_the_agent_only_while_enabled(self):
         text = LAUNCHER_UNIT.read_text(encoding="utf-8")
-        gate = text[text.index("{% if openhands_service_enabled | bool %}"):text.index("{% endif %}")]
-        outside = text.replace(gate, "")
+        blocks = re.findall(r"\{% if openhands_service_enabled \| bool %\}.*?\{% endif %\}", text, re.S)
+        gate = "".join(blocks)
+        outside = re.sub(r"\{% if openhands_service_enabled \| bool %\}.*?\{% endif %\}", "", text, flags=re.S)
+        # The shared template opens [Service], so ordering lines must come before it.
+        unit_section = text[:text.index("_service_common_template")]
         for line in (
             "After=openhands-secrets-agent.service",
             "Wants=openhands-secrets-agent.service",
         ):
             self.assertIn(line, gate)
             self.assertNotIn(line, outside)
+            self.assertIn(line, unit_section)
 
 
 class OpenHandsKeyAgentRender(unittest.TestCase):
