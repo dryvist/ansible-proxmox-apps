@@ -97,10 +97,11 @@
       changed_when: false
       no_log: true
 
-    # vmauth quota route (grafana_stack_vmauth_enabled). The authorized token
-    # runs the one allowed query. The same token on any other query is refused:
+    # vmauth quota route (grafana_stack_vmauth_enabled). The reader token runs
+    # the one allowed query. Either token on any other route is refused:
     # vmauth answers a route it does not map with 400 Bad Request, so 400, 401
-    # and 403 all count as a refusal. A request without a token gets 401.
+    # and 403 all count as a refusal. The writer token imports to its one path.
+    # A request without a token gets 401.
     - name: Verify the vmauth quota route
       when: >-
         grafana_stack_vmauth_enabled | bool and (
@@ -133,6 +134,48 @@
             url: "http://127.0.0.1:{{ grafana_stack_vmauth_port }}/api/v1/query?query=up"
             headers:
               Authorization: "Bearer {{ grafana_stack_vmauth_quota_token }}"
+            status_code: [400, 401, 403]
+          check_mode: false
+          changed_when: false
+          no_log: true
+
+        # The writer token imports one probe sample (204). The probe series
+        # carries the writer label and is written on every verify run.
+        - name: Verify vmauth accepts a writer import
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ grafana_stack_vmauth_port }}/api/v1/import/prometheus"
+            method: POST
+            headers:
+              Authorization: "Bearer {{ grafana_stack_vmauth_write_token }}"
+            body: "agent_quota_vmauth_probe 1\n"
+            body_format: raw
+            status_code: 204
+          register: grafana_stack_vmauth_write_ok
+          check_mode: false
+          retries: 12
+          delay: 5
+          until: grafana_stack_vmauth_write_ok.status | default(0) == 204
+          changed_when: false
+          no_log: true
+
+        - name: Verify vmauth refuses the writer token on the query route
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ grafana_stack_vmauth_port }}/api/v1/query?query=up"
+            headers:
+              Authorization: "Bearer {{ grafana_stack_vmauth_write_token }}"
+            status_code: [400, 401, 403]
+          check_mode: false
+          changed_when: false
+          no_log: true
+
+        - name: Verify vmauth refuses the reader token on the import path
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ grafana_stack_vmauth_port }}/api/v1/import/prometheus"
+            method: POST
+            headers:
+              Authorization: "Bearer {{ grafana_stack_vmauth_quota_token }}"
+            body: "agent_quota_vmauth_probe 1\n"
+            body_format: raw
             status_code: [400, 401, 403]
           check_mode: false
           changed_when: false
