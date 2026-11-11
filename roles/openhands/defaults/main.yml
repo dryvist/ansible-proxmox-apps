@@ -1,6 +1,6 @@
 ---
-# OpenHands role defaults: the Agent Canvas install, the agent server and
-# automation service, and the identities and limits both use.
+# OpenHands role defaults: the Agent Canvas install and its launcher unit, and
+# the identities and limits it runs under.
 
 # Pinned upstream release versions. Agent Canvas, the agent server and the
 # automation server each release independently; both Python services install
@@ -64,34 +64,32 @@ openhands_python_install_mirror: >-
 # Port the web frontend will listen on.
 openhands_port: 443
 
-# Ports the two services bind on loopback: the agent server upstream default
-# (3000) and the automation image's EXPOSE (8000). A later PR fronts them.
-openhands_agent_server_port: 3000
-openhands_automation_port: 8000
+# Port the Agent Canvas launcher binds (--port): the published web port the
+# proxy route forwards plain HTTP to. Its UI, agent server, automation server
+# and ingress all share this one port.
+openhands_canvas_port: "{{ openhands_port }}"
+# Root-path statuses that count as serving: any 2xx or 3xx, or 401 once the
+# launcher requires its key. The probe never sends the key.
+openhands_canvas_health_statuses: [200, 204, 301, 302, 303, 307, 308, 401]
 
 # Disabled by default; see roles/openhands/README.md.
 openhands_service_enabled: false
 
-# Router (LiteLLM) settings the agent server's LLM runs against: the
-# OpenAI-compatible base URL and model alias are set here; the router key is
-# read from a systemd credential at startup.
+# Router (LiteLLM) settings. The LLM profile in the Canvas settings uses the
+# base URL and model alias below, and its key comes from the root-only file
+# named by openhands_router_key_file. No unit reads that file.
 openhands_router_base_url: "https://llm.{{ ingress_domain }}/v1"
 openhands_router_model: small
-# Path to a root-only file holding the agent-server router key; a follow-up OpenBao Agent template fills it at runtime.
+# Path to a root-only file holding the router key; a follow-up OpenBao Agent template fills it at runtime.
 openhands_router_key_file: ""
-
-# Environment file both units load (root-owned 0600, like glance's LLM profile
-# env). Rendered only while the service is enabled and removed when not.
-openhands_service_env_file: "{{ openhands_install_dir }}/openhands.env"
+# Path to a root-only file holding the backend key that --public requires; a
+# follow-up OpenBao Agent template fills it at runtime.
+openhands_backend_key_file: ""
 
 # Service secrets, one file per value, root-owned 0600 under the state
-# directory.
+# directory. The launcher loads secret-key and automation-kv-secret as
+# credentials.
 openhands_secrets_dir: "{{ openhands_state_dir }}/.secrets"
-
-# Automation state: a SQLite database (it migrates on startup) and the
-# per-run workspace base the dispatcher isolates runs under.
-openhands_automation_db_path: "{{ openhands_state_dir }}/automation/automations.db"
-openhands_automation_workspace_base: "{{ openhands_state_dir }}/workspaces"
 
 openhands_user: openhands
 # State directory, also the service user's home.

@@ -1,5 +1,5 @@
 ---
-- name: Render and verify openhands units and service env
+- name: Render and verify the openhands launcher unit and its gate
   hosts: localhost
   connection: local
   gather_facts: false
@@ -7,24 +7,19 @@
     - "{{ playbook_dir }}/../../../roles/openhands/defaults/main.yml"
   vars:
     ansible_become: false
+    # This play gathers no facts. The Node directory derives from the
+    # architecture fact, so the fixture supplies the one value it needs.
+    ansible_architecture: x86_64
     _fixture_dir: "{{ render_tmp }}"
     _service_hardening_template: "{{ playbook_dir }}/../../../roles/_shared/templates/systemd-service-hardening.conf.j2"
     _service_common_template: "{{ playbook_dir }}/../../../roles/openhands/templates/openhands-service-common.conf.j2"
     # Mirror inventory/group_vars/all.yml: the router base URL in the role
     # defaults builds from the ingress domain.
     ingress_domain: "{{ lookup('ansible.builtin.env', 'PROXMOX_SUBDOMAIN') }}"
-    openhands_service_secrets:
-      session-api-key: "test-placeholder"
-      secret-key: "test-placeholder"
-      automation-kv-secret: "test-placeholder"
-      automation-local-api-key: "test-placeholder"
     _template_dir: "{{ playbook_dir }}/../../../roles/openhands/templates"
-    _agent_server_exec: >-
-      {{ openhands_services_venv }}/bin/agent-server
-      --host 127.0.0.1 --port {{ openhands_agent_server_port }}
-    _automation_exec: >-
-      {{ openhands_services_venv }}/bin/uvicorn openhands.automation.app:app
-      --host 127.0.0.1 --port {{ openhands_automation_port }}
+    _canvas_exec: >-
+      {{ openhands_node_dir }}/bin/node {{ openhands_canvas_dir }}/bin/agent-canvas
+      --public --port {{ openhands_canvas_port }}
   tasks:
     - name: Verify the service input gate rejects a missing router-key file
       block:
@@ -34,6 +29,7 @@
           vars:
             openhands_service_enabled: true
             openhands_router_key_file: ""
+            openhands_backend_key_file: /run/openhands/backend-key
 
         - name: Fail if the role gate accepted a missing router-key file
           ansible.builtin.fail:
@@ -42,139 +38,119 @@
         - name: Confirm the role gate rejected the missing router-key file
           ansible.builtin.assert:
             that:
-              - "'openhands_router_key_file' in ansible_failed_result.msg"
+              - "'openhands_router_key_file' in ansible_failed_result.assertion"
 
-    - name: Verify the service input gate accepts a router-key file path
+    - name: Verify the service input gate rejects a missing backend-key file
+      block:
+        - name: Run the role gate without a backend-key file
+          ansible.builtin.include_tasks:
+            file: "{{ playbook_dir }}/../../../roles/openhands/tasks/assert_service_inputs.yml"
+          vars:
+            openhands_service_enabled: true
+            openhands_router_key_file: /run/openhands/router-key
+            openhands_backend_key_file: ""
+
+        - name: Fail if the role gate accepted a missing backend-key file
+          ansible.builtin.fail:
+            msg: "The service input gate accepted a missing backend-key file."
+      rescue:
+        - name: Confirm the role gate rejected the missing backend-key file
+          ansible.builtin.assert:
+            that:
+              - "'openhands_backend_key_file' in ansible_failed_result.assertion"
+
+    - name: Verify the service input gate accepts both key-file paths
       ansible.builtin.include_tasks:
         file: "{{ playbook_dir }}/../../../roles/openhands/tasks/assert_service_inputs.yml"
       vars:
         openhands_service_enabled: true
-        openhands_router_key_file: /run/credentials/openhands-router-key
+        openhands_router_key_file: /run/openhands/router-key
+        openhands_backend_key_file: /run/openhands/backend-key
 
-    - name: Render the openhands units with the service disabled (the default)
+    - name: Render the launcher unit with the service disabled (the default)
       ansible.builtin.template:
-        src: "{{ _template_dir }}/{{ item }}"
-        dest: "{{ _fixture_dir }}/{{ item | regex_replace('\\.j2$', '') }}"
+        src: "{{ _template_dir }}/openhands-canvas.service.j2"
+        dest: "{{ _fixture_dir }}/openhands-canvas.service"
         mode: "0644"
-      loop:
-        - openhands-agent-server.service.j2
-        - openhands-automation.service.j2
 
-    - name: Read the rendered agent server unit
+    - name: Read the rendered launcher unit
       ansible.builtin.slurp:
-        src: "{{ _fixture_dir }}/openhands-agent-server.service"
-      register: _openhands_agent_server_unit
+        src: "{{ _fixture_dir }}/openhands-canvas.service"
+      register: _openhands_canvas_unit_raw
 
-    - name: Read the rendered automation unit
-      ansible.builtin.slurp:
-        src: "{{ _fixture_dir }}/openhands-automation.service"
-      register: _openhands_automation_unit
-
-    - name: Decode the rendered units
+    - name: Decode the rendered launcher unit
       ansible.builtin.set_fact:
-        _agent_server_unit: "{{ _openhands_agent_server_unit.content | b64decode }}"
-        _automation_unit: "{{ _openhands_automation_unit.content | b64decode }}"
+        _canvas_unit: "{{ _openhands_canvas_unit_raw.content | b64decode }}"
 
-    - name: Assert the agent server unit contract
+    - name: Assert the launcher unit contract with the service disabled
       ansible.builtin.assert:
         that:
-          - "'User=' ~ openhands_user in _agent_server_unit"
-          - "'WorkingDirectory=' ~ openhands_state_dir in _agent_server_unit"
-          - "'ExecStart=/bin/sh -ec' in _agent_server_unit"
-          - "_agent_server_exec in _agent_server_unit"
-          - "'UMask=0027' in _agent_server_unit"
-          - "'NoNewPrivileges=true' in _agent_server_unit"
-          - "'ProtectSystem=strict' in _agent_server_unit"
-          - "'ReadWritePaths=' ~ openhands_state_dir in _agent_server_unit"
-          - "'Environment=OH_CONVERSATION_RUNTIME=docker' in _agent_server_unit"
+          - "'User=' ~ openhands_user in _canvas_unit"
+          - "'WorkingDirectory=' ~ openhands_state_dir in _canvas_unit"
+          - "'Environment=HOME=' ~ openhands_state_dir in _canvas_unit"
+          - "'Environment=PATH=' ~ openhands_node_dir ~ '/bin:' in _canvas_unit"
+          - "'ExecStart=/bin/sh -ec' in _canvas_unit"
+          - "'exec ' ~ _canvas_exec in _canvas_unit"
+          - "'UMask=0027' in _canvas_unit"
+          - "'NoNewPrivileges=true' in _canvas_unit"
+          - "'ProtectSystem=strict' in _canvas_unit"
+          - "'ReadWritePaths=' ~ openhands_state_dir in _canvas_unit"
+          - "'Restart=on-failure' in _canvas_unit"
+          - "'WantedBy=multi-user.target' in _canvas_unit"
+          - "'Environment=OH_CONVERSATION_RUNTIME=docker' in _canvas_unit"
           - >-
             'Environment=OH_CONVERSATION_CONTAINER_MEMORY='
-            ~ (openhands_conversation_memory_limit | string) in _agent_server_unit
+            ~ (openhands_conversation_memory_limit | string) in _canvas_unit
           - >-
             'Environment=OH_CONVERSATION_CONTAINER_CPUS='
-            ~ (openhands_conversation_cpus | string) in _agent_server_unit
+            ~ (openhands_conversation_cpus | string) in _canvas_unit
           - >-
             'Environment=OH_CONVERSATION_CONTAINER_PIDS_LIMIT='
-            ~ (openhands_conversation_pids_limit | string) in _agent_server_unit
-          - "'LoadCredential=' not in _agent_server_unit"
-          - "'EnvironmentFile=' not in _agent_server_unit"
-          - "'test-placeholder' not in _agent_server_unit"
-        fail_msg: "the agent server unit does not render its disabled-state contract"
+            ~ (openhands_conversation_pids_limit | string) in _canvas_unit
+          - "'LoadCredential=' not in _canvas_unit"
+          - "'EnvironmentFile=' not in _canvas_unit"
+          - "'Environment=LOCAL_BACKEND_API_KEY=' not in _canvas_unit"
+        fail_msg: "the launcher unit does not render its disabled-state contract"
 
-    - name: Assert the automation unit contract
-      ansible.builtin.assert:
-        that:
-          - "'ExecStart=' ~ _automation_exec in _automation_unit"
-          - "'UMask=0027' in _automation_unit"
-          - "'EnvironmentFile=' not in _automation_unit"
-          - "'test-placeholder' not in _automation_unit"
-        fail_msg: "the automation unit does not render its disabled-state contract"
-
-    - name: Render the service environment file
+    - name: Render the launcher unit with the service enabled
       ansible.builtin.template:
-        src: "{{ _template_dir }}/openhands.env.j2"
-        dest: "{{ _fixture_dir }}/openhands.env"
-        mode: "0600"
-
-    - name: Read the rendered service environment file
-      ansible.builtin.slurp:
-        src: "{{ _fixture_dir }}/openhands.env"
-      register: _openhands_env_raw
-
-    - name: Decode the rendered service environment file
-      ansible.builtin.set_fact:
-        _openhands_env: "{{ _openhands_env_raw.content | b64decode }}"
-
-    - name: Assert the service environment file contract
-      ansible.builtin.assert:
-        that:
-          - "'OH_SESSION_API_KEYS_0=' ~ openhands_service_secrets['session-api-key'] in _openhands_env"
-          - "'OH_SECRET_KEY=' ~ openhands_service_secrets['secret-key'] in _openhands_env"
-          - "'AUTOMATION_AGENT_SERVER_URL=http://127.0.0.1:' ~ (openhands_agent_server_port | string) in _openhands_env"
-          - >-
-            'AUTOMATION_AGENT_SERVER_API_KEY='
-            ~ openhands_service_secrets['session-api-key'] in _openhands_env
-          - "'AUTOMATION_DB_URL=sqlite+aiosqlite:///' ~ openhands_automation_db_path in _openhands_env"
-          - "'AUTOMATION_WORKSPACE_BASE=' ~ openhands_automation_workspace_base in _openhands_env"
-          - "'AUTOMATION_KV_SECRET=' ~ openhands_service_secrets['automation-kv-secret'] in _openhands_env"
-          - "'AUTOMATION_LOCAL_API_KEY=' ~ openhands_service_secrets['automation-local-api-key'] in _openhands_env"
-          - "'LLM_MODEL=' ~ openhands_router_model in _openhands_env"
-          - "'LLM_BASE_URL=https://llm.' ~ ingress_domain ~ '/v1' in _openhands_env"
-          - "'LLM_API_KEY=' not in _openhands_env"
-        fail_msg: "the service environment file does not render the router and local-mode wiring"
-
-    - name: Render the agent server unit with the service enabled
-      ansible.builtin.template:
-        src: "{{ _template_dir }}/openhands-agent-server.service.j2"
-        dest: "{{ _fixture_dir }}/openhands-agent-server-enabled.service"
+        src: "{{ _template_dir }}/openhands-canvas.service.j2"
+        dest: "{{ _fixture_dir }}/openhands-canvas-enabled.service"
         mode: "0644"
       vars:
         openhands_service_enabled: true
-        openhands_router_key_file: /run/credentials/openhands-router-key
+        openhands_backend_key_file: /run/openhands/backend-key
 
-    - name: Decode the enabled agent server unit
+    - name: Read the enabled launcher unit
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/openhands-canvas-enabled.service"
+      register: _openhands_canvas_unit_enabled_raw
+
+    - name: Decode the enabled launcher unit
       ansible.builtin.set_fact:
-        _agent_server_unit_enabled: >-
-          {{ lookup('ansible.builtin.file', _fixture_dir ~ '/openhands-agent-server-enabled.service') }}
+        _canvas_unit_enabled: "{{ _openhands_canvas_unit_enabled_raw.content | b64decode }}"
 
-    - name: Assert the enabled unit loads the environment file
+    - name: Assert the enabled unit loads its keys as credentials and never carries a value
       ansible.builtin.assert:
         that:
-          - "'EnvironmentFile=' ~ openhands_service_env_file in _agent_server_unit_enabled"
-          - "'LoadCredential=openhands-router-key:/run/credentials/openhands-router-key' in _agent_server_unit_enabled"
-          - "'$$CREDENTIALS_DIRECTORY/openhands-router-key' in _agent_server_unit_enabled"
-          - "'openhands_router_key_file' not in _agent_server_unit_enabled"
-          - "'Environment=LLM_API_KEY=' not in _agent_server_unit_enabled"
-          - "'test-placeholder' not in _agent_server_unit_enabled"
+          - "'LoadCredential=openhands-backend-key:/run/openhands/backend-key' in _canvas_unit_enabled"
+          - "'LoadCredential=openhands-secret-key:' ~ openhands_secrets_dir ~ '/secret-key' in _canvas_unit_enabled"
+          - >-
+            'LoadCredential=openhands-automation-kv-secret:'
+            ~ openhands_secrets_dir ~ '/automation-kv-secret' in _canvas_unit_enabled
+          - "'$$CREDENTIALS_DIRECTORY/openhands-backend-key' in _canvas_unit_enabled"
+          - "'Environment=LOCAL_BACKEND_API_KEY=' not in _canvas_unit_enabled"
+          - "'openhands_backend_key_file' not in _canvas_unit_enabled"
+          - "'EnvironmentFile=' not in _canvas_unit_enabled"
         fail_msg: >-
-          the enabled unit must load the environment file and never carry a
-          key value itself
+          the enabled launcher unit must load its keys as credentials and never
+          carry a key value itself
 
-    - name: OpenHands template rendering PASSED
+    - name: OpenHands launcher template rendering PASSED
       ansible.builtin.debug:
         msg: |
-          openhands template assertions passed:
-          - both units render the pinned venv, loopback ports and shared hardening
-          - disabled by default: no EnvironmentFile line and no key value anywhere
-          - enabled: the unit loads the root-owned environment file
-          - the env file wires local agent-server mode and SQLite state without a router key
+          openhands launcher assertions passed:
+          - the unit runs the installed node and agent-canvas on the launcher port with the shared hardening
+          - disabled by default: no credentials loaded and no key value anywhere
+          - enabled: the three keys load as credentials, read by the launcher from $CREDENTIALS_DIRECTORY
+          - the input gate requires the router and backend key files
