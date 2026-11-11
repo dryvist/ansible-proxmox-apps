@@ -66,13 +66,27 @@ def test_quota_tokens_are_read_from_the_agent_quota_bucket_only_when_enabled():
     assert defaults["grafana_stack_vmauth_write_token"] == ""
     assert defaults["grafana_stack_vmauth_writer_label"] == "agent-quota-mac"
     read = _token_task("Read the vmauth quota tokens from OpenBao")
-    request = read["ansible.builtin.uri"]
-    assert request["method"] == "GET"
-    assert request["url"].endswith("/v1/secret/data/apps/agent-quota")
-    assert request["headers"]["X-Vault-Token"] == "{{ lookup('env', 'BAO_TOKEN') }}"
-    assert request["status_code"] == [200, 404]
+    request = read["community.hashi_vault.vault_kv2_get"]
+    assert request == {
+        "url": "{{ lookup('env', 'BAO_ADDR') | regex_replace('/+$', '') }}",
+        "auth_method": "token",
+        "token": "{{ lookup('env', 'BAO_TOKEN') }}",
+        "engine_mount_point": "secret",
+        "path": "apps/agent-quota",
+        "ca_cert": "{{ openbao_ca_path }}",
+        "proxies": {"http": "", "https": ""},
+    }
+    assert read["failed_when"] is False
     assert read["delegate_to"] == "localhost"
+    assert read["check_mode"] is False
+    assert read["changed_when"] is False
     assert read["no_log"] is True
+    absent = _token_task("Reject vmauth quota secret read errors other than an absent bucket")
+    assert absent["ansible.builtin.assert"]["that"] == [
+        "grafana_stack_vmauth_secret.msg is not defined or "
+        "grafana_stack_vmauth_secret.msg is search('^Invalid or missing path')"
+    ]
+    assert absent["no_log"] is True
     resolve = _token_task("Resolve the vmauth quota reader and writer tokens")
     assert set(resolve["ansible.builtin.set_fact"]) == {
         "grafana_stack_vmauth_quota_token",
@@ -92,20 +106,27 @@ def test_quota_tokens_are_read_from_the_agent_quota_bucket_only_when_enabled():
 @pytest.mark.parametrize(
     "response, reader_ok, writer_ok",
     [
-        ({"status": 404}, False, False),
-        ({"json": {"data": {"data": {}}}}, False, False),
         (
-            {"json": {"data": {"data": {"agent_quota_reader_token": "", "agent_quota_write_token": SAMPLE_WRITE_TOKEN}}}},
+            {
+                "msg": "Invalid or missing path ['apps/agent-quota'] with secret version "
+                "'latest'. Check the path or secret version."
+            },
+            False,
+            False,
+        ),
+        ({"secret": {}}, False, False),
+        (
+            {"secret": {"agent_quota_reader_token": "", "agent_quota_write_token": SAMPLE_WRITE_TOKEN}},
             False,
             True,
         ),
         (
-            {"json": {"data": {"data": {"agent_quota_reader_token": SAMPLE_TOKEN, "agent_quota_write_token": "  "}}}},
+            {"secret": {"agent_quota_reader_token": SAMPLE_TOKEN, "agent_quota_write_token": "  "}},
             True,
             False,
         ),
         (
-            {"json": {"data": {"data": {"agent_quota_reader_token": SAMPLE_TOKEN, "agent_quota_write_token": SAMPLE_WRITE_TOKEN}}}},
+            {"secret": {"agent_quota_reader_token": SAMPLE_TOKEN, "agent_quota_write_token": SAMPLE_WRITE_TOKEN}},
             True,
             True,
         ),
@@ -126,6 +147,24 @@ def test_each_quota_token_is_resolved_from_its_own_field(response, reader_ok, wr
         assert tokens["grafana_stack_vmauth_quota_token"] == SAMPLE_TOKEN
     if writer_ok:
         assert tokens["grafana_stack_vmauth_write_token"] == SAMPLE_WRITE_TOKEN
+
+
+@pytest.mark.parametrize(
+    "result, accepted",
+    [
+        ({"msg": "Invalid or missing path ['apps/agent-quota']"}, True),
+        ({"msg": "Forbidden: Permission Denied to path ['apps/agent-quota']."}, False),
+        ({"msg": "connection refused"}, False),
+        ({"msg": "Internal Server Error"}, False),
+        ({"secret": {"agent_quota_reader_token": SAMPLE_TOKEN}}, True),
+    ],
+)
+def test_only_an_absent_quota_bucket_is_accepted_as_a_read_error(result, accepted):
+    templar = Templar(loader=DataLoader(), variables={"grafana_stack_vmauth_secret": result})
+    assertion = _token_task(
+        "Reject vmauth quota secret read errors other than an absent bucket"
+    )["ansible.builtin.assert"]
+    assert templar.evaluate_conditional(trust_as_template(assertion["that"][0])) is accepted
 
 
 def test_deploy_reads_the_quota_tokens_before_the_config_renders():
