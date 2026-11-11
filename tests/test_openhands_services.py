@@ -23,7 +23,7 @@ RETIRED_TEMPLATES = (
     "openhands.env.j2",
 )
 RETIRED_UNITS = ("openhands-agent-server", "openhands-automation")
-HEALTH_STATUSES = "{{ (range(200, 400) | list) + [401] }}"
+HEALTH_STATUSES = [200, 204, 301, 302, 303, 307, 308, 401]
 
 
 def _load(path):
