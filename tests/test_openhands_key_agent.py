@@ -46,6 +46,19 @@ class OpenHandsKeyAgentGate(unittest.TestCase):
             include, names.index("Set the Agent Canvas launcher's enable state")
         )
 
+    def test_turning_the_service_off_stops_the_agent_and_removes_its_files(self):
+        tasks = {task.get("name"): task for task in _load(SERVICES)}
+        stop = tasks["Stop and disable the launcher key agent while the service is off"]
+        self.assertEqual(stop["ansible.builtin.systemd_service"]["name"], "openhands-secrets-agent")
+        self.assertEqual(stop["ansible.builtin.systemd_service"]["state"], "stopped")
+        self.assertIs(stop["ansible.builtin.systemd_service"]["enabled"], False)
+        self.assertIn(f"not ({FLAG} | bool)", _when(stop))
+        remove = tasks["Remove the key agent login files and rendered keys while the service is off"]
+        self.assertEqual(remove["ansible.builtin.file"]["state"], "absent")
+        for name in ("openhands_approle_dir", "openhands_backend_key_file", "openhands_router_key_file"):
+            self.assertIn(name, remove["loop"])
+        self.assertIn(f"not ({FLAG} | bool)", _when(remove))
+
     def test_tasks_touching_the_approle_secret_zero_are_no_log(self):
         for task in _load(KEY_AGENT):
             if any(name in yaml.safe_dump(task) for name in SECRET_ZERO):

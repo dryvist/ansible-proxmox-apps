@@ -230,6 +230,30 @@
     state: "{{ 'started' if (openhands_service_enabled | bool) else 'stopped' }}"
     daemon_reload: true
 
+- name: Check for the launcher key agent unit while the service is off
+  ansible.builtin.stat:
+    path: /etc/systemd/system/openhands-secrets-agent.service
+  register: openhands_key_agent_unit_off
+  when: not (openhands_service_enabled | bool)
+
+- name: Stop and disable the launcher key agent while the service is off
+  ansible.builtin.systemd_service:
+    name: openhands-secrets-agent
+    enabled: false
+    state: stopped
+  when:
+    - not (openhands_service_enabled | bool)
+    - openhands_key_agent_unit_off.stat.exists | default(false)
+
+- name: Remove the key agent login files and rendered keys while the service is off
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ [openhands_approle_dir, openhands_backend_key_file, openhands_router_key_file] | select | list }}"
+  loop_control:
+    label: "{{ item }}"
+  when: not (openhands_service_enabled | bool)
+
 - name: Restart the Agent Canvas launcher before probing it
   ansible.builtin.meta: flush_handlers
 
