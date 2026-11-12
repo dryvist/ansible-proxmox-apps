@@ -1,0 +1,33 @@
+modules:
+{% for executor in prometheus_stack_json_exporter_executors if prometheus_stack_json_exporter_credentials.get(executor.credential_name, '') | trim | length > 0 %}
+  {{ executor.module }}:
+    fail_on_error: true
+    http_client_config:
+      follow_redirects: false
+      authorization:
+        type: Bearer
+        credentials_file: {{ executor.credentials_file | to_json }}
+    metrics:
+      - name: agent_quota_api_response_code
+        type: value
+        path: "{.code}"
+        help: HTTP 200 response body's in-band API status code.
+        labels:
+          executor: {{ executor.name | to_json }}
+{% for window in executor.windows %}
+      - name: agent_quota_used_percent
+        type: value
+        path: {{ ("{.data.limits[?(@.unit == " ~ window.unit | string ~ " && @.number == " ~ window.number | string ~ ")].percentage}") | to_json }}
+        help: Percentage of the executor quota window consumed.
+        labels:
+          executor: {{ executor.name | to_json }}
+          window: {{ window.name | to_json }}
+      - name: agent_quota_reset_timestamp_milliseconds
+        type: value
+        path: {{ ("{.data.limits[?(@.unit == " ~ window.unit | string ~ " && @.number == " ~ window.number | string ~ " && @.nextResetTime != null)].nextResetTime}") | to_json }}
+        help: Unix timestamp in milliseconds when the executor quota window resets.
+        labels:
+          executor: {{ executor.name | to_json }}
+          window: {{ window.name | to_json }}
+{% endfor %}
+{% endfor %}
