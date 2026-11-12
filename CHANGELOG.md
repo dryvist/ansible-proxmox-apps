@@ -1,5 +1,26 @@
 # Changelog
 
+## [5.41.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.40.0...v5.41.0) (2026-11-12)
+
+
+### Features
+
+* **agent_sandbox:** move to nix-agent-sandbox 1.19.2 ([#3561](https://github.com/dryvist/ansible-proxmox-apps/issues/3561)) ([730adf6](https://github.com/dryvist/ansible-proxmox-apps/commit/730adf6dde4d6b1ee6fb254df88a84895000b19b))
+* **git-mirror:** refresh the mirrors every five minutes ([#3549](https://github.com/dryvist/ansible-proxmox-apps/issues/3549)) ([4b6e82c](https://github.com/dryvist/ansible-proxmox-apps/commit/4b6e82c25270affe80fdf6c231803abe434f1a58))
+* **grafana_stack:** add read-only vmauth quota route ([#3564](https://github.com/dryvist/ansible-proxmox-apps/issues/3564)) ([1b4eb7e](https://github.com/dryvist/ansible-proxmox-apps/commit/1b4eb7e91d06c5f9303c800b5fa3364953e35af6))
+* **grafana_stack:** read vmauth tokens from the OpenBao bucket and add a writer route ([#3566](https://github.com/dryvist/ansible-proxmox-apps/issues/3566)) ([d119212](https://github.com/dryvist/ansible-proxmox-apps/commit/d1192127ce7abd2bd8f2c5f356bbfd183889134a))
+* **openhands:** add an OpenBao Agent unit for the launcher ([#3557](https://github.com/dryvist/ansible-proxmox-apps/issues/3557)) ([3673d3b](https://github.com/dryvist/ansible-proxmox-apps/commit/3673d3b02cbd811ab1461a813ade414f68404373))
+* **openhands:** run Agent Canvas as one launcher unit ([#3556](https://github.com/dryvist/ansible-proxmox-apps/issues/3556)) ([5a851af](https://github.com/dryvist/ansible-proxmox-apps/commit/5a851af8e3e8289f2a9004592ab743810d5fa3fa))
+* **zammad:** start the zammad-triage agent on high-priority tickets ([#3551](https://github.com/dryvist/ansible-proxmox-apps/issues/3551)) ([4c7e71c](https://github.com/dryvist/ansible-proxmox-apps/commit/4c7e71c765d20db5395ac9ce3e0071b398d5b0d6))
+
+
+### Bug Fixes
+
+* **inventory:** add host variables with a pinned host key ([#3555](https://github.com/dryvist/ansible-proxmox-apps/issues/3555)) ([00961a6](https://github.com/dryvist/ansible-proxmox-apps/commit/00961a61861f2f089d1fde3a569f749e3d27ab95))
+* **nautobot:** load the nautobot role defaults in the service-token playbook ([#3563](https://github.com/dryvist/ansible-proxmox-apps/issues/3563)) ([eaab3fc](https://github.com/dryvist/ansible-proxmox-apps/commit/eaab3fc9afa44020f8a8eefa65cd2f9bc078b9bd))
+* **ntfy:** remove the hermes-alerts topic ([#3574](https://github.com/dryvist/ansible-proxmox-apps/issues/3574)) ([0de8a3b](https://github.com/dryvist/ansible-proxmox-apps/commit/0de8a3b893b7e8059393c36f4526759a1358e0b1))
+* **scripts:** set the macOS fork-safety variable for Ansible runs ([#3562](https://github.com/dryvist/ansible-proxmox-apps/issues/3562)) ([ae04564](https://github.com/dryvist/ansible-proxmox-apps/commit/ae045648244d585ed4dcb3e1661728e3fdf3ba52))
+
 ## [5.40.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.39.0...v5.40.0) (2026-11-09)
 
 
