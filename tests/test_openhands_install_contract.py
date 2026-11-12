@@ -104,6 +104,10 @@ class OpenHandsNodeRuntime(unittest.TestCase):
         register = _task(tasks, "Install the Agent Canvas runtime prerequisites")["register"]
         self.assertIn("ansible_check_mode", params["verdaccio_cache_node_runtime_skip_unpack"])
         self.assertIn(register, params["verdaccio_cache_node_runtime_skip_unpack"])
+        # A first --check pass only previews the install directory too, so the
+        # download is skipped rather than failing on a missing destination.
+        dir_register = _task(tasks, "Create the Agent Canvas install directory")["register"]
+        self.assertEqual(include["when"], f"not (ansible_check_mode and {dir_register} is changed)")
 
     def test_verdaccio_cache_installs_node_through_the_same_shared_tasks(self):
         verdaccio = _load(ROOT / "roles" / "verdaccio_cache" / "tasks" / "main.yml")
