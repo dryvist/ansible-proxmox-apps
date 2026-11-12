@@ -51,7 +51,7 @@ def test_every_deadman_target_group_publishes_bao_monitoring_secrets():
     )
 
     publisher_groups = _folded_hosts(
-        (PLAYBOOKS / "00-load-and-telemetry.yml").read_text(),
+        (PLAYBOOKS / "00-resource-domain-secrets-prefetch.yml").read_text(),
         "Pre-fetch resource-domain secrets from OpenBao",
     ) | _single_line_hosts(
         (PLAYBOOKS / "00b-secrets-monitoring-republish.yml").read_text(),
