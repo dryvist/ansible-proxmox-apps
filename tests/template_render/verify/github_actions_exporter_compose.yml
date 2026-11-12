@@ -1,0 +1,130 @@
+---
+# Render the real exporter templates with fixture-only credentials and verify
+# the token stays in a protected environment file rather than the Compose file.
+- name: Verify the GitHub Actions exporter container and secret handling
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _role: "{{ playbook_dir }}/../../../roles/github_actions_exporter"
+    github_actions_exporter_token: fixture-token
+    bao_apps_secrets: {}
+
+  tasks:
+    - name: Load the exporter defaults and deployment tasks
+      ansible.builtin.set_fact:
+        _exporter_defaults: "{{ lookup('file', _role ~ '/defaults/main.yml') | from_yaml }}"
+        _exporter_tasks: "{{ lookup('file', _role ~ '/tasks/main.yml') | from_yaml }}"
+
+    - name: Apply the real role defaults to the template fixture
+      ansible.builtin.set_fact:
+        github_actions_exporter_image: "{{ _exporter_defaults.github_actions_exporter_image }}"
+        github_actions_exporter_container_name: >-
+          {{ _exporter_defaults.github_actions_exporter_container_name }}
+        github_actions_exporter_port: "{{ _exporter_defaults.github_actions_exporter_port }}"
+        github_actions_exporter_data_dir: "{{ _exporter_defaults.github_actions_exporter_data_dir }}"
+
+    - name: Publish a fixture runner organization to localhost inventory
+      ansible.builtin.set_fact:
+        github_runner_org: fixture-org
+
+    - name: Load the exporter inventory wiring
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../inventory/group_vars/prometheus_group/15-github-actions-exporter.yml"
+
+    - name: Render the Compose service
+      ansible.builtin.set_fact:
+        _compose: >-
+          {{ lookup('template', _role ~ '/templates/docker-compose.yml.j2') | from_yaml }}
+
+    - name: Render the fixture environment file
+      ansible.builtin.set_fact:
+        _env: "{{ lookup('template', _role ~ '/templates/exporter.env.j2') }}"
+      no_log: true
+
+    - name: Find the task that writes the protected environment file
+      ansible.builtin.set_fact:
+        _env_task: >-
+          {{ (_exporter_tasks
+              | selectattr('block', 'defined') | map(attribute='block') | flatten
+              | selectattr('name', 'equalto', 'Render GitHub Actions exporter environment')
+              | first) }}
+        _health_task: >-
+          {{ (_exporter_tasks
+              | selectattr('block', 'defined') | map(attribute='block') | flatten
+              | selectattr('name', 'equalto', 'Verify the GitHub Actions exporter health endpoint')
+              | first) }}
+
+    - name: Assert the exporter uses its pinned image and configured port
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - >-
+            _compose.services['github-actions-runner-exporter'].image
+            == 'ghcr.io/drumandbytes/github-actions-runner-exporter:v1.4.1'
+          - "'latest' not in _compose.services['github-actions-runner-exporter'].image"
+          - _compose.services['github-actions-runner-exporter'].ports == ['9222:9222']
+          - _compose.services['github-actions-runner-exporter'].restart == 'unless-stopped'
+          - >-
+            _compose.services['github-actions-runner-exporter'].env_file
+            == [github_actions_exporter_data_dir ~ '/exporter.env']
+        fail_msg: >-
+          The GitHub Actions exporter Compose service must use the pinned image,
+          configured port and root-managed environment file.
+        success_msg: Exporter image, port and environment-file wiring are correct.
+
+    - name: Assert the rendered fixture environment contains the required inputs
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - "'GITHUB_ORG=fixture-org' in _env"
+          - "'GITHUB_TOKEN=fixture-token' in _env"
+          - "'LISTEN_ADDR=:9222' in _env"
+        fail_msg: The exporter environment file must render the organization, token and listen port.
+        success_msg: Required exporter environment keys render from role variables.
+
+    - name: Assert the token default uses the OpenBao field with an env fallback
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - "'bao_apps_secrets.github_actions_exporter_token' in _exporter_defaults.github_actions_exporter_token"
+          - "'GITHUB_ACTIONS_EXPORTER_TOKEN' in _exporter_defaults.github_actions_exporter_token"
+        fail_msg: The role token default must read the secret map and preserve its environment fallback.
+        success_msg: The exporter token is sourced through the existing secret lookup pattern.
+
+    - name: Assert the environment file is written with root-only permissions and hidden task output
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _env_task['ansible.builtin.template'].owner == 'root'
+          - _env_task['ansible.builtin.template'].group == 'root'
+          - _env_task['ansible.builtin.template'].mode == '0600'
+          - _env_task.no_log | bool
+          - >-
+            'prometheus_stack_github_actions_exporter_address'
+            in _health_task['ansible.builtin.uri'].url
+        fail_msg: The exporter token file must be root-only and the health check must use the inventory target.
+        success_msg: Exporter secret handling and inventory-based health target are correct.
+
+- name: Verify the exporter skips deployment when the token is absent
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    github_actions_exporter_token: ""
+    bao_apps_secrets: {}
+
+  tasks:
+    - name: Run the role tasks with no token
+      ansible.builtin.import_tasks: "../../../roles/github_actions_exporter/tasks/main.yml"
+
+    - name: Assert the exporter was marked unprovisioned
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - not github_actions_exporter_token_present
+        success_msg: The missing-token path skips exporter deployment.

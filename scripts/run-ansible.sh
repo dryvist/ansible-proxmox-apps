@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# macOS: let forked Ansible workers start without the Objective-C fork-safety abort.
+if [ "$(uname -s)" = Darwin ]; then
+  export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
+fi
+
 export RUN_ANSIBLE_IDENTITIES="${RUN_ANSIBLE_IDENTITIES:-openbao-node-converge?,signer?,semaphore?,ansible-converge?,ansible?}"
 export RUN_ANSIBLE_SIGN_ROLE_OPENBAO_NODE_CONVERGE="${RUN_ANSIBLE_SIGN_ROLE_OPENBAO_NODE_CONVERGE:-automation-ansible}"
 export RUN_ANSIBLE_SIGN_ROLE_ANSIBLE_CONVERGE="${RUN_ANSIBLE_SIGN_ROLE_ANSIBLE_CONVERGE:-automation-ansible}"
@@ -20,5 +25,5 @@ export RUN_ANSIBLE_RECAP_CHECK="${RUN_ANSIBLE_RECAP_CHECK:-1}"
 export RUN_ANSIBLE_LOG_DIR="${RUN_ANSIBLE_LOG_DIR:-$(git rev-parse --show-toplevel)/.ansible-run-logs}"
 
 # renovate: datasource=github-releases depName=dryvist/homelab-contracts
-HOMELAB_CONTRACTS_REF=v5.59.0
+HOMELAB_CONTRACTS_REF=v5.60.0
 exec nix run "github:dryvist/homelab-contracts/${HOMELAB_CONTRACTS_REF}#run-ansible" -- "$@"

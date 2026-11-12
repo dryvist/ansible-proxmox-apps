@@ -70,6 +70,9 @@ class RunAnsibleShimContract(unittest.TestCase):
             operations,
             [
                 "set -euo pipefail",
+                'if [ "$(uname -s)" = Darwin ]; then',
+                "  export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES",
+                "fi",
                 *EXPORT_LINES,
                 ref_line,
                 'exec nix run "github:dryvist/homelab-contracts/${HOMELAB_CONTRACTS_REF}#run-ansible" -- "$@"',
@@ -132,6 +135,15 @@ class RunAnsibleShimContract(unittest.TestCase):
         self.assertEqual(
             dict(line.split("=", maxsplit=1) for line in captured_env),
             DEFAULTS,
+        )
+
+    def test_fork_safety_export_is_gated_to_darwin(self):
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn(
+            'if [ "$(uname -s)" = Darwin ]; then\n'
+            "  export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES\n"
+            "fi\n",
+            source,
         )
 
 

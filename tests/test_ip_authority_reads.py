@@ -82,7 +82,7 @@ READS = {
     "roles/keepalived/defaults/main.yml": 1,
     "roles/keepalived/tasks/main.yml": 1,
     "roles/netmon/defaults/main.yml": 1,
-    "roles/prometheus_stack/defaults/main.yml": 7,
+    "roles/prometheus_stack/defaults/main/00-core.yml": 7,
     "roles/service_deadman/defaults/main.yml": 1,
     "roles/traefik/tasks/dashboard_auth.yml": 1,
     "roles/unifi_metrics/defaults/main.yml": 1,
