@@ -48,6 +48,34 @@ grafana_stack_vm_extra_flags:
   - "-opentelemetry.usePrometheusNaming"
   - "-search.latencyOffset=1s"
 
+# --- vmauth quota route (optional, read-only) --------------------------------
+# vmauth (VictoriaMetrics' auth proxy) listens in front of VictoriaMetrics and
+# lets one bearer token run one instant query. Off by default; the compose
+# service and config render only when enabled.
+grafana_stack_vmauth_enabled: false
+# Same release line and tag style as grafana_stack_vm_image.
+grafana_stack_vmauth_image: "victoriametrics/vmauth:v1.155.0"
+grafana_stack_vmauth_container_name: vmauth
+grafana_stack_vmauth_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['vmauth']
+     | default(8427) }}
+# Host label for the reverse-proxy route to this listener. The route is an
+# ingress entry in the tofu inventory; this role does not create it.
+grafana_stack_vmauth_hostname: vmauth
+grafana_stack_vmauth_url: "https://{{ grafana_stack_vmauth_hostname }}.{{ ingress_domain }}"
+# The single PromQL selector the client may run as an instant query.
+grafana_stack_vmauth_quota_expr: '{__name__=~"agent_quota_(used_percent|window_seconds|reset_timestamp_seconds)"}'
+# Reader bearer token. Set by tasks/vmauth_token.yml from the OpenBao bucket
+# apps/agent-quota (field agent_quota_reader_token) when vmauth is enabled.
+grafana_stack_vmauth_quota_token: ''
+# Writer bearer token. Set by tasks/vmauth_token.yml from the same bucket
+# (field agent_quota_write_token) when vmauth is enabled.
+grafana_stack_vmauth_write_token: ''
+# Value of the writer label that vmauth adds to every imported series.
+grafana_stack_vmauth_writer_label: agent-quota-mac
+grafana_stack_vmauth_config_host_path: "{{ grafana_stack_data_dir }}/vmauth.yml"
+grafana_stack_vmauth_config_container_path: /etc/vmauth/config.yml
+
 # Grafana is reached through the Authelia-gated Traefik vhost; root_url makes
 # redirects and rendered links carry the fronted name instead of the guest.
 grafana_stack_root_url: "https://{{ grafana_hostname }}.{{ ingress_domain }}"
@@ -134,7 +162,7 @@ grafana_stack_clickhouse_database: default
 # Dashboard JSON source: a release of dryvist/grafana-dashboards. The role
 # extracts its dashboards/*.json into the provisioned dashboard directory.
 # renovate: datasource=github-tags depName=dryvist/grafana-dashboards
-grafana_stack_dashboards_version: "v1.33.0"
+grafana_stack_dashboards_version: "v1.37.0"
 grafana_stack_dashboards_url: >-
   https://github.com/dryvist/grafana-dashboards/archive/refs/tags/{{ grafana_stack_dashboards_version }}.tar.gz
 
@@ -215,7 +243,7 @@ grafana_stack_alert_secret_age_days: 47
 grafana_stack_alert_workstation_load5: 24
 grafana_stack_alert_pve_load_per_core_ratio: 2.0
 # Last successful Git mirror sync age before a warning fires.
-grafana_stack_alert_git_mirror_max_age_seconds: 43200
+grafana_stack_alert_git_mirror_max_age_seconds: 1800
 # Expected Hindsight replica count — derived from the hindsight-tagged
 # inventory entries, same tag-filter source prometheus_stack_hindsight_targets
 # uses, so an HA expansion needs no edit here.

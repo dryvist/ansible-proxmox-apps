@@ -1,54 +1,114 @@
 # openhands
 
 The OpenHands role. It creates the service user and the state directory,
-installs Agent Canvas with its runtimes, and installs and runs the agent
-server and the automation service. `openhands_service_enabled` stays `false`
-by default: the units install but stay disabled and stopped, and no service
-secret is read or rendered until a deployment turns the flag on.
+installs Agent Canvas with its runtimes, and runs the Canvas launcher as a
+systemd unit. It depends on the shared `docker_engine` role, which installs
+Docker. `openhands_service_enabled` stays `false` by default: the launcher unit
+installs but stays disabled and stopped, and no service secret is read or
+generated until a deployment turns the flag on.
 
 ## What runs
 
-Three OpenHands components, each pinned by a version in `defaults/main.yml`:
+Agent Canvas is the npm package `@openhands/agent-canvas`, pinned in
+`defaults/main.yml` and installed through the site's npm cache under
+`openhands_canvas_dir`. The unit `openhands-canvas.service` runs its launcher
+as one process under `openhands_user`, with the Node.js runtime under
+`openhands_node_dir`:
 
-- **Agent Canvas**: the web frontend, installed as a global npm package
-  through the site's npm cache. The service that fronts it comes later.
-- **Agent server** (`openhands-agent-server`): the backend an agent session
-  talks to. Bound to loopback on `openhands_agent_server_port`.
-- **Automation server** (`openhands-automation`): the headless automation
-  entry point, run in local agent-server mode — every automation run
-  dispatches to the agent server on the same host instead of a cloud
-  sandbox. Bound to loopback on `openhands_automation_port`.
+- the Canvas web UI,
+- the agent server,
+- the automation server, in local agent-server mode: automation runs dispatch
+  to the agent server on the same host,
+- the ingress that serves them.
 
-The two Python services install into their own venv through the site's PyPI
-cache (`uv pip install`, both pinned in `defaults/main.yml`; the automation
-package itself pins the matching `openhands-sdk` release). The venv uses a
-uv-managed CPython 3.12 interpreter downloaded through the published raw
-release cache. The units use the shared systemd hardening template, restart on
-failure, and run as `openhands_user` with the state directory as both home and
-working directory. When enabled, the role waits for each service and verifies
-its `/health` endpoint. Agent conversations use Docker with the configured
-memory, CPU and process limits.
+All of these share one port, `openhands_canvas_port`, which defaults to the
+published web port `openhands_port` (443, plain HTTP behind the proxy). The
+unit holds only `CAP_NET_BIND_SERVICE` to bind it. The
+launcher starts with `--public`, which requires a backend key. The unit
+restarts on failure and starts at boot. When enabled, the role waits for the
+port and checks that the root path answers with a 2xx, a 3xx or a 401. The
+probe never sends the key.
+
+The role also installs the agent server and automation packages into their own
+venv through the site's PyPI cache (`uv pip install`, pinned in
+`defaults/main.yml`; the automation package pins the matching `openhands-sdk`
+release). The venv uses a uv-managed CPython 3.12 downloaded through the
+published raw release cache. No unit runs that venv. Agent conversations use
+Docker with the configured memory, CPU and process limits, which the launcher
+unit sets.
+
+## Keys
+
+Three key values reach the launcher. None is written to a unit file or an
+environment file:
+
+- `openhands_backend_key_file` names a root-only file holding the backend key
+  that `--public` requires. The launcher key agent renders the file (see Key
+  delivery). The input check requires the variable when the service is
+  enabled.
+- `secret-key` and `automation-kv-secret` under `openhands_secrets_dir` are
+  generated on the first enable and kept after that. The launcher reads them as
+  `OH_SECRET_KEY`, which encrypts stored settings, and `AUTOMATION_KV_SECRET`.
+
+The unit loads all three files with systemd `LoadCredential=` while the service
+is enabled. Its `ExecStart` wrapper exports each value into the launcher's
+environment and exits if any file is empty.
+
+## Key delivery
+
+A per-host OpenBao Agent, `openhands-secrets-agent.service`, renders the two
+launcher key files. It logs in with the OpenHands AppRole, whose secret-zero
+the converge environment supplies, and reads one KV path:
+
+- `secret/data/apps/openhands`, field `openhands_backend_api_key`, rendered to
+  `openhands_backend_key_file`;
+- the same path, field `openhands_llm_router_key`, rendered to
+  `openhands_router_key_file`.
+
+Both files are root-owned, mode 0600, in a root-owned directory of mode 0700. A
+missing field fails the render, so no empty key file is written for it. When a
+render changes a file, the agent restarts the launcher if it is running; the
+launcher reads its keys only at start.
+
+The agent is installed and started only while the service is enabled, and the
+launcher starts after it. Turning the service off does not stop the agent.
 
 ## The agents' LLM
 
-The agent server reaches the LiteLLM router at `openhands_router_base_url` and
-asks for the router role alias `openhands_router_model`. Both reach the
-services in a root-owned `0600` environment file rendered only while the
-service is enabled. The router key comes from the root-only file named by
-`openhands_router_key_file`; systemd loads it as a credential and the agent
-server reads it at startup.
+The LLM profile is set in Canvas under Settings > LLM, or through the backend
+API. It uses:
+
+- model `litellm_proxy/<openhands_router_model>`, the LiteLLM router role alias,
+- base URL `openhands_router_base_url`,
+- the API key from the root-only file named by `openhands_router_key_file`.
+
+The input check requires `openhands_router_key_file` when the service is
+enabled. No unit reads that file.
+
+## Variables
+
+- `openhands_canvas_port`: the launcher's port, `openhands_port` by default.
+- `openhands_backend_key_file`: the root-only backend key file, `""` by default.
+- `openhands_router_key_file`: the root-only router key file, `""` by default.
+- `openhands_router_base_url` and `openhands_router_model`: the router endpoint
+  and model alias the LLM profile uses.
+- `openhands_secrets_dir`: the root-only directory of the generated secrets.
 
 ## State
 
 `openhands_state_dir` is both the state directory and the home of the
 `openhands_user` service user. The role creates it with mode `0750`, owned by
-that user, who is a member of the `docker` group so it can start
-conversation containers.
+that user, who is a member of the `docker` group so it can start conversation
+containers. The launcher keeps its settings under `~/.openhands`, which is that
+directory.
 
-The role generates each service secret only when its backing file is absent
-and preserves existing values. The automation keeps its SQLite database
-under `openhands_automation_db_path` (it migrates on startup) and its per-run
-workspaces under `openhands_automation_workspace_base`.
+The role generates each generated secret only when its file is absent and
+preserves existing values.
+
+On every converge the role stops, disables and removes the retired
+`openhands-agent-server` and `openhands-automation` units, the shared
+environment file from earlier revisions, and the `session-api-key` and
+`automation-local-api-key` secret files.
 
 The install writes the uv configuration the service user reads into
 `.config/uv/uv.toml` under that state directory; it points uv's default

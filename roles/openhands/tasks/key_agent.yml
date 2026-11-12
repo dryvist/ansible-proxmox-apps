@@ -1,0 +1,140 @@
+---
+# The launcher key agent: a per-host OpenBao Agent that logs in with the
+# AppRole secret-zero and renders the launcher's two key files from one KV
+# path. services.yml includes this before the launcher unit is installed, so
+# the agent runs and the key files exist before the launcher starts. Every task
+# here runs only while openhands_service_enabled is true.
+
+- name: Check the launcher key agent's AppRole and store address are set
+  ansible.builtin.set_fact:
+    openhands_key_agent_inputs_set: >-
+      {{ openhands_approle_role_id | length > 0
+         and openhands_approle_secret_id | length > 0
+         and openhands_store_subdomain | length > 0 }}
+  no_log: true
+  when: openhands_service_enabled | bool
+
+- name: Require the launcher key agent's AppRole and store address
+  ansible.builtin.assert:
+    that:
+      - openhands_key_agent_inputs_set | bool
+    fail_msg: >-
+      The launcher key agent needs the OPENBAO_APPROLE_OPENHANDS_ROLE_ID and
+      OPENBAO_APPROLE_OPENHANDS_SECRET_ID values and PROXMOX_SUBDOMAIN in the
+      converge environment.
+    quiet: true
+  when: openhands_service_enabled | bool
+
+- name: Install the OpenBao client the launcher key agent runs
+  ansible.builtin.apt:
+    deb: "{{ openhands_store_deb_url }}"
+    state: present
+  when: openhands_service_enabled | bool
+
+- name: Create the AppRole credential and launcher key directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - "{{ openhands_approle_dir }}"
+    - "{{ openhands_backend_key_file | dirname }}"
+    - "{{ openhands_router_key_file | dirname }}"
+  loop_control:
+    label: "{{ item }}"
+  when: openhands_service_enabled | bool
+
+# Bare-value files, not KEY=VALUE: the agent reads each whole file as the
+# credential, so an env-file shape would authenticate as the wrong text.
+# Under --check the directories above are only previewed, so the files that go
+# in them are skipped, as services.yml does for the services venv.
+- name: Deploy the AppRole role_id
+  ansible.builtin.copy:
+    content: "{{ openhands_approle_role_id }}"
+    dest: "{{ openhands_approle_dir }}/role_id"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  register: openhands_key_agent_role_id_file
+  when: openhands_service_enabled | bool and not ansible_check_mode
+
+- name: Deploy the AppRole secret_id
+  ansible.builtin.copy:
+    content: "{{ openhands_approle_secret_id }}"
+    dest: "{{ openhands_approle_dir }}/secret_id"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  register: openhands_key_agent_secret_id_file
+  when: openhands_service_enabled | bool and not ansible_check_mode
+
+- name: Deploy the launcher key agent configuration
+  ansible.builtin.template:
+    src: openhands-secrets-agent.hcl.j2
+    dest: "{{ openhands_store_config }}"
+    owner: root
+    group: root
+    mode: "0600"
+  register: openhands_key_agent_config_file
+  when: openhands_service_enabled | bool and not ansible_check_mode
+
+# Under --check a first install only previews unit files, so service steps skip.
+- name: Check for the launcher key agent systemd unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/openhands-secrets-agent.service
+  register: openhands_key_agent_unit_stat
+  when: ansible_check_mode and openhands_service_enabled | bool
+
+- name: Deploy the launcher key agent systemd unit
+  ansible.builtin.template:
+    src: openhands-secrets-agent.service.j2
+    dest: /etc/systemd/system/openhands-secrets-agent.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: openhands_key_agent_unit_file
+  when: openhands_service_enabled | bool
+
+# A new AppRole, configuration or unit needs a fresh agent: it logs in once per
+# start and reads its configuration once. This is an explicit task, not a
+# handler, because a handler flush would also apply the launcher restart that
+# services.yml queues earlier, before the launcher unit exists on a first enable.
+- name: Restart the launcher key agent after its AppRole, configuration or unit changed
+  ansible.builtin.systemd_service:
+    name: openhands-secrets-agent.service
+    state: restarted
+    daemon_reload: true
+  when:
+    - openhands_service_enabled | bool
+    - not ansible_check_mode
+    - >-
+      openhands_key_agent_role_id_file is changed
+      or openhands_key_agent_secret_id_file is changed
+      or openhands_key_agent_config_file is changed
+      or openhands_key_agent_unit_file is changed
+
+- name: Enable and start the launcher key agent
+  ansible.builtin.systemd_service:
+    name: openhands-secrets-agent.service
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: openhands_service_enabled | bool and (not ansible_check_mode or openhands_key_agent_unit_stat.stat.exists)
+
+# The launcher reads these at start. Waiting here turns an agent that cannot log
+# in into a failed converge, not a launcher stuck in a restart loop.
+- name: Wait for the launcher key files the agent renders
+  ansible.builtin.wait_for:
+    path: "{{ item }}"
+    timeout: 120
+  loop:
+    - "{{ openhands_backend_key_file }}"
+    - "{{ openhands_router_key_file }}"
+  loop_control:
+    label: "{{ item | basename }}"
+  changed_when: false
+  when: openhands_service_enabled | bool and not ansible_check_mode
