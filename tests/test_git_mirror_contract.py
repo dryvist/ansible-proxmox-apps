@@ -69,7 +69,7 @@ class GitMirrorContract(unittest.TestCase):
         self.assertIn("git_mirror_sync_last_success_timestamp_seconds", script)
         self.assertIn("Probe the public tree without credentials", task_text)
         self.assertIn("Probe the all tree with HTTP basic authentication", task_text)
-        self.assertIn("http_401_tls", (ROOT / "roles/prometheus_stack/defaults/main.yml").read_text())
+        self.assertIn("http_401_tls", (ROOT / "roles/prometheus_stack/defaults/main/00-core.yml").read_text())
 
     def test_grafana_git_mirror_alerts_check_freshness_and_sync_status(self):
         defaults = yaml.safe_load((ROOT / "roles/grafana_stack/defaults/main.yml").read_text())
