@@ -24,7 +24,10 @@
       - dpkg
       - --audit
   register: apt_recovery_audit
+  check_mode: false
   changed_when: false
+  environment:
+    LC_ALL: C
 
 - name: Complete pending dpkg configuration
   ansible.builtin.command:
@@ -39,16 +42,57 @@
   changed_when: >-
     apt_recovery_configure.stdout is
     search('(?m)^(Setting up|Processing triggers for) ')
+  # dpkg returns 1 for package processing errors, including unmet dependencies.
+  # Audit and repair those below; fatal invocation errors must still stop here.
+  failed_when: apt_recovery_configure.rc not in [0, 1]
+  environment:
+    LC_ALL: C
 
-- name: Verify dpkg configuration is complete
-  ansible.builtin.command:
-    argv:
-      - dpkg
-      - --audit
-  register: apt_recovery_post_audit
-  changed_when: false
-  failed_when: >-
-    apt_recovery_post_audit.rc != 0 or
-    apt_recovery_post_audit.stdout | trim | length > 0 or
-    apt_recovery_post_audit.stderr | trim | length > 0
-  when: apt_recovery_configure is not skipped
+- name: Repair and verify remaining package configuration
+  when: >-
+    apt_recovery_audit.stdout | trim | length > 0 or
+    apt_recovery_audit.stderr | trim | length > 0
+  environment:
+    LC_ALL: C
+  block:
+    - name: Audit packages after pending dpkg configuration
+      ansible.builtin.command:
+        argv:
+          - dpkg
+          - --audit
+      register: apt_recovery_post_audit
+      check_mode: false
+      changed_when: false
+
+    - name: Repair broken dependencies without removing packages
+      ansible.builtin.apt:
+        name: "{{ apt_recovery_packages }}"
+        state: fixed
+        force_apt_get: true
+        autoremove: false
+        fail_on_autoremove: true
+      vars:
+        # state=fixed with no names is a no-op in ansible-core. dpkg --audit
+        # indents package names; retain architecture qualifiers when present.
+        apt_recovery_packages: >-
+          {{ apt_recovery_post_audit.stdout
+             | regex_findall('(?m)^[ \t]+([a-z0-9][a-z0-9+.-]*(?::[a-z0-9-]+)?)(?:[ \t]|$)')
+             | unique | list }}
+      when: apt_recovery_packages | length > 0
+  always:
+    # A simulated apt transaction cannot prove recovery. Read the real state
+    # even in check mode and retain dpkg's package names in any failure output.
+    - name: Verify dpkg configuration is complete
+      ansible.builtin.command:
+        argv:
+          - dpkg
+          - --audit
+      register: apt_recovery_final_audit
+      check_mode: false
+      changed_when: false
+      # Check mode reports the real state but cannot fail on a repair it only simulated.
+      failed_when: >-
+        not ansible_check_mode and (
+        apt_recovery_final_audit.rc != 0 or
+        apt_recovery_final_audit.stdout | trim | length > 0 or
+        apt_recovery_final_audit.stderr | trim | length > 0)
