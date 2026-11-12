@@ -1,5 +1,19 @@
 # Changelog
 
+## [5.42.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.41.0...v5.42.0) (2026-11-12)
+
+
+### Features
+
+* **github_actions_exporter:** export the Actions runner queue ([#3582](https://github.com/dryvist/ansible-proxmox-apps/issues/3582)) ([c8f1d89](https://github.com/dryvist/ansible-proxmox-apps/commit/c8f1d898585624da761a8c4cdc925d8aee1e05e4))
+
+
+### Bug Fixes
+
+* **apt_recovery:** repair broken dependencies with apt state fixed ([#3579](https://github.com/dryvist/ansible-proxmox-apps/issues/3579)) ([85b0d45](https://github.com/dryvist/ansible-proxmox-apps/commit/85b0d451ba9e1772047c3a1483f298efc3f099bd))
+* **apt_recovery:** run package-free fix-broken repair ([#3580](https://github.com/dryvist/ansible-proxmox-apps/issues/3580)) ([182eb66](https://github.com/dryvist/ansible-proxmox-apps/commit/182eb662be6e5c7495d53904550570cbcb325d27))
+* **deps:** pin ansible-secrets-management to v0.97.0 ([#3577](https://github.com/dryvist/ansible-proxmox-apps/issues/3577)) ([8b1673b](https://github.com/dryvist/ansible-proxmox-apps/commit/8b1673b466b460641e879613cc5668896f414e0a))
+
 ## [5.41.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.40.0...v5.41.0) (2026-11-12)
 
 
