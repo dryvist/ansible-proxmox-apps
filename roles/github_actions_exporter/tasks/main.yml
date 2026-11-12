@@ -1,0 +1,74 @@
+---
+- name: Set whether the GitHub Actions exporter token is provisioned
+  ansible.builtin.set_fact:
+    github_actions_exporter_token_present: >-
+      {{ github_actions_exporter_token | default('', true) | trim | length > 0 }}
+  no_log: true
+
+- name: Skip GitHub Actions exporter deployment when no token is provisioned
+  ansible.builtin.debug:
+    msg: >-
+      github_actions_exporter_token is empty — skipping exporter deployment.
+      Set the token in the environment and converge the prometheus group again.
+  when: not github_actions_exporter_token_present
+
+- name: Deploy the GitHub Actions exporter
+  when: github_actions_exporter_token_present
+  block:
+    - name: Require an inventory-provided organization
+      ansible.builtin.assert:
+        that:
+          - github_actions_exporter_org | default('', true) | trim | length > 0
+        fail_msg: github_actions_exporter_org must be supplied by inventory.
+        quiet: true
+
+    - name: Create GitHub Actions exporter data directory
+      ansible.builtin.file:
+        path: "{{ github_actions_exporter_data_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Render GitHub Actions exporter environment
+      ansible.builtin.template:
+        src: exporter.env.j2
+        dest: "{{ github_actions_exporter_data_dir }}/exporter.env"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      notify: Restart GitHub Actions exporter
+
+    - name: Render GitHub Actions exporter docker-compose file
+      ansible.builtin.template:
+        src: docker-compose.yml.j2
+        dest: "{{ github_actions_exporter_data_dir }}/docker-compose.yml"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart GitHub Actions exporter
+
+    - name: Deploy the GitHub Actions exporter with Docker Compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ github_actions_exporter_data_dir }}"
+        state: present
+      register: github_actions_exporter_compose
+
+    - name: Verify the GitHub Actions exporter health endpoint
+      ansible.builtin.uri:
+        url: "http://{{ prometheus_stack_github_actions_exporter_address }}/healthz"
+        method: GET
+        status_code: 200
+      register: github_actions_exporter_health
+      retries: 10
+      delay: 5
+      until: github_actions_exporter_health.status | default(0) == 200
+      changed_when: false
+      check_mode: false
+      when: >-
+        not ansible_check_mode or
+        (
+          not (github_actions_exporter_compose.skipped | default(false)) and
+          (github_actions_exporter_compose.actions | default([]) | length == 0)
+        )

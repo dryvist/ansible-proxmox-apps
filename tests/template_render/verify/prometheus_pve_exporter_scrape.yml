@@ -51,6 +51,7 @@
     - "../../../roles/prometheus_stack/defaults/main.yml"
     - "../../../inventory/group_vars/prometheus_group/00-remote-write.yml"
     - "../../../inventory/group_vars/prometheus_group/10-pve-exporters.yml"
+    - "../../../inventory/group_vars/prometheus_group/15-github-actions-exporter.yml"
     - "../../../inventory/group_vars/prometheus_group/20-guest-exporters.yml"
     - "../../../inventory/group_vars/prometheus_group/30-tagged-exporters.yml"
     - "../../../inventory/group_vars/prometheus_group/40-gpu-exporters.yml"
@@ -93,6 +94,28 @@
           The PVE exporter job must query each commissioned node through the
           local exporter and pass the node as __param_target. Rendered: {{ _jobs }}
         success_msg: One PVE exporter scrape job with inventory targets and relabeling.
+
+    - name: Isolate the GitHub Actions exporter job
+      ansible.builtin.set_fact:
+        _github_actions_jobs: >-
+          {{ _rendered.scrape_configs
+             | selectattr('job_name', 'equalto', 'github_actions_exporter')
+             | list }}
+
+    - name: Assert the GitHub Actions exporter is scraped beside Prometheus
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _github_actions_jobs | length == 1
+          - _github_actions_jobs[0].scrape_interval == '60s'
+          - _github_actions_jobs[0].scrape_timeout == '30s'
+          - >-
+            _github_actions_jobs[0].static_configs[0].targets
+            == [prometheus_stack_github_actions_exporter_address]
+        fail_msg: >-
+          The GitHub Actions exporter job must target the local exporter with
+          an explicit interval and timeout. Rendered: {{ _github_actions_jobs }}
+        success_msg: GitHub Actions exporter target and scrape timing render correctly.
 
     - name: Isolate the PVE node_exporter job
       ansible.builtin.set_fact:
