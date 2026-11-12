@@ -1,5 +1,6 @@
 ## Managed by Ansible (prometheus_stack role) — do not edit by hand.
-## Single compose project, two services, both on host networking:
+## Single compose project; Prometheus, blackbox_exporter and json_exporter use
+## host networking:
 ##   - prometheus: reaches scrape targets across VLANs; scrapes the co-located
 ##     blackbox exporter on 127.0.0.1. TSDB persists in a named volume across
 ##     container recreates.
@@ -42,6 +43,34 @@ services:
       - "--web.listen-address=:{{ prometheus_stack_blackbox_port }}"
     volumes:
       - {{ prometheus_stack_data_dir }}/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+
+{% set _json_exporters = namespace(items=[]) %}
+{% for executor in prometheus_stack_json_exporter_executors %}
+{% if prometheus_stack_json_exporter_credentials.get(executor.credential_name, '') | trim | length > 0 %}
+{% set _ = _json_exporters.items.append(executor) %}
+{% endif %}
+{% endfor %}
+{% if _json_exporters.items | length > 0 %}
+  json-exporter:
+    image: {{ prometheus_stack_json_exporter_image }}
+    container_name: {{ prometheus_stack_json_exporter_container_name }}
+    restart: unless-stopped
+    network_mode: host
+    user: "{{ prometheus_stack_json_exporter_uid }}:{{ prometheus_stack_json_exporter_gid }}"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command:
+      - "--config.file={{ prometheus_stack_json_exporter_config_container_path }}"
+      - "--web.listen-address={{ prometheus_stack_json_exporter_address | trim }}"
+    volumes:
+      - "{{ prometheus_stack_json_exporter_config_host_path }}:{{ prometheus_stack_json_exporter_config_container_path }}:ro"
+{% for executor in _json_exporters.items %}
+      - "{{ prometheus_stack_data_dir }}/{{ executor.credential_path_suffix }}:{{ executor.credentials_file }}:ro"
+{% endfor %}
+{% endif %}
 
 volumes:
   prometheus-data:

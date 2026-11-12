@@ -74,6 +74,11 @@
         - { name: radarr-under-test, group: radarr_group }
         - { name: plex-under-test, group: plex_group }
 
+    - name: Set a scrape-only credential fixture after loading vars files
+      ansible.builtin.set_fact:
+        prometheus_stack_json_exporter_credentials:
+          zcode: test-fixture
+
     - name: Publish the fixture inventory for template evaluation
       ansible.builtin.set_fact:
         tofu_data: "{{ _fixture_tofu_data }}"
@@ -131,6 +136,34 @@
         that:
           - _media_jobs[0].relabel_configs[3].replacement is match('^[A-Za-z0-9.-]+:[0-9]+$')
         fail_msg: The media JSON exporter replacement must use the guest target name.
+
+    - name: Isolate the agent quota scrape job
+      ansible.builtin.set_fact:
+        _agent_quota_jobs: "{{ _rendered.scrape_configs | selectattr('job_name', 'equalto', 'agent_quota') | list }}"
+
+    - name: Assert each declared executor uses the co-located json_exporter
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _agent_quota_jobs | length == 1
+          - >-
+            _agent_quota_jobs[0].static_configs | map(attribute='targets') | flatten
+            == prometheus_stack_json_exporter_executors | map(attribute='url') | list
+          - >-
+            _agent_quota_jobs[0].static_configs | map(attribute='labels.module') | list
+            == prometheus_stack_json_exporter_executors | map(attribute='module') | list
+          - >-
+            _agent_quota_jobs[0].static_configs | map(attribute='labels.executor') | list
+            == prometheus_stack_json_exporter_executors | map(attribute='name') | list
+          - _agent_quota_jobs[0].metrics_path == '/probe'
+          - _agent_quota_jobs[0].relabel_configs[0].target_label == '__param_target'
+          - _agent_quota_jobs[0].relabel_configs[1].target_label == '__param_module'
+          - _agent_quota_jobs[0].relabel_configs[3].target_label == '__address__'
+          - _agent_quota_jobs[0].relabel_configs[3].replacement == prometheus_stack_json_exporter_address | trim
+          - _agent_quota_jobs[0].relabel_configs[4].action == 'labeldrop'
+          - _agent_quota_jobs[0].relabel_configs[4].regex == '^module$'
+          - "'test-fixture' not in _rendered_text"
+        fail_msg: The agent quota scrape must probe each declared executor through json_exporter.
 
     - name: Render with no guest target for the download guest
       ansible.builtin.set_fact:
