@@ -88,6 +88,38 @@ scrape_configs:
       - action: labeldrop
         regex: "^(module|media_target)$"
 {% endif %}
+{% set _quota_exporters = namespace(items=[]) %}
+{% for executor in prometheus_stack_json_exporter_executors %}
+{% if prometheus_stack_json_exporter_credentials.get(executor.credential_name, '') | trim | length > 0 %}
+{% set _ = _quota_exporters.items.append(executor) %}
+{% endif %}
+{% endfor %}
+{% if _quota_exporters.items | length > 0 %}
+
+  ## ZCode quota through the co-located json_exporter.
+  - job_name: agent_quota
+    metrics_path: /probe
+    scrape_interval: 60s
+    scrape_timeout: 30s
+    static_configs:
+{% for executor in _quota_exporters.items %}
+      - targets: [{{ executor.url | to_json }}]
+        labels:
+          module: {{ executor.module | to_json }}
+          executor: {{ executor.name | to_json }}
+{% endfor %}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [module]
+        target_label: __param_module
+      - source_labels: [executor]
+        target_label: instance
+      - target_label: __address__
+        replacement: {{ prometheus_stack_json_exporter_address | trim | to_json }}
+      - action: labeldrop
+        regex: "^module$"
+{% endif %}
 {% if prometheus_stack_traefik_targets | length > 0 %}
 
   ## Traefik ingress — per-router/service/entryPoint RED metrics for every
