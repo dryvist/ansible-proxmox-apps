@@ -82,40 +82,48 @@ def test_lock_wait_is_bounded_and_recovery_only_runs_for_incomplete_dpkg():
     assert tasks[-1]["always"][-1]["failed_when"]
 
 
-@pytest.mark.parametrize(
-    "audit",
-    [
-        BROKEN_AUDIT,
-        BROKEN_AUDIT.replace(" Standard library for Python", "").replace(
-            "           Interactive high-level object-oriented language", ""
-        ),
-    ],
-    ids=["package-descriptions", "package-names-only"],
-)
-def test_fix_broken_uses_audited_package_names_and_forbids_removals(audit):
+def test_fix_broken_runs_without_package_names_and_forbids_removals():
     tasks = _load(ROOT / "roles/apt_recovery/tasks/main.yml")
     recovery = tasks[-1]
     post_audit, repair = recovery["block"]
-    apt = repair["ansible.builtin.apt"]
+    command = repair["ansible.builtin.command"]
 
     assert post_audit["ansible.builtin.command"]["argv"] == ["dpkg", "--audit"]
     assert post_audit["register"] == "apt_recovery_post_audit"
     assert recovery["environment"]["LC_ALL"] == "C"
-    assert apt == {
-        "name": "{{ apt_recovery_packages }}",
-        "state": "fixed",
-        "force_apt_get": True,
-        "autoremove": False,
-        "fail_on_autoremove": True,
-    }
-    packages = _render(
-        repair["vars"]["apt_recovery_packages"],
-        apt_recovery_post_audit={"stdout": audit},
+    normal_argv = _render(command["argv"], ansible_check_mode=False)
+    check_argv = _render(command["argv"], ansible_check_mode=True)
+    assert normal_argv == [
+        "apt-get",
+        "-y",
+        "--fix-broken",
+        "--no-remove",
+        "install",
+    ]
+    assert check_argv == [
+        "apt-get",
+        "-y",
+        "--fix-broken",
+        "--no-remove",
+        "--simulate",
+        "install",
+    ]
+    assert "name" not in command
+    # The command form preserves fail_on_autoremove=true and autoremove=false.
+    assert "--no-remove" in normal_argv
+    assert "--auto-remove" not in normal_argv
+    assert repair["check_mode"] is False
+    assert repair["changed_when"] == "not ansible_check_mode"
+    assert "apt_recovery_post_audit.stdout" in repair["when"]
+    assert "apt_recovery_post_audit.stderr" in repair["when"]
+    assert _render(
+        "{{ " + repair["when"] + " }}",
+        apt_recovery_post_audit={"stdout": BROKEN_AUDIT, "stderr": ""},
     )
-    assert packages == ["libpython3.13-stdlib:amd64", "python3.13"]
-    assert _render(apt["name"], apt_recovery_packages=packages) == packages
-    assert _render("{{ " + repair["when"] + " }}", apt_recovery_packages=packages)
-    assert not _render("{{ " + repair["when"] + " }}", apt_recovery_packages=[])
+    assert not _render(
+        "{{ " + repair["when"] + " }}",
+        apt_recovery_post_audit={"stdout": "", "stderr": ""},
+    )
 
 
 @pytest.mark.parametrize("return_code,failed", [(0, False), (1, False), (2, True)])
@@ -152,12 +160,12 @@ def test_final_audit_fails_real_runs_and_reports_in_check_mode(audit, failed):
     post_audit, repair = recovery["block"]
     final_audit = recovery["always"][-1]
 
-    # Only read-only probes force execution in check mode. dpkg configuration
-    # skips normally, apt simulates, and neither bypasses the final real audit.
+    # The repair command runs apt-get --simulate in check mode, while dpkg
+    # configuration skips normally and neither bypasses the final real audit.
     assert tasks[1]["check_mode"] is False
     assert "check_mode" not in tasks[2]
     assert post_audit["check_mode"] is False
-    assert "check_mode" not in repair
+    assert repair["check_mode"] is False
     assert final_audit["check_mode"] is False
     assert "when" not in final_audit
     assert final_audit["ansible.builtin.command"]["argv"] == ["dpkg", "--audit"]
