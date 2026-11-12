@@ -141,6 +141,12 @@ class OpenHandsCanvasInstall(unittest.TestCase):
         self.assertIn("--global", argv)
         self.assertIn("{{ openhands_canvas_dir }}", argv)
 
+    def test_canvas_install_has_its_own_declared_timeout(self):
+        install = _task(_install(), "Install Agent Canvas through the npm cache")
+        self.assertEqual(install["timeout"], "{{ openhands_canvas_install_timeout }}")
+        defaults = yaml.safe_load((ROLE / "defaults" / "main.yml").read_text())
+        self.assertGreater(defaults["openhands_canvas_install_timeout"], 240)
+
     def test_canvas_reinstalls_only_when_the_pin_is_not_installed(self):
         tasks = _install()
         query = _task(tasks, "Read the installed Agent Canvas release")
