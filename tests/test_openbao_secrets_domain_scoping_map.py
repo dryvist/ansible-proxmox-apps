@@ -1,6 +1,6 @@
 """The domain->groups scoping map names only real domains and real groups.
 
-playbooks/site/00-load-and-telemetry.yml's "Pre-fetch resource-domain
+playbooks/site/00-resource-domain-secrets-prefetch.yml's "Pre-fetch resource-domain
 secrets from OpenBao" play declares openbao_secrets_domain_groups (which
 domains this run's hosts need, per group) as hand-maintained data,
 independent of the domain catalog in dryvist.secrets_management's
@@ -29,7 +29,7 @@ from jinja2 import Template
 from secrets_collection_support import SECRETS_DOMAIN_CATALOG
 
 ROOT = Path(__file__).resolve().parent.parent
-PLAYBOOK = ROOT / "playbooks" / "site" / "00-load-and-telemetry.yml"
+PLAYBOOK = ROOT / "playbooks" / "site" / "00-resource-domain-secrets-prefetch.yml"
 SCOPE_DETECT_PLAYBOOK = ROOT / "playbooks" / "site" / "00a-secrets-scope-detect.yml"
 DOMAIN_GROUPS_FILE = ROOT / "playbooks" / "site" / "vars" / "openbao_secrets_domain_groups.yml"
 DOMAINS_FILE = SECRETS_DOMAIN_CATALOG

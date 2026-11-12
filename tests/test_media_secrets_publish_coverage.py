@@ -21,7 +21,9 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GROUP_VARS = REPO_ROOT / "inventory" / "group_vars"
-TELEMETRY_PLAYBOOK = REPO_ROOT / "playbooks" / "site" / "00-load-and-telemetry.yml"
+PREFETCH_PLAYBOOK = (
+    REPO_ROOT / "playbooks" / "site" / "00-resource-domain-secrets-prefetch.yml"
+)
 MEDIA_CONVERGE_PLAYBOOK = REPO_ROOT / "playbooks" / "site" / "05-media-and-gate.yml"
 PUBLISH_TASK_FILE = REPO_ROOT / "playbooks" / "tasks" / "publish_secret_domain_facts.yml"
 PREFETCH_PLAY = "Pre-fetch resource-domain secrets from OpenBao"
@@ -65,7 +67,7 @@ def _consumer_groups() -> set:
 
 class TestMediaSecretsPublishCoverage(unittest.TestCase):
     def test_every_bao_media_secrets_consumer_is_published_by_the_prefetch_play(self):
-        text = TELEMETRY_PLAYBOOK.read_text()
+        text = PREFETCH_PLAYBOOK.read_text()
         consumer_groups = _consumer_groups()
         plays = yaml.safe_load(text)
         prefetch = next(play for play in plays if play.get("name") == PREFETCH_PLAY)
