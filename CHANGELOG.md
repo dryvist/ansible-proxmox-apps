@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.42.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.42.0...v5.42.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **github_actions_exporter:** runner-group org source, verify play become, skip message ([#3591](https://github.com/dryvist/ansible-proxmox-apps/issues/3591)) ([bfc1ba6](https://github.com/dryvist/ansible-proxmox-apps/commit/bfc1ba675c5502e1c2d00281dcdf5512082fd0e3))
+
 ## [5.42.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.41.0...v5.42.0) (2026-11-12)
 
 
