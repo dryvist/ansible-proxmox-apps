@@ -12,7 +12,10 @@ ROLE = ROOT / "roles/prometheus_stack"
 
 
 def _defaults():
-    return yaml.safe_load((ROLE / "defaults/main.yml").read_text(encoding="utf-8"))
+    merged = {}
+    for path in sorted((ROLE / "defaults/main").glob("*.yml")):
+        merged.update(yaml.safe_load(path.read_text(encoding="utf-8")))
+    return merged
 
 
 def _render_module_config(defaults):
