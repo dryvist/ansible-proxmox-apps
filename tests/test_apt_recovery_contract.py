@@ -2,7 +2,10 @@
 
 from pathlib import Path
 
+import pytest
 import yaml
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar, trust_as_template
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,6 +13,24 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _load(path):
     return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _render(expression, **variables):
+    templar = Templar(loader=DataLoader())
+    templar.available_variables = variables
+    return templar.template(trust_as_template(expression))
+
+
+BROKEN_AUDIT = """The following packages are in a mess due to serious problems during
+installation. They must be reinstalled for them (and any packages
+that depend on them) to function properly:
+ libpython3.13-stdlib:amd64 Standard library for Python
+
+The following packages have been unpacked but not yet configured.
+They must be configured using dpkg --configure or the configure
+menu option in dselect for them to work:
+ python3.13           Interactive high-level object-oriented language
+"""
 
 
 def test_recovery_precedes_homarr_package_install_and_long_installer_is_polled():
@@ -58,4 +79,104 @@ def test_lock_wait_is_bounded_and_recovery_only_runs_for_incomplete_dpkg():
     assert configure_index > audit_index
     assert "apt_recovery_audit.stdout" in configure["when"]
     assert configure["changed_when"]
-    assert tasks[-1]["failed_when"]
+    assert tasks[-1]["always"][-1]["failed_when"]
+
+
+def test_fix_broken_runs_without_package_names_and_forbids_removals():
+    tasks = _load(ROOT / "roles/apt_recovery/tasks/main.yml")
+    recovery = tasks[-1]
+    post_audit, repair = recovery["block"]
+    command = repair["ansible.builtin.command"]
+
+    assert post_audit["ansible.builtin.command"]["argv"] == ["dpkg", "--audit"]
+    assert post_audit["register"] == "apt_recovery_post_audit"
+    assert recovery["environment"]["LC_ALL"] == "C"
+    normal_argv = _render(command["argv"], ansible_check_mode=False)
+    check_argv = _render(command["argv"], ansible_check_mode=True)
+    assert normal_argv == [
+        "apt-get",
+        "-y",
+        "--fix-broken",
+        "--no-remove",
+        "install",
+    ]
+    assert check_argv == [
+        "apt-get",
+        "-y",
+        "--fix-broken",
+        "--no-remove",
+        "--simulate",
+        "install",
+    ]
+    assert "name" not in command
+    # The command form preserves fail_on_autoremove=true and autoremove=false.
+    assert "--no-remove" in normal_argv
+    assert "--auto-remove" not in normal_argv
+    assert repair["check_mode"] is False
+    assert repair["changed_when"] == "not ansible_check_mode"
+    assert "apt_recovery_post_audit.stdout" in repair["when"]
+    assert "apt_recovery_post_audit.stderr" in repair["when"]
+    assert _render(
+        "{{ " + repair["when"] + " }}",
+        apt_recovery_post_audit={"stdout": BROKEN_AUDIT, "stderr": ""},
+    )
+    assert not _render(
+        "{{ " + repair["when"] + " }}",
+        apt_recovery_post_audit={"stdout": "", "stderr": ""},
+    )
+
+
+@pytest.mark.parametrize("return_code,failed", [(0, False), (1, False), (2, True)])
+def test_dpkg_processing_errors_reach_fix_broken_but_fatal_errors_stop(return_code, failed):
+    configure = _load(ROOT / "roles/apt_recovery/tasks/main.yml")[2]
+    assert _render(
+        "{{ " + configure["failed_when"] + " }}",
+        apt_recovery_configure={"rc": return_code},
+    ) is failed
+
+
+@pytest.mark.parametrize("audit,needs_recovery", [("", False), (BROKEN_AUDIT, True)])
+def test_clean_audit_skips_configuration_and_repair(audit, needs_recovery):
+    tasks = _load(ROOT / "roles/apt_recovery/tasks/main.yml")
+    for task in (tasks[2], tasks[-1]):
+        assert _render(
+            "{{ " + task["when"] + " }}",
+            apt_recovery_audit={"stdout": audit, "stderr": ""},
+        ) is needs_recovery
+
+
+@pytest.mark.parametrize(
+    "audit,failed",
+    [
+        ({"rc": 0, "stdout": "", "stderr": ""}, False),
+        ({"rc": 0, "stdout": BROKEN_AUDIT, "stderr": ""}, True),
+        ({"rc": 0, "stdout": "", "stderr": "dpkg warning"}, True),
+        ({"rc": 2, "stdout": "", "stderr": ""}, True),
+    ],
+)
+def test_final_audit_fails_real_runs_and_reports_in_check_mode(audit, failed):
+    tasks = _load(ROOT / "roles/apt_recovery/tasks/main.yml")
+    recovery = tasks[-1]
+    post_audit, repair = recovery["block"]
+    final_audit = recovery["always"][-1]
+
+    # The repair command runs apt-get --simulate in check mode, while dpkg
+    # configuration skips normally and neither bypasses the final real audit.
+    assert tasks[1]["check_mode"] is False
+    assert "check_mode" not in tasks[2]
+    assert post_audit["check_mode"] is False
+    assert repair["check_mode"] is False
+    assert final_audit["check_mode"] is False
+    assert "when" not in final_audit
+    assert final_audit["ansible.builtin.command"]["argv"] == ["dpkg", "--audit"]
+    assert final_audit["changed_when"] is False
+    assert _render(
+        "{{ " + final_audit["failed_when"] + " }}",
+        apt_recovery_final_audit=audit,
+        ansible_check_mode=False,
+    ) is failed
+    assert _render(
+        "{{ " + final_audit["failed_when"] + " }}",
+        apt_recovery_final_audit=audit,
+        ansible_check_mode=True,
+    ) is False
