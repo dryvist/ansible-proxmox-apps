@@ -65,19 +65,20 @@
       changed_when: false
 
     - name: Repair broken dependencies without removing packages
-      ansible.builtin.command:
-        argv: >-
-          {{
-            ['apt-get', '-y', '--fix-broken', '--no-remove']
-            + (['--simulate'] if ansible_check_mode else [])
-            + ['install']
-          }}
-      # The command module must run for apt-get's explicit check-mode simulation.
-      check_mode: false
-      changed_when: not ansible_check_mode
-      when: >-
-        apt_recovery_post_audit.stdout | trim | length > 0 or
-        apt_recovery_post_audit.stderr | trim | length > 0
+      ansible.builtin.apt:
+        name: "{{ apt_recovery_packages }}"
+        state: fixed
+        force_apt_get: true
+        autoremove: false
+        fail_on_autoremove: true
+      vars:
+        # state=fixed with no names is a no-op in ansible-core. dpkg --audit
+        # indents package names; retain architecture qualifiers when present.
+        apt_recovery_packages: >-
+          {{ apt_recovery_post_audit.stdout
+             | regex_findall('(?m)^[ \t]+([a-z0-9][a-z0-9+.-]*(?::[a-z0-9-]+)?)(?:[ \t]|$)')
+             | unique | list }}
+      when: apt_recovery_packages | length > 0
   always:
     # A simulated apt transaction cannot prove recovery. Read the real state
     # even in check mode and retain dpkg's package names in any failure output.
