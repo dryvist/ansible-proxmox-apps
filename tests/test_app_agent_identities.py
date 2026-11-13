@@ -136,12 +136,13 @@ def test_vikunja_clerk_tokens_use_the_shared_idempotent_publisher():
     users = {user["username"]: user for user in defaults["vikunja_service_users"]}
     assert users["svc-mcp-clerk"]["password"] == ""
     clerk_user = next(user for user in group_vars["vikunja_service_users"] if user["username"] == "svc-mcp-clerk")
-    assert "bao_apps_secrets.svc_mcp_clerk_password" in clerk_user["password"]
+    password_field = "svc_mcp_clerk_password"
+    assert f"bao_apps_secrets.{password_field}" in clerk_user["password"]
 
     tracked_paths = subprocess.check_output(
         ["git", "ls-files", "-z"], cwd=ROOT
     ).decode().split("\0")
-    removed_env_name = b"VIKUNJA_SVC_MCP_" + b"CLERK_PASSWORD"
+    removed_env_name = f"VIKUNJA_{password_field.upper()}".encode()
     assert not any(
         removed_env_name in (ROOT / path).read_bytes()
         for path in tracked_paths
