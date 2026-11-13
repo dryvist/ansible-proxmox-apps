@@ -157,6 +157,7 @@ def test_the_token_row_joins_the_existing_mint_loop():
     loop = _render(find(MCP_LOOP, MCP_TOKENS)["loop"], defaults())
     assert loop == (
         defaults()["vikunja_mcp_token_users"]
+        + defaults()["vikunja_clerk_token_users"]
         + defaults()["vikunja_openhands_token_users"]
         + defaults()["vikunja_agent_tiers"]
     )
