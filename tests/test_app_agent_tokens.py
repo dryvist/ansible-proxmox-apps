@@ -5,6 +5,22 @@ import subprocess
 from app_agent_helpers import ROOT, _render, _task, _vikunja_defaults, _yaml
 
 
+_MISSING = object()
+
+
+def _token_include_runs(include_task, user, clerk_password=_MISSING):
+    clerk_user = {"username": "svc-mcp-clerk"}
+    if clerk_password is not _MISSING:
+        clerk_user["password"] = clerk_password
+    return _render(
+        "{{ " + include_task["when"] + " }}",
+        {
+            "vikunja_mcp_user": user,
+            "vikunja_service_users": [clerk_user],
+        },
+    )
+
+
 def test_vikunja_interactive_and_agent_tokens_publish_to_separate_leaves():
     defaults = _vikunja_defaults()
     tasks = _yaml("roles/vikunja/tasks/mcp_token_one.yml")
@@ -51,6 +67,45 @@ def test_vikunja_interactive_and_agent_tokens_publish_to_separate_leaves():
     assert " ".join(token_loop["loop"].split()) == (
         "{{ vikunja_mcp_token_users + vikunja_clerk_token_users + vikunja_openhands_token_users + vikunja_agent_tiers }}"
     )
+
+
+def test_vikunja_clerk_tokens_skip_when_service_password_is_empty():
+    defaults = _vikunja_defaults()
+    token_loop = _task(
+        _yaml("roles/vikunja/tasks/mcp_tokens.yml"),
+        "Mint and publish MCP and app-agent tokens per identity",
+    )
+
+    for password in (_MISSING, ""):
+        for user in defaults["vikunja_clerk_token_users"]:
+            assert _token_include_runs(token_loop, user, password) in (False, "False")
+
+
+def test_vikunja_clerk_tokens_run_when_service_password_is_set():
+    defaults = _vikunja_defaults()
+    token_loop = _task(
+        _yaml("roles/vikunja/tasks/mcp_tokens.yml"),
+        "Mint and publish MCP and app-agent tokens per identity",
+    )
+
+    for user in defaults["vikunja_clerk_token_users"]:
+        assert _token_include_runs(token_loop, user, "fixture-password") in (True, "True")
+
+
+def test_vikunja_other_token_users_run_when_clerk_password_is_empty():
+    defaults = _vikunja_defaults()
+    token_loop = _task(
+        _yaml("roles/vikunja/tasks/mcp_tokens.yml"),
+        "Mint and publish MCP and app-agent tokens per identity",
+    )
+    other_users = (
+        defaults["vikunja_mcp_token_users"]
+        + defaults["vikunja_openhands_token_users"]
+        + defaults["vikunja_agent_tiers"]
+    )
+
+    for user in other_users:
+        assert _token_include_runs(token_loop, user, "") in (True, "True")
 
 
 def test_vikunja_clerk_tokens_use_the_shared_idempotent_publisher():
@@ -165,13 +220,15 @@ def test_vikunja_existing_token_scope_drift_is_deleted_and_replaced():
 
 
 def test_vikunja_token_scope_validation_runs_without_publication():
+    defaults = _vikunja_defaults()
     main = _yaml("roles/vikunja/tasks/main.yml")
     token_include = _task(main, "Validate MCP API token scopes and publish when enabled")
     assert token_include["when"] == ["not ansible_check_mode"]
 
     token_flow = _yaml("roles/vikunja/tasks/mcp_tokens.yml")
     per_identity = _task(token_flow, "Mint and publish MCP and app-agent tokens per identity")
-    assert "when" not in per_identity
+    non_clerk_user = defaults["vikunja_mcp_token_users"][0]
+    assert _token_include_runs(per_identity, non_clerk_user, "") in (True, "True")
     assert "vikunja_token_publish_openbao | bool" in _task(
         token_flow, "Assert OpenBao write credentials are present"
     )["when"]
