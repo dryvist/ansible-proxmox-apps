@@ -133,7 +133,10 @@ run_job job 1 task
     ("fix", "job/existing"),
     ("fix", "ci-fix/develop/fixture"),
 ])
-@pytest.mark.parametrize("status,history", [(0, "dirty"), (1, "dirty"), (0, "unchanged"), (0, "merge")])
+@pytest.mark.parametrize("status,history", [
+    (0, "dirty"), (1, "dirty"), (0, "unchanged"), (0, "merge"),
+    (0, "elsewhere"), (1, "elsewhere"),
+])
 def test_bundle_round_trip(sources, tmp_path, mode, branch, status, history):
     source = sources["entrypoint"]
     workspace = source[source.index('# --- Workspace'):].split('\nmake_fix_outputs()', 1)[0]
@@ -165,6 +168,14 @@ test "$(git rev-parse HEAD)" = "$AGENT_EXPECTED_SHA"
 '''
     if history == "dirty":
         setup += "echo changed > content\necho added > new-file\n"
+    elif history == "elsewhere":
+        # Work committed on another branch: HEAD moves off base while the job
+        # branch ref stays at base, leaving an empty base..branch range.
+        setup += '''
+git checkout -qb pushed-side
+echo pushed > content
+git commit -qam 'test(agent): side work'
+'''
     elif history == "merge":
         setup += '''
 echo job > content
@@ -193,6 +204,11 @@ gitleaks() { return 0; }
     assert result.returncode == status, result.stderr
     assert not (tmp_path / "repo/unexpected-publish").exists()
     bundle = tmp_path / ".agent-result/1/branch.bundle"
+    if history == "elsewhere":
+        assert not bundle.exists()
+        assert f"agent-entrypoint: no new commits on {branch}; no bundle" in result.stdout
+        assert "Refusing to create empty bundle" not in result.stderr
+        return
     assert bundle.stat().st_size > 0
     imported = bash('''
 cd receiver
