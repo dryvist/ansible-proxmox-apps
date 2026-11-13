@@ -1,6 +1,8 @@
 """The app-agent credentials have dedicated identities and bounded access."""
 
-from app_agent_helpers import _render, _task, _vikunja_defaults, _yaml
+import subprocess
+
+from app_agent_helpers import ROOT, _render, _task, _vikunja_defaults, _yaml
 
 
 def test_vikunja_agent_tiers_have_exact_identity_and_project_access():
@@ -132,9 +134,19 @@ def test_vikunja_clerk_tokens_use_the_shared_idempotent_publisher():
     defaults = _vikunja_defaults()
     group_vars = _yaml("inventory/group_vars/vikunja_group.yml")
     users = {user["username"]: user for user in defaults["vikunja_service_users"]}
-    assert users["svc-mcp-clerk"]["password"] == "{{ lookup('env', 'VIKUNJA_SVC_MCP_CLERK_PASSWORD') }}"
+    assert users["svc-mcp-clerk"]["password"] == ""
     clerk_user = next(user for user in group_vars["vikunja_service_users"] if user["username"] == "svc-mcp-clerk")
-    assert "lookup('env', 'VIKUNJA_SVC_MCP_CLERK_PASSWORD')" in clerk_user["password"]
+    assert "bao_apps_secrets.svc_mcp_clerk_password" in clerk_user["password"]
+
+    tracked_paths = subprocess.check_output(
+        ["git", "ls-files", "-z"], cwd=ROOT
+    ).decode().split("\0")
+    removed_env_name = b"VIKUNJA_SVC_MCP_" + b"CLERK_PASSWORD"
+    assert not any(
+        removed_env_name in (ROOT / path).read_bytes()
+        for path in tracked_paths
+        if path
+    )
 
     rows = defaults["vikunja_clerk_token_users"]
     assert [row["kv_field"] for row in rows] == [
