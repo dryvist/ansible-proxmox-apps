@@ -123,9 +123,72 @@ def test_vikunja_interactive_and_agent_tokens_publish_to_separate_leaves():
         _yaml("roles/vikunja/tasks/mcp_tokens.yml"),
         "Mint and publish MCP and app-agent tokens per identity",
     )
-    assert token_loop["loop"] == (
-        "{{ vikunja_mcp_token_users + vikunja_openhands_token_users + vikunja_agent_tiers }}"
+    assert " ".join(token_loop["loop"].split()) == (
+        "{{ vikunja_mcp_token_users + vikunja_clerk_token_users + vikunja_openhands_token_users + vikunja_agent_tiers }}"
     )
+
+
+def test_vikunja_clerk_tokens_use_the_shared_idempotent_publisher():
+    defaults = _vikunja_defaults()
+    group_vars = _yaml("inventory/group_vars/vikunja_group.yml")
+    users = {user["username"]: user for user in defaults["vikunja_service_users"]}
+    assert users["svc-mcp-clerk"]["password"] == "{{ lookup('env', 'VIKUNJA_SVC_MCP_CLERK_PASSWORD') }}"
+    clerk_user = next(user for user in group_vars["vikunja_service_users"] if user["username"] == "svc-mcp-clerk")
+    assert "lookup('env', 'VIKUNJA_SVC_MCP_CLERK_PASSWORD')" in clerk_user["password"]
+
+    rows = defaults["vikunja_clerk_token_users"]
+    assert [row["kv_field"] for row in rows] == [
+        "VIKUNJA_MCP_TOKEN_VIKUNJA_CLERK",
+        "VIKUNJA_MCP_HTTP_TOKEN_VIKUNJA_CLERK",
+    ]
+    assert {row["username"] for row in rows} == {"svc-mcp-clerk"}
+    assert len({row["title"] for row in rows}) == 2
+    assert all(row["permissions"] == "{{ vikunja_clerk_task_permissions }}" for row in rows)
+    assert all("openbao_path" not in row for row in rows)
+    assert defaults["vikunja_token_openbao_path"] == "ai/mcp/vikunja"
+    assert defaults["vikunja_clerk_task_permissions"] == {
+        "tasks": ["create", "read_all", "read_one", "update"]
+    }
+
+    resolve = _task(
+        _yaml("roles/vikunja/tasks/mcp_token_one.yml"),
+        "Resolve token title, permissions, and OpenBao target for {{ vikunja_mcp_user.username }}",
+    )["ansible.builtin.set_fact"]
+    for row, expected_field in zip(rows, (
+        "VIKUNJA_MCP_TOKEN_VIKUNJA_CLERK",
+        "VIKUNJA_MCP_HTTP_TOKEN_VIKUNJA_CLERK",
+    ), strict=True):
+        resolved_field = _render(resolve["vikunja_mcp_token_field"], {"vikunja_mcp_user": row})
+        resolved_fields = _render(
+            resolve["vikunja_mcp_token_fields"],
+            {"vikunja_mcp_user": row, "vikunja_mcp_token_field": resolved_field},
+        )
+        assert resolved_field == expected_field
+        assert resolved_fields == [expected_field]
+
+    flow = _yaml("roles/vikunja/tasks/mcp_tokens.yml")
+    loop = _task(flow, "Mint and publish MCP and app-agent tokens per identity")
+    assert "vikunja_clerk_token_users" in loop["loop"]
+    for name in (
+        "Assert OpenBao write credentials are present",
+        "Log in to Vikunja as admin to read the token route catalogue",
+        "Fetch the API token route catalogue",
+        "Mint and publish MCP and app-agent tokens per identity",
+    ):
+        assert _task(flow, name)["no_log"] is True
+    token_tasks = _yaml("roles/vikunja/tasks/mcp_token_one.yml")
+    mint = _task(token_tasks, "Mint API token for {{ vikunja_mcp_user.username }}")
+    publish = next(task for task in token_tasks if str(task.get("name", "")).startswith("Publish the token to OpenBao"))
+    assert "not vikunja_mcp_token_exists" in mint["when"]
+    assert mint["no_log"] is True
+    assert publish["no_log"] is True
+    assert "vikunja_mcp_token_fields" in publish["ansible.builtin.uri"]["body"]["data"]
+    assert all(task.get("no_log") is True for task in token_tasks)
+    service_user = _task(
+        _yaml("roles/vikunja/tasks/main.yml"),
+        "Create Vikunja service users (idempotent — skipped if already present)",
+    )
+    assert service_user["no_log"] is True
 
 
 def test_vikunja_existing_token_scope_drift_is_deleted_and_replaced():
