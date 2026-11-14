@@ -1,0 +1,28 @@
+{#-
+ Message for playbooks/pr-status-post.yml: a header line with the UTC time,
+ then one line per figure, each starting with a mark — a green circle when the
+ figure is on target, yellow when it is behind, red when it is failing or
+ unmeasured. Targets:
+   open pull requests: green under 30, yellow from 30 to 40, red above 40
+   busy percent:       green at 50 or above, yellow from 25 to 49, red below 25
+ The merged-in-the-last-hour and jobs lines carry no target, so they are green
+ when measured and red when unmeasured.
+
+ Rendered from these variables:
+   pr_status_generated_utc   the run time, formatted UTC
+   pr_status_open_total      census total of open pull requests
+   pr_status_merged_total    census total merged in the last hour
+   pr_status_busy_series     the instant-query series: one {metric, value}
+                             per lane, or an empty list when unmeasured
+   pr_status_jobs_measured   whether the jobs query returned a series
+   pr_status_jobs_text       the jobs query value, or "unmeasured"
+
+ Each busy series is labelled by its `lane`, falling back to its first
+ non-name label, then to "-".
+-#}
+{{ pr_status_generated_utc }} pull-request and lane status
+{{ '🟢' if pr_status_open_total < 30 else ('🟡' if pr_status_open_total <= 40 else '🔴') }} open pull requests: {{ pr_status_open_total }}
+🟢 merged in the last hour: {{ pr_status_merged_total }}
+{% for s in pr_status_busy_series %}{% set busy = s.value[1] | float %}{% set label = s.metric.get('lane') or ((s.metric.keys() | reject('equalto', '__name__') | list) | first | default('-')) %}{{ '🟢' if busy >= 50 else ('🟡' if busy >= 25 else '🔴') }} busy percent {{ label }}: {{ busy }}%
+{% endfor %}{% if pr_status_busy_series | length == 0 %}🔴 busy percent: unmeasured
+{% endif %}{{ '🟢' if pr_status_jobs_measured else '🔴' }} jobs: {{ pr_status_jobs_text }}
