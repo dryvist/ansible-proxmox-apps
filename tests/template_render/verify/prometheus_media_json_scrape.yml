@@ -75,10 +75,11 @@
         - { name: radarr-under-test, group: radarr_group }
         - { name: plex-under-test, group: plex_group }
 
-    - name: Set a scrape-only credential fixture after loading vars files
+    - name: Set scrape-only credential and flag fixtures after loading vars files
       ansible.builtin.set_fact:
         prometheus_stack_json_exporter_credentials:
           zcode: test-fixture
+        prometheus_stack_json_exporter_quota_enabled: true
 
     - name: Publish the fixture inventory for template evaluation
       ansible.builtin.set_fact:
@@ -165,6 +166,24 @@
           - _agent_quota_jobs[0].relabel_configs[4].regex == '^module$'
           - "'test-fixture' not in _rendered_text"
         fail_msg: The agent quota scrape must probe each declared executor through json_exporter.
+
+    - name: Render prometheus.yml with the quota feature disabled
+      ansible.builtin.set_fact:
+        _disabled_rendered: "{{ lookup('template', _pst_tpl, template_vars=_quota_disabled) | from_yaml }}"
+        _disabled_text: "{{ lookup('template', _pst_tpl, template_vars=_quota_disabled) }}"
+      vars:
+        _quota_disabled:
+          prometheus_stack_json_exporter_quota_enabled: false
+
+    - name: Assert the disabled quota feature leaves the render without it
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _disabled_rendered.scrape_configs | selectattr('job_name', 'equalto', 'agent_quota') | list | length == 0
+          - "'agent_quota' not in _disabled_text"
+          - >-
+            _disabled_rendered.scrape_configs | selectattr('job_name', 'equalto', 'media_json') | list | length == 1
+        fail_msg: A disabled quota feature must render the scrape config without the agent quota job.
 
     - name: Render with no guest target for the download guest
       ansible.builtin.set_fact:

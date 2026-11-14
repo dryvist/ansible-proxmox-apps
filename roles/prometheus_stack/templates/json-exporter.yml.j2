@@ -1,5 +1,5 @@
 modules:
-{% for executor in prometheus_stack_json_exporter_executors if prometheus_stack_json_exporter_credentials.get(executor.credential_name, '') | trim | length > 0 %}
+{% for executor in prometheus_stack_json_exporter_executors if prometheus_stack_json_exporter_quota_enabled | bool and prometheus_stack_json_exporter_credentials.get(executor.credential_name, '') | trim | length > 0 %}
   {{ executor.module }}:
     fail_on_error: true
     http_client_config:
@@ -8,26 +8,20 @@ modules:
         type: Bearer
         credentials_file: {{ executor.credentials_file | to_json }}
     metrics:
-      - name: agent_quota_api_response_code
-        type: value
-        path: "{.code}"
-        help: HTTP 200 response body's in-band API status code.
-        labels:
-          executor: {{ executor.name | to_json }}
 {% for window in executor.windows %}
-      - name: agent_quota_used_percent
+{% for metric, value, help in [
+       ('agent_quota_used_percent', 'used_percent', 'Percentage of the executor quota window consumed.'),
+       ('agent_quota_window_seconds', 'window_seconds', 'Length of the executor quota window in seconds.'),
+       ('agent_quota_reset_timestamp_seconds', 'reset_timestamp_seconds', 'Unix timestamp in seconds when the executor quota window resets.')] %}
+      - name: {{ metric | to_json }}
         type: value
-        path: {{ ("{.data.limits[?(@.unit == " ~ window.unit | string ~ " && @.number == " ~ window.number | string ~ ")].percentage}") | to_json }}
-        help: Percentage of the executor quota window consumed.
+        path: {{ (executor.response_paths[value]
+                  | replace('{unit}', window.unit | string)
+                  | replace('{number}', window.number | string)) | to_json }}
+        help: {{ help | to_json }}
         labels:
           executor: {{ executor.name | to_json }}
           window: {{ window.name | to_json }}
-      - name: agent_quota_reset_timestamp_milliseconds
-        type: value
-        path: {{ ("{.data.limits[?(@.unit == " ~ window.unit | string ~ " && @.number == " ~ window.number | string ~ " && @.nextResetTime != null)].nextResetTime}") | to_json }}
-        help: Unix timestamp in milliseconds when the executor quota window resets.
-        labels:
-          executor: {{ executor.name | to_json }}
-          window: {{ window.name | to_json }}
+{% endfor %}
 {% endfor %}
 {% endfor %}
