@@ -1,5 +1,24 @@
 # Changelog
 
+## [5.45.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.44.0...v5.45.0) (2026-11-14)
+
+
+### Features
+
+* **agent:** zcode run j-2cd02453b848d35c ([990dbfb](https://github.com/dryvist/ansible-proxmox-apps/commit/990dbfbb78f9c4b18b6fe47313df14fc9fdee4bb))
+* **agent:** zcode run j-634122db7906fdf7 ([da81e83](https://github.com/dryvist/ansible-proxmox-apps/commit/da81e83a5462451ce64bdc25414b7142a6938349))
+* **agent:** zcode run j-c233c1bec1dbab4b ([1f7f061](https://github.com/dryvist/ansible-proxmox-apps/commit/1f7f0611be5504a0e14a2e3c453479bb60a11754))
+* **agent:** zcode run j-c5c9488903a50967 ([04f87d7](https://github.com/dryvist/ansible-proxmox-apps/commit/04f87d747a236c790132a4d3995f232d3c116095))
+* **playbooks:** add the pull-request reconcile dispatch playbook ([#3641](https://github.com/dryvist/ansible-proxmox-apps/issues/3641)) ([da81e83](https://github.com/dryvist/ansible-proxmox-apps/commit/da81e83a5462451ce64bdc25414b7142a6938349))
+* **playbooks:** add the pull-request status post playbook ([#3644](https://github.com/dryvist/ansible-proxmox-apps/issues/3644)) ([692f777](https://github.com/dryvist/ansible-proxmox-apps/commit/692f777267ab669739fb3bec0e98d01ed22f4cef))
+* **prometheus_stack:** add quota window and reset gauges behind a flag ([#3642](https://github.com/dryvist/ansible-proxmox-apps/issues/3642)) ([990dbfb](https://github.com/dryvist/ansible-proxmox-apps/commit/990dbfbb78f9c4b18b6fe47313df14fc9fdee4bb))
+
+
+### Bug Fixes
+
+* **agent_sandbox:** read the web image repository from the environment ([#3638](https://github.com/dryvist/ansible-proxmox-apps/issues/3638)) ([04f87d7](https://github.com/dryvist/ansible-proxmox-apps/commit/04f87d747a236c790132a4d3995f232d3c116095))
+* **gatus:** check the Dify health endpoint ([#3646](https://github.com/dryvist/ansible-proxmox-apps/issues/3646)) ([1f7f061](https://github.com/dryvist/ansible-proxmox-apps/commit/1f7f0611be5504a0e14a2e3c453479bb60a11754))
+
 ## [5.44.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.43.0...v5.44.0) (2026-11-14)
 
 
