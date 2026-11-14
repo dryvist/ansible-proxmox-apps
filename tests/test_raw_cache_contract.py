@@ -59,3 +59,13 @@ def test_raw_cache_syslog_tags_are_valid_nginx_tags():
 
     assert tags
     assert all(re.fullmatch(r"[A-Za-z0-9_]+", tag) for tag in tags)
+
+
+def test_raw_cache_key_inspection_runs_in_check_mode_once_the_key_is_on_disk():
+    tasks = yaml.safe_load((ROLE / "tasks" / "main.yml").read_text())
+    inspect = next(task for task in tasks if task.get("name") == "Inspect official nginx signing key")
+    verify = next(task for task in tasks if task.get("name") == "Verify official nginx signing key fingerprint")
+    guard = "not (ansible_check_mode and raw_cache_nginx_key_download is changed)"
+
+    assert inspect["check_mode"] is False
+    assert inspect["when"] == verify["when"] == guard
