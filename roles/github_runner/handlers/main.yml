@@ -11,6 +11,18 @@
      | selectattr('stat.exists') | list | length)
     == (github_runner_active_review_orgs | length)
 
+# Same check-mode guard as the review handler: a first install under --check
+# only previews the unit file, so there is no unit to restart.
+- name: Restart heavy github runners
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+    daemon_reload: true
+  loop: "{{ github_runner_heavy_wanted_units | default([]) }}"
+  when: >-
+    not ansible_check_mode or
+    (github_runner_heavy_unit_file.stat.exists | default(false))
+
 # A runner mid-job is stopped gracefully by the unit's ExecStop, which gives
 # `docker stop` github_runner_stop_timeout seconds. Restarting the whole pool at
 # once is acceptable here: every runner is ephemeral, so a job it was serving is
