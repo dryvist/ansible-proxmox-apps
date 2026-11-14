@@ -34,6 +34,7 @@ def _render_compose(defaults):
     context = dict(
         defaults,
         prometheus_stack_json_exporter_credentials={"zcode": "test-fixture"},
+        prometheus_stack_json_exporter_active_executors=defaults["prometheus_stack_json_exporter_executors"],
         prometheus_stack_port=9090,
         prometheus_stack_blackbox_port=9115,
         prometheus_stack_blackbox_address=f"{loopback_host}:9115",
