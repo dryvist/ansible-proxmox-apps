@@ -1,0 +1,299 @@
+---
+# Hourly pull-request and lane status, posted to the chat channel through the
+# alert hub. Counts and metrics only, all on localhost, no privilege
+# escalation: GitHub search totals for open pull requests and pull requests
+# merged in the last hour (one search pair per census owner), two instant
+# reads against a Prometheus-compatible endpoint, and one ntfy publish — the
+# hub fans its topics out to Slack channels, the same publish shape as the
+# existing ntfy alert task in playbooks/tasks/.
+#
+# The GitHub token follows the repository's per-org mint pattern
+# (playbooks/tasks/sync-cribl-packs/mint-github-tokens.yml): BAO_ADDR plus
+# BAO_TOKEN/VAULT_TOKEN mint a short-lived read token per census owner;
+# otherwise PR_CENSUS_GITHUB_TOKEN is used for every owner. Every task that
+# holds a token is masked. The metrics reads are masked too, because a
+# metrics endpoint can carry a token in its URL; a failed or empty read
+# surfaces as "unmeasured" in the posted message instead.
+#
+# Fails before any request unless PR_CENSUS_OWNERS, STATUS_METRICS_URL,
+# STATUS_CHANNEL and PROXMOX_SUBDOMAIN are set.
+#
+# Environment:
+#   PR_CENSUS_OWNERS        comma-separated owners to census (required)
+#   PR_CENSUS_EXCLUDE_REPOS comma-separated owner/repo values appended as
+#                           -repo: terms to both searches (optional)
+#   STATUS_METRICS_URL      base URL of the Prometheus-compatible read API (required)
+#   STATUS_JOBS_QUERY       second instant query, taken verbatim (optional)
+#   STATUS_CHANNEL          chat channel topic to post to (required)
+#   PROXMOX_SUBDOMAIN       estate subdomain that fronts the alert hub (required)
+#   PR_CENSUS_GITHUB_TOKEN  GitHub token when no OpenBao token source is set
+#   BAO_ADDR, BAO_TOKEN, VAULT_TOKEN  OpenBao GitHub token mint source (optional)
+#
+# Run directly:
+#   ansible-playbook -i localhost, playbooks/pr-status-post.yml
+
+- name: Refuse to run without the census, metrics and channel inputs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    ansible_become: false
+    pr_status_owners_raw: "{{ lookup('env', 'PR_CENSUS_OWNERS') }}"
+    pr_status_exclude_raw: "{{ lookup('env', 'PR_CENSUS_EXCLUDE_REPOS') }}"
+    pr_status_metrics_url: "{{ lookup('env', 'STATUS_METRICS_URL') }}"
+    pr_status_jobs_query: "{{ lookup('env', 'STATUS_JOBS_QUERY') }}"
+    pr_status_channel: "{{ lookup('env', 'STATUS_CHANNEL') }}"
+    pr_status_ingress_domain: "{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
+  tasks:
+    - name: Require the census owners, the metrics endpoint and the chat channel
+      ansible.builtin.assert:
+        that:
+          - pr_status_owners_raw | length > 0
+          - pr_status_metrics_url | length > 0
+          - pr_status_channel | length > 0
+          - pr_status_ingress_domain | length > 0
+        fail_msg: >-
+          Set PR_CENSUS_OWNERS, STATUS_METRICS_URL and STATUS_CHANNEL, plus
+          PROXMOX_SUBDOMAIN for the alert-hub host, before running.
+        quiet: true
+
+    - name: Require a chat channel of bare topic characters
+      ansible.builtin.assert:
+        that:
+          - pr_status_channel is match('^[A-Za-z0-9_-]+$')
+        fail_msg: STATUS_CHANNEL must be a bare topic name, not a URL.
+        quiet: true
+
+    - name: Split the census owners and the excluded repositories
+      ansible.builtin.set_fact:
+        pr_status_owners: >-
+          {{ pr_status_owners_raw | split(',') | map('trim') | reject('equalto', '') | list }}
+        pr_status_excludes: >-
+          {{ pr_status_exclude_raw | split(',') | map('trim') | reject('equalto', '')
+             | map('regex_replace', '^(.+)$', '-repo:\1') | list }}
+        pr_status_generated_utc: "{{ now(utc=True).strftime('%Y-%m-%d %H:%M UTC') }}"
+        pr_status_merged_since: >-
+          {{ '%Y-%m-%dT%H:%M:%S+00:00' | strftime((now(utc=True).timestamp() - 3600) | int) }}
+        pr_status_post_channel: "{{ pr_status_channel }}"
+        pr_status_post_ingress_domain: "{{ pr_status_ingress_domain }}"
+        pr_status_post_metrics_url: "{{ pr_status_metrics_url }}"
+        pr_status_jobs_terms: "{{ pr_status_jobs_query }}"
+      changed_when: false
+
+- name: Census pull requests, read the lane metrics and post the status
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    ansible_become: false
+    ansible_python_interpreter: auto_silent
+    pr_status_github_api: https://api.github.com
+    pr_status_github_mint_mount: github
+    pr_status_open_terms: "is:pr is:open archived:false"
+    pr_status_merged_terms: "is:pr is:merged merged:>={{ pr_status_merged_since }}"
+    pr_status_busy_query: "avg_over_time(accelerator:busy_percent:avg5m[4h])"
+    pr_status_bao_addr: "{{ lookup('env', 'BAO_ADDR') }}"
+    pr_status_bao_token: >-
+      {{ lookup('env', 'BAO_TOKEN') | default(lookup('env', 'VAULT_TOKEN'), true) }}
+    pr_status_env_token: "{{ lookup('env', 'PR_CENSUS_GITHUB_TOKEN') }}"
+  tasks:
+    # Token source selection, mirroring
+    # playbooks/tasks/sync-cribl-packs/mint-github-tokens.yml.
+    - name: Determine available GitHub token sources
+      ansible.builtin.set_fact:
+        pr_status_github_bao_enabled: >-
+          {{ pr_status_bao_addr | length > 0 and pr_status_bao_token | length > 0 }}
+        pr_status_github_env_enabled: "{{ pr_status_env_token | length > 0 }}"
+      changed_when: false
+      no_log: true
+
+    - name: Select the GitHub token source
+      ansible.builtin.set_fact:
+        pr_status_github_token_source: >-
+          {{ 'openbao' if pr_status_github_bao_enabled
+             else 'env' if pr_status_github_env_enabled else 'missing' }}
+      changed_when: false
+      no_log: true
+
+    - name: Require an available GitHub token source
+      ansible.builtin.assert:
+        that:
+          - pr_status_github_token_source != 'missing'
+        fail_msg: >-
+          Provide BAO_ADDR plus BAO_TOKEN/VAULT_TOKEN through the run wrapper,
+          or PR_CENSUS_GITHUB_TOKEN for a workstation run.
+        quiet: true
+
+    - name: Mint a GitHub read token for each census owner
+      community.hashi_vault.vault_write:
+        url: "{{ pr_status_bao_addr }}"
+        auth_method: token
+        token: "{{ pr_status_bao_token }}"
+        path: "{{ pr_status_github_mint_mount }}/token"
+        data:
+          org_name: "{{ pr_status_census_org }}"
+          permissions:
+            contents: read
+            metadata: read
+      register: pr_status_github_mint_results
+      loop: "{{ pr_status_owners }}"
+      loop_control:
+        loop_var: pr_status_census_org
+        label: "{{ pr_status_census_org }}"
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when: pr_status_github_token_source == 'openbao'
+
+    - name: Initialize the minted owner token map
+      ansible.builtin.set_fact:
+        pr_status_github_minted_tokens: {}
+      changed_when: false
+      no_log: true
+      when: pr_status_github_token_source == 'openbao'
+
+    - name: Read each minted owner token
+      ansible.builtin.set_fact:
+        pr_status_github_minted_tokens: >-
+          {{ pr_status_github_minted_tokens | combine({
+               item.pr_status_census_org:
+               ((item.data.data | default(item.data, true)).token | default('', true)) }) }}
+      loop: "{{ pr_status_github_mint_results.results | default([]) }}"
+      loop_control:
+        label: "{{ item.pr_status_census_org }}"
+      changed_when: false
+      no_log: true
+      when: pr_status_github_token_source == 'openbao'
+
+    - name: Require every census owner's minted token
+      ansible.builtin.assert:
+        that:
+          - >-
+            pr_status_github_minted_tokens | dict2items
+            | selectattr('value', 'equalto', '') | list | length == 0
+        fail_msg: >-
+          The GitHub token mint returned no token for one or more census
+          owners. Grant create/update on {{ pr_status_github_mint_mount }}/token
+          for the calling identity.
+        quiet: true
+      when: pr_status_github_token_source == 'openbao'
+
+    - name: Select the token used for each census owner
+      ansible.builtin.set_fact:
+        pr_status_github_tokens: >-
+          {{ pr_status_github_tokens | default({}) | combine({
+               item: pr_status_github_minted_tokens[item]
+               if pr_status_github_token_source == 'openbao'
+               else pr_status_env_token }) }}
+      loop: "{{ pr_status_owners }}"
+      changed_when: false
+      no_log: true
+
+    - name: Search each owner for open pull requests
+      vars:
+        pr_status_search_terms: >-
+          {{ (pr_status_open_terms ~ ' org:' ~ item
+             ~ ' ' ~ (pr_status_excludes | join(' '))) | trim }}
+      ansible.builtin.uri:
+        url: "{{ pr_status_github_api }}/search/issues?q={{ pr_status_search_terms | urlencode }}"
+        headers:
+          Accept: application/vnd.github+json
+          X-GitHub-Api-Version: "2022-11-28"
+          Authorization: "Bearer {{ pr_status_github_tokens[item] }}"
+        follow_redirects: none
+        unredirected_headers: [Authorization]
+      register: pr_status_open_searches
+      loop: "{{ pr_status_owners }}"
+      loop_control:
+        label: "{{ item }}"
+      changed_when: false
+      no_log: true
+
+    - name: Search each owner for pull requests merged in the last hour
+      vars:
+        pr_status_search_terms: >-
+          {{ (pr_status_merged_terms ~ ' org:' ~ item
+             ~ ' ' ~ (pr_status_excludes | join(' '))) | trim }}
+      ansible.builtin.uri:
+        url: "{{ pr_status_github_api }}/search/issues?q={{ pr_status_search_terms | urlencode }}"
+        headers:
+          Accept: application/vnd.github+json
+          X-GitHub-Api-Version: "2022-11-28"
+          Authorization: "Bearer {{ pr_status_github_tokens[item] }}"
+        follow_redirects: none
+        unredirected_headers: [Authorization]
+      register: pr_status_merged_searches
+      loop: "{{ pr_status_owners }}"
+      loop_control:
+        label: "{{ item }}"
+      changed_when: false
+      no_log: true
+
+    - name: Sum the open and merged pull-request counts
+      ansible.builtin.set_fact:
+        pr_status_open_total: >-
+          {{ pr_status_open_searches.results
+             | map(attribute='json.total_count') | map('int') | sum }}
+        pr_status_merged_total: >-
+          {{ pr_status_merged_searches.results
+             | map(attribute='json.total_count') | map('int') | sum }}
+      changed_when: false
+
+    # Both reads are masked: the metrics endpoint can carry a token in its
+    # URL, and a failed read's diagnostic would otherwise print it. A failed
+    # or empty read becomes an "unmeasured" line and never stops the run.
+    - name: Read the per-lane accelerator busy percent
+      ansible.builtin.uri:
+        url: "{{ pr_status_post_metrics_url }}/api/v1/query?query={{ pr_status_busy_query | urlencode }}"
+        method: GET
+      register: pr_status_busy_read
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Read the jobs query verbatim
+      ansible.builtin.uri:
+        url: "{{ pr_status_post_metrics_url }}/api/v1/query?query={{ pr_status_jobs_terms | urlencode }}"
+        method: GET
+      register: pr_status_jobs_read
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when: pr_status_jobs_terms | length > 0
+
+    - name: Resolve the per-lane busy series
+      ansible.builtin.set_fact:
+        pr_status_busy_series: >-
+          {{ [] if (pr_status_busy_read.status | default(0)) | int != 200
+             else (pr_status_busy_read.json.data.result | default([])) }}
+      changed_when: false
+
+    - name: Resolve the jobs figure
+      vars:
+        pr_status_jobs_series: >-
+          {{ [] if (pr_status_jobs_terms | length == 0)
+             or ((pr_status_jobs_read.status | default(0)) | int != 200)
+             else (pr_status_jobs_read.json.data.result | default([])) }}
+      ansible.builtin.set_fact:
+        pr_status_jobs_measured: "{{ pr_status_jobs_series | length > 0 }}"
+        pr_status_jobs_text: >-
+          {{ (pr_status_jobs_series | first | default({})).get('value', ['', 'unmeasured'])[1] }}
+      changed_when: false
+
+    - name: Build the status message from the rendered template
+      ansible.builtin.set_fact:
+        pr_status_message: "{{ lookup('ansible.builtin.template', 'templates/pr-status-message.j2') }}"
+      changed_when: false
+
+    - name: Post the status to the chat channel
+      ansible.builtin.uri:
+        url: "https://ntfy.{{ pr_status_post_ingress_domain }}/{{ pr_status_post_channel }}"
+        method: POST
+        headers:
+          Title: "Pull-request and lane status"
+          Priority: low
+          Tags: bar_chart
+        body: "{{ pr_status_message }}"
+        timeout: 10
