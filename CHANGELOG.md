@@ -1,5 +1,32 @@
 # Changelog
 
+## [5.43.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.42.1...v5.43.0) (2026-11-14)
+
+
+### Features
+
+* **github_runner:** per-owner registration token paths for review pools ([#3610](https://github.com/dryvist/ansible-proxmox-apps/issues/3610)) ([df0827a](https://github.com/dryvist/ansible-proxmox-apps/commit/df0827aa4731851b9c2db719bb5e39c62a6dec60))
+* **github_runner:** read review runner pools from the env document ([#3605](https://github.com/dryvist/ansible-proxmox-apps/issues/3605)) ([f3db1b6](https://github.com/dryvist/ansible-proxmox-apps/commit/f3db1b6bdbc43ce7bb97b0bc5c3083d7502337c3))
+* **openhands:** enable the service on the openhands host ([5336447](https://github.com/dryvist/ansible-proxmox-apps/commit/5336447344f2c5e189edadd9ecd51ee76d20aba8))
+* **openhands:** turn on the OpenHands service ([#3602](https://github.com/dryvist/ansible-proxmox-apps/issues/3602)) ([5336447](https://github.com/dryvist/ansible-proxmox-apps/commit/5336447344f2c5e189edadd9ecd51ee76d20aba8))
+* **prometheus_stack:** ZCode quota through json_exporter ([#3598](https://github.com/dryvist/ansible-proxmox-apps/issues/3598)) ([bf9d185](https://github.com/dryvist/ansible-proxmox-apps/commit/bf9d185f76165aa8a9b4851787b5e8d4c66c2b45))
+* **vikunja:** add the task clerk service user ([#3606](https://github.com/dryvist/ansible-proxmox-apps/issues/3606)) ([16a7a66](https://github.com/dryvist/ansible-proxmox-apps/commit/16a7a66e9d36609e475f2b8df6afc52e9da09447))
+
+
+### Bug Fixes
+
+* **agent_sandbox:** skip the result bundle when the job branch has no new commits ([#3609](https://github.com/dryvist/ansible-proxmox-apps/issues/3609)) ([aef8a16](https://github.com/dryvist/ansible-proxmox-apps/commit/aef8a1627c53662a12568b22d1f5f9e7b80604fe))
+* **inventory:** use the keystone webhook key for platform alerts ([#3600](https://github.com/dryvist/ansible-proxmox-apps/issues/3600)) ([fa125b9](https://github.com/dryvist/ansible-proxmox-apps/commit/fa125b95607c8928a74fe7610e87822a7ff5125e))
+* **openhands:** skip the Node.js runtime when check mode only previews its directory ([#3603](https://github.com/dryvist/ansible-proxmox-apps/issues/3603)) ([634cacf](https://github.com/dryvist/ansible-proxmox-apps/commit/634cacf3caca07274e195e0e04519f579d9a756e))
+* **raw_cache:** name the syslog tags with underscores ([#3619](https://github.com/dryvist/ansible-proxmox-apps/issues/3619)) ([ada534b](https://github.com/dryvist/ansible-proxmox-apps/commit/ada534bd32318eb279eb327b6bc2bb5b1e0d457c))
+* **raw_cache:** own the cache directory as the nginx worker user ([#3622](https://github.com/dryvist/ansible-proxmox-apps/issues/3622)) ([ce75391](https://github.com/dryvist/ansible-proxmox-apps/commit/ce753918d36508c967f5d5543e2cbe50b7dacbbf))
+* **raw_cache:** run the nginx key inspection in check mode ([#3620](https://github.com/dryvist/ansible-proxmox-apps/issues/3620)) ([ebf2dcb](https://github.com/dryvist/ansible-proxmox-apps/commit/ebf2dcb6b3152fd5b4158663b5eacae6231b0380))
+* **raw_cache:** set the upstream certificate verify depth ([#3626](https://github.com/dryvist/ansible-proxmox-apps/issues/3626)) ([7bf6058](https://github.com/dryvist/ansible-proxmox-apps/commit/7bf605891da6398397459a9eabbf4229c27ff020))
+* **raw_cache:** size the proxy buffers for release redirects ([#3621](https://github.com/dryvist/ansible-proxmox-apps/issues/3621)) ([51cd606](https://github.com/dryvist/ansible-proxmox-apps/commit/51cd606d7ac242ae996cc13d0aa7586cd74fa5ae))
+* **raw_cache:** take the listen port from the published constants ([#3618](https://github.com/dryvist/ansible-proxmox-apps/issues/3618)) ([4b58cf6](https://github.com/dryvist/ansible-proxmox-apps/commit/4b58cf6f7e205def72cf1b3001dadf4632994fe0))
+* **raw_cache:** use valid syslog tags in the nginx config ([ada534b](https://github.com/dryvist/ansible-proxmox-apps/commit/ada534bd32318eb279eb327b6bc2bb5b1e0d457c))
+* **site:** keep the *_SECRET_ID_CIDR, *_CIDR and *_CIDRS keys in the platform env filter ([#3571](https://github.com/dryvist/ansible-proxmox-apps/issues/3571)) ([5f9d917](https://github.com/dryvist/ansible-proxmox-apps/commit/5f9d9175ed02a22182d4e9a9b214ff422732ce0d))
+
 ## [5.42.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.42.0...v5.42.1) (2026-11-12)
 
 
