@@ -1,0 +1,71 @@
+---
+# Split out of github_runner.yml (2026-11-14) to stay under the repo's
+# per-file token budget (.token-limits.yaml) -- imported by that play, so it
+# shares its vars (_template_dir, _fixture_dir) and facts (_unit) rather
+# than redeclaring them.
+#
+# Pools may override cpu_limit, memory_limit and labels (a review pool
+# entry's own keys, the heavy pool's own defaults). Whatever a pool
+# overrides, a pool that sets NOTHING must render byte for byte what it
+# always did: the default configuration's env file is exact-matched line by
+# line (the ansible_managed header embeds the render path and varies per
+# run, but every directive line is fixed), and the pooled unit is pinned to
+# the role-wide limits.
+#
+# The render pins its inputs at task level: task vars outrank every other
+# scope, so the render is deterministic regardless of how play vars and the
+# defaults merge. github_runner_review_slots 0 is the real default
+# configuration -- every slot pooled, no review lane.
+- name: Render the default configuration environment file
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/runner.env.j2"
+    dest: "{{ _fixture_dir }}/test_runner-default.env"
+    mode: "0600"
+  vars:
+    github_runner_slot: 1
+    github_runner_review_slots: 0
+    github_runner_org: example-org
+    github_runner_group: example-group
+    github_runner_bao_addr: "https://openbao.example.invalid"
+
+- name: Read the rendered default configuration environment file
+  ansible.builtin.slurp:
+    src: "{{ _fixture_dir }}/test_runner-default.env"
+  register: _per_pool_default_raw
+
+- name: Reduce it to its directive lines
+  ansible.builtin.set_fact:
+    _env_default: >-
+      {{ (_per_pool_default_raw.content | b64decode).splitlines()
+         | reject('match', '\s*#') | reject('match', '\s*$') | list }}
+
+- name: Assert the default render is byte for byte unchanged
+  vars:
+    _expected_env: >-
+      {{ ['RUN_AS_ROOT=false',
+          'HOME=/home/runner',
+          'RUNNER_SCOPE=org',
+          'ORG_NAME=example-org',
+          'RUNNER_GROUP=example-group',
+          'LABELS=self-hosted,Linux,X64,proxmox',
+          'TOFU_INVENTORY_PATH=/opt/e2e/tofu_inventory.json',
+          'OPENBAO_ADDR=https://openbao.example.invalid',
+          'EPHEMERAL=true',
+          'DISABLE_AUTO_UPDATE=true'] }}
+  ansible.builtin.assert:
+    that:
+      - _env_default == _expected_env
+    fail_msg: >-
+      The default configuration's environment render drifted. A pool that
+      sets no cpu_limit, memory_limit or labels override must render byte
+      for byte what it always did; got: {{ _env_default }}
+
+- name: Assert a pool without overrides uses the role-wide limits
+  ansible.builtin.assert:
+    that:
+      - _unit | select('search', '(^|\\s)--cpus 1\\.0(\\s|$)') | length > 0
+      - _unit | select('search', '(^|\\s)--memory 4g(\\s|$)') | length > 0
+    fail_msg: >-
+      The pooled unit must carry the role-wide github_runner_cpu_limit and
+      github_runner_memory_limit when its pool sets no override; the
+      per-pool machinery may only change units whose pool overrides them.

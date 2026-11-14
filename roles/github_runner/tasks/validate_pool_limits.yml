@@ -1,0 +1,120 @@
+---
+# Capacity gate for every pool this host would run after this converge: the
+# main pool, each selected review pool, and the heavy pool when enabled. The
+# pools' limits are summed and must stay inside the host's own vCPUs and
+# memory minus a reserve. Included before anything is rendered or restarted,
+# so an over-committed declaration fails at the start of the converge instead
+# of after units have already been replaced.
+#
+# Every arithmetic expression keeps its operands inside one template: these
+# values are strings (no jinja2_native), so each use site re-converts with
+# float/int rather than reusing a value computed in another variable.
+- name: Collect the capacity inputs of every pool this host would run
+  ansible.builtin.set_fact:
+    github_runner_capacity_pools: >-
+      {{ ( [{'name': 'pool',
+             'replicas': github_runner_replicas | int,
+             'cpu_limit': github_runner_cpu_limit | string,
+             'memory_limit': github_runner_memory_limit | string}]
+           if github_runner_replicas | int > 0 else [] )
+         + ( [{'name': 'heavy',
+               'replicas': github_runner_heavy_pool_replicas | int,
+               'cpu_limit': github_runner_heavy_pool_cpu_limit | string,
+               'memory_limit': github_runner_heavy_pool_memory_limit | string}]
+             if github_runner_heavy_pool_enabled | bool else [] ) }}
+
+- name: Add each selected review pool's capacity inputs
+  ansible.builtin.set_fact:
+    github_runner_capacity_pools: >-
+      {{ github_runner_capacity_pools
+         + [{'name': 'review-' ~ github_runner_review_pool.org,
+             'replicas': github_runner_review_pool.replicas | default(2) | int,
+             'cpu_limit': (github_runner_review_pool.cpu_limit
+                           | default(github_runner_cpu_limit)) | string,
+             'memory_limit': (github_runner_review_pool.memory_limit
+                              | default(github_runner_memory_limit)) | string}] }}
+  loop: "{{ github_runner_active_review_orgs | default([]) }}"
+  loop_control:
+    loop_var: github_runner_review_pool
+    label: "{{ github_runner_review_pool.org | default('(invalid entry)') }}"
+
+- name: Validate the declared pool limits are parseable
+  ansible.builtin.assert:
+    that:
+      - item.cpu_limit is match('^[0-9]+(\.[0-9]+)?$')
+      - item.memory_limit is match('(?i)^[0-9]+[kmg]?b?$')
+    fail_msg: >-
+      Every pool needs a numeric cpu_limit (docker --cpus) and a docker-size
+      memory_limit such as 4g or 512mb; {{ item.name }} declared cpu_limit
+      {{ item.cpu_limit }} and memory_limit {{ item.memory_limit }}.
+  loop: "{{ github_runner_capacity_pools }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Validate the optional heavy pool's declaration
+  ansible.builtin.assert:
+    that:
+      - github_runner_heavy_pool_replicas | int >= 1
+      - github_runner_heavy_pool_label | length > 0
+      - "'proxmox' not in github_runner_heavy_pool_label.split(',')"
+      - "'review' not in github_runner_heavy_pool_label.split(',')"
+      - github_runner_heavy_pool_label not in github_runner_labels_common.split(',')
+    fail_msg: >-
+      The heavy pool's label must be non-empty and distinct from proxmox,
+      review, and every label in github_runner_labels_common, and its replica
+      count must be >= 1, or the heavy lane would share a label with another
+      lane and jobs could land on either one.
+
+- name: Convert every pool's limits into host demand
+  ansible.builtin.set_fact:
+    github_runner_capacity_demand: >-
+      {{ github_runner_capacity_demand | default([])
+         + [{'name': item.name,
+             'cpus': item.replicas * (item.cpu_limit | float),
+             'memory_mb': item.replicas
+                          * ((item.memory_limit | lower
+                              | regex_replace('[kmg]?b?$', '')) | float)
+                          * {'': 1 / 1048576, 'b': 1 / 1048576,
+                             'k': 1 / 1024, 'kb': 1 / 1024,
+                             'm': 1, 'mb': 1, 'g': 1024, 'gb': 1024}
+                          [(item.memory_limit | lower
+                            | regex_replace('^[0-9.]+', ''))] }] }}
+  loop: "{{ github_runner_capacity_pools }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Sum the pools' demand
+  ansible.builtin.set_fact:
+    github_runner_capacity_total_cpus: >-
+      {{ github_runner_capacity_demand | map(attribute='cpus') | map('float') | sum }}
+    github_runner_capacity_total_memory_mb: >-
+      {{ github_runner_capacity_demand | map(attribute='memory_mb') | map('float') | sum }}
+
+- name: Require this host's capacity facts
+  ansible.builtin.assert:
+    that:
+      - ansible_processor_vcpus is defined
+      - ansible_memtotal_mb is defined
+    fail_msg: >-
+      The pool capacity gate reads ansible_processor_vcpus and
+      ansible_memtotal_mb, and neither is defined on this host. Converge the
+      role where facts are gathered or the fact cache is populated; the gate
+      cannot judge a host whose capacity it cannot see.
+
+- name: Fail when the pools overcommit this host
+  ansible.builtin.assert:
+    that:
+      - github_runner_capacity_total_cpus | float
+        <= (ansible_processor_vcpus | int) - (github_runner_host_cpu_reserve | int)
+      - github_runner_capacity_total_memory_mb | float
+        <= (ansible_memtotal_mb | int) - (github_runner_host_memory_reserve_mb | int)
+    fail_msg: >-
+      The runner pools declared for this host need
+      {{ github_runner_capacity_total_cpus }} CPUs and
+      {{ github_runner_capacity_total_memory_mb }} MB, more than this host's
+      {{ ansible_processor_vcpus }} vCPUs and {{ ansible_memtotal_mb }} MB
+      minus the reserve ({{ github_runner_host_cpu_reserve }} CPUs /
+      {{ github_runner_host_memory_reserve_mb }} MB). Shrink a pool's
+      replicas or limits, enlarge the guest, or lower
+      github_runner_host_cpu_reserve / github_runner_host_memory_reserve_mb.
+      Pools: {{ github_runner_capacity_demand | map(attribute='name') | join(', ') }}.
