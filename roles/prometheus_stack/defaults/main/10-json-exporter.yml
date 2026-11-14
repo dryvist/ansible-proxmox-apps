@@ -1,8 +1,12 @@
 ---
 # json_exporter runs beside Prometheus and probes each declared executor once
-# per scrape. The API credential is supplied by prometheus_group from the apps
-# domain; keep the default empty so the authenticated scrape is omitted until
-# that field is provisioned.
+# per scrape. The subscription quota feature renders no module, no scrape job
+# and no credential mount unless prometheus_stack_json_exporter_quota_enabled
+# is true and the executor's API credential is provisioned; with both false
+# and the default empty credentials the rendered files are byte for byte what
+# they are without the feature. The API credential is supplied by
+# prometheus_group from the apps domain; keep the default empty so the
+# authenticated scrape is omitted until that field is provisioned.
 prometheus_stack_json_exporter_image: "quay.io/prometheuscommunity/json-exporter:v0.7.0"
 prometheus_stack_json_exporter_container_name: json-exporter
 prometheus_stack_json_exporter_port: 7979
@@ -11,6 +15,7 @@ prometheus_stack_json_exporter_gid: "65534"
 prometheus_stack_json_exporter_config_host_path: "{{ prometheus_stack_data_dir }}/json-exporter.yml"
 prometheus_stack_json_exporter_config_container_path: /etc/json_exporter/config.yml
 prometheus_stack_json_exporter_credentials: {}
+prometheus_stack_json_exporter_quota_enabled: false
 prometheus_stack_json_exporter_address: >-
   {{ prometheus_stack_blackbox_address
      | regex_replace(':[0-9]+$', ':' ~ (prometheus_stack_json_exporter_port | string)) }}
@@ -21,14 +26,26 @@ prometheus_stack_json_exporter_executors:
     credential_name: zcode
     credential_path_suffix: zai_api_key
     credentials_file: /run/secrets/zai_api_key
+    # The usage endpoint is undocumented; these example paths each select one
+    # limit by its unit and number and read the value behind it. A path that
+    # matches nothing fails the scrape, so a wrong path never emits a value.
+    response_paths:
+      used_percent: "{.data.limits[?(@.unit == {unit} && @.number == {number})].percentage}"
+      window_seconds: "{.data.limits[?(@.unit == {unit} && @.number == {number})].windowSeconds}"
+      reset_timestamp_seconds: >-
+        {.data.limits[?(@.unit == {unit} && @.number == {number}
+        && @.nextResetTime != null)].nextResetTimeSeconds}
     windows:
       - { unit: 3, number: 5, name: 5h }
       - { unit: 6, number: 1, name: weekly }
-# Executors whose credential is present; the compose and scrape templates both iterate this list.
+# Executors whose credential is present and whose feature flag is on; the
+# compose and scrape templates both iterate this list.
 prometheus_stack_json_exporter_active_executors: >-
   {{ prometheus_stack_json_exporter_executors
      | selectattr('credential_name', 'in',
                   dict(prometheus_stack_json_exporter_credentials.keys()
                        | zip(prometheus_stack_json_exporter_credentials.values() | map('string') | map('trim')))
                   | dict2items | selectattr('value') | map(attribute='key') | list)
-     | list }}
+     | list
+     if prometheus_stack_json_exporter_quota_enabled | bool
+     else [] }}

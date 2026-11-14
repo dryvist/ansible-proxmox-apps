@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.44.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.43.0...v5.44.0) (2026-11-14)
+
+
+### Features
+
+* **prometheus:** keep declared serving metrics and the textfile error signal on guest scrapes ([#3635](https://github.com/dryvist/ansible-proxmox-apps/issues/3635)) ([7cc3ba1](https://github.com/dryvist/ansible-proxmox-apps/commit/7cc3ba1ea83a820735dc3460f65761cc1ab0a3f9))
+
 ## [5.43.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.42.1...v5.43.0) (2026-11-14)
 
 

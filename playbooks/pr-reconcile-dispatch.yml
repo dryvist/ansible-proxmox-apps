@@ -1,0 +1,111 @@
+---
+# Fire one GitHub workflow_dispatch for pull-request reconciliation. A
+# Semaphore template in the dispatching repository calls this playbook every
+# 5 minutes while enabled, so a run must stay cheap and stateless: no state on
+# disk, one minted token, one GitHub request. The target workflow owns what
+# the reconciliation does; this playbook only pulls the trigger.
+#
+# Targets come from the environment. The repository here never carries real
+# names — the examples below are placeholders only:
+#   PR_RECONCILE_OWNER            target account (e.g. octo-org)
+#   PR_RECONCILE_REPOSITORY       target repository (e.g. hello-world)
+#   PR_RECONCILE_WORKFLOW         workflow file name (e.g. reconcile.yml)
+#   PR_RECONCILE_REF              git ref to dispatch on (default: main)
+# The short-lived GitHub token is never stored: it is minted per run from the
+# OpenBao GitHub secrets engine with the run's own identity, scoped by a
+# stored permission set, and held only in memory for the one dispatch request:
+#   PR_RECONCILE_GITHUB_MOUNT     OpenBao GitHub secrets-engine mount
+#   PR_RECONCILE_PERMISSION_SET   stored permission set to mint from
+# OpenBao access follows the shared localhost pattern (BAO_ADDR plus
+# BAO_TOKEN/VAULT_TOKEN — see playbooks/tasks/nautobot_collection_access.yml
+# and playbooks/tasks/sync-cribl-packs/mint-github-tokens.yml).
+#
+# Usage:
+#   scripts/run-ansible.sh playbooks/pr-reconcile-dispatch.yml \
+#     -i localhost, --limit localhost
+
+- name: Dispatch the pull-request reconciliation workflow
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    ansible_become: false
+    pr_reconcile_owner: "{{ lookup('env', 'PR_RECONCILE_OWNER') }}"
+    pr_reconcile_repository: "{{ lookup('env', 'PR_RECONCILE_REPOSITORY') }}"
+    pr_reconcile_workflow: "{{ lookup('env', 'PR_RECONCILE_WORKFLOW') }}"
+    pr_reconcile_ref: "{{ lookup('env', 'PR_RECONCILE_REF') | default('main', true) }}"
+    pr_reconcile_github_mount: "{{ lookup('env', 'PR_RECONCILE_GITHUB_MOUNT') }}"
+    pr_reconcile_permission_set: "{{ lookup('env', 'PR_RECONCILE_PERMISSION_SET') }}"
+    pr_reconcile_bao_addr: "{{ lookup('env', 'BAO_ADDR') }}"
+    pr_reconcile_bao_token: >-
+      {{ lookup('env', 'BAO_TOKEN') | default(lookup('env', 'VAULT_TOKEN'), true) }}
+
+  tasks:
+    # Select the unset inputs before any request so the failure names them.
+    - name: Name the unset dispatch inputs
+      ansible.builtin.set_fact:
+        pr_reconcile_missing_inputs: >-
+          {{ {
+               'PR_RECONCILE_OWNER': pr_reconcile_owner,
+               'PR_RECONCILE_REPOSITORY': pr_reconcile_repository,
+               'PR_RECONCILE_WORKFLOW': pr_reconcile_workflow,
+               'PR_RECONCILE_GITHUB_MOUNT': pr_reconcile_github_mount,
+               'PR_RECONCILE_PERMISSION_SET': pr_reconcile_permission_set,
+               'BAO_ADDR': pr_reconcile_bao_addr,
+               'BAO_TOKEN/VAULT_TOKEN': pr_reconcile_bao_token,
+             } | dict2items | selectattr('value', 'equalto', '') | map(attribute='key') | list }}
+      no_log: true
+
+    - name: Require every dispatch input before any request
+      ansible.builtin.assert:
+        that: pr_reconcile_missing_inputs | length == 0
+        fail_msg: >-
+          Unset dispatch inputs: {{ pr_reconcile_missing_inputs | join(', ') }}.
+          PR_RECONCILE_REF is optional and defaults to main.
+
+    - name: Mint a short-lived GitHub token through the stored permission set
+      community.hashi_vault.vault_write:
+        url: "{{ pr_reconcile_bao_addr }}"
+        auth_method: token
+        token: "{{ pr_reconcile_bao_token }}"
+        path: "{{ pr_reconcile_github_mount }}/token/{{ pr_reconcile_permission_set }}"
+        data: {}
+      register: pr_reconcile_mint
+      changed_when: false
+      no_log: true
+
+    - name: Read the minted GitHub token
+      ansible.builtin.set_fact:
+        pr_reconcile_github_token: >-
+          {{ (pr_reconcile_mint.data.data | default(pr_reconcile_mint.data, true)).token | default('', true) }}
+      no_log: true
+
+    - name: Require the minted GitHub token
+      ansible.builtin.assert:
+        that: pr_reconcile_github_token | length > 0
+        fail_msg: >-
+          The {{ pr_reconcile_github_mount }}/token/{{ pr_reconcile_permission_set }} mint
+          returned no token. Grant create or update on that path to the run's own identity.
+      no_log: true
+
+    - name: Send one workflow dispatch to GitHub
+      ansible.builtin.uri:
+        url: >-
+          https://api.github.com/repos/{{ pr_reconcile_owner }}/{{ pr_reconcile_repository
+          }}/actions/workflows/{{ pr_reconcile_workflow }}/dispatches
+        method: POST
+        status_code: 204
+        headers:
+          Authorization: "Bearer {{ pr_reconcile_github_token }}"
+          Accept: application/vnd.github+json
+          X-GitHub-Api-Version: "2022-11-28"
+        unredirected_headers:
+          - Authorization
+        follow_redirects: none
+        body_format: json
+        body:
+          ref: "{{ pr_reconcile_ref }}"
+        timeout: 30
+      changed_when: false
+      no_log: true
