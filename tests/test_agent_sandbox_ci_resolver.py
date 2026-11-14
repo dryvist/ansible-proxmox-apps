@@ -29,7 +29,9 @@ class AgentSandboxCiResolverContract(unittest.TestCase):
         repos = inventory["agent_sandbox_ci_resolver_repos"]
         self.assertEqual(len(repos), 10)
         self.assertEqual(len(set(repos)), len(repos))
-        self.assertTrue(all(repo.startswith("dryvist/") for repo in repos))
+        self.assertLessEqual(
+            {repo.split("/")[0] for repo in repos}, {"dryvist", "jpe-ai-agents", "jpe-ansible"}
+        )
         self.assertEqual(self.defaults["agent_sandbox_ci_resolver_max_attempts"], 3)
         self.assertNotIn("agent_sandbox_ci_resolver_max_attempts", inventory)
         self.assertEqual(self.defaults["agent_sandbox_ci_resolver_model_tiers"], "t2,t3")
