@@ -2,6 +2,7 @@
 """Contract checks for the Nginx raw download cache role."""
 
 from pathlib import Path
+import re
 
 import yaml
 
@@ -50,3 +51,11 @@ def test_raw_cache_is_native_nginx_and_checks_the_repository_key():
     assert "573BFD6B3D8FBC641079A6ABABF5BD827BD9BF62" in fingerprints[0]["ansible.builtin.assert"]["that"][0]
     assert repository["ansible.builtin.deb822_repository"]["install_python_debian"] is True
     assert any(task.get("ansible.builtin.systemd", {}).get("name") == "nginx" for task in tasks)
+
+
+def test_raw_cache_syslog_tags_are_valid_nginx_tags():
+    config = (ROLE / "templates" / "raw-cache.conf.j2").read_text()
+    tags = re.findall(r"tag=([^,;\s]+)", config)
+
+    assert tags
+    assert all(re.fullmatch(r"[A-Za-z0-9_]+", tag) for tag in tags)
