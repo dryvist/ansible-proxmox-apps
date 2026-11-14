@@ -69,3 +69,10 @@ def test_raw_cache_key_inspection_runs_in_check_mode_once_the_key_is_on_disk():
 
     assert inspect["check_mode"] is False
     assert inspect["when"] == verify["when"] == guard
+
+
+def test_raw_cache_sizes_proxy_buffers_for_release_redirect_headers():
+    config = (ROLE / "templates" / "raw-cache.conf.j2").read_text()
+
+    assert config.count("proxy_buffer_size 32k;") == 2
+    assert config.count("proxy_buffers 8 32k;") == 2
