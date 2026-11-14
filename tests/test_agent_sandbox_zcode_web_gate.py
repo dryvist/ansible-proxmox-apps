@@ -1,9 +1,11 @@
 """The ZCode Web service is optional: off removes it from the compose project and the tasks."""
 
 import json
+import os
 from pathlib import Path
 import re
 import unittest
+from unittest import mock
 
 import yaml
 from ansible.errors import AnsibleError
@@ -14,6 +16,11 @@ ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "roles" / "agent_sandbox"
 FLAG = "agent_sandbox_zcode_web_enabled"
 DOCS_FLAG = "agent_sandbox_mirror_docs_enabled"
+# The role default names this example repository; the deployment sets the real
+# one through this environment variable, which the renovate manager tracks as
+# its depName.
+EXAMPLE_IMAGE_REPOSITORY = "ghcr.io/example-org/example-image"
+ENV_IMAGE_REPOSITORY = "AGENT_SANDBOX_ZCODE_WEB_IMAGE_REPOSITORY"
 # Tasks that stay on because the dispatcher and alert settings share the directory.
 ALWAYS_ON = {
     "Create the ZCode service credential mount directory",
@@ -58,6 +65,33 @@ def guarded(task: dict) -> bool:
     return any(f"{FLAG} | bool" in condition for condition in conditions)
 
 
+def evaluate_image_refusal(enabled: bool) -> tuple[bool, bool, str]:
+    """Evaluate the role's example-repository gate: (runs, passes, fail_msg)."""
+    defaults = load(ROLE / "defaults/main/00-runtime.yml")
+    templar = Templar(loader=DataLoader())
+    # Resolve the default first: a trusted template never expands untrusted
+    # strings nested inside it, so the condition must see the resolved image.
+    image = templar.template(
+        trust_as_template(defaults["agent_sandbox_zcode_web_image"])
+    )
+    templar.available_variables = {FLAG: enabled, "agent_sandbox_zcode_web_image": image}
+
+    def condition(expression: str):
+        # Bare assert/when expressions carry no template markers, so wrap them
+        # to force evaluation instead of the identity render.
+        return templar.template(trust_as_template("{{ " + expression + " }}"))
+
+    task = next(
+        task for task in load(ROLE / "tasks/main.yml")
+        if "example image repository" in task["name"]
+    )
+    spec = task["ansible.builtin.assert"]
+    runs = condition(task["when"])
+    passes = condition(spec["that"][0])
+    message = templar.template(trust_as_template(spec["fail_msg"]))
+    return bool(runs), bool(passes), message
+
+
 def zcode_tasks(path: Path):
     return [
         task
@@ -71,7 +105,7 @@ class ZcodeWebGate(unittest.TestCase):
         config = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
         manager = next(
             item for item in config["customManagers"]
-            if item.get("depNameTemplate") == "ghcr.io/dryvist/nix-agent-sandbox/agent"
+            if ENV_IMAGE_REPOSITORY in " ".join(item.get("matchStrings", []))
         )
         files = [
             path for path in (ROLE / "defaults").rglob("*.yml")
@@ -88,7 +122,40 @@ class ZcodeWebGate(unittest.TestCase):
         match = re.search(pattern, text)
         self.assertIsNotNone(match)
         image = render_compose(True)["services"]["zcode-web"]["image"]
-        self.assertEqual(image, manager["depNameTemplate"] + "@" + match["currentDigest"])
+        self.assertEqual(
+            image, EXAMPLE_IMAGE_REPOSITORY + "@" + match["currentDigest"]
+        )
+        with mock.patch.dict(
+            os.environ, {ENV_IMAGE_REPOSITORY: manager["depNameTemplate"]}
+        ):
+            tracked = render_compose(True)["services"]["zcode-web"]["image"]
+        self.assertEqual(
+            tracked, manager["depNameTemplate"] + "@" + match["currentDigest"]
+        )
+        self.assertEqual(
+            re.search(r"sha256:[a-f0-9]{64}", tracked).group(), match["currentDigest"]
+        )
+
+    def test_example_repository_refuses_while_enabled(self):
+        runs, passes, message = evaluate_image_refusal(True)
+        self.assertTrue(runs)
+        self.assertFalse(passes)
+        self.assertIn(ENV_IMAGE_REPOSITORY, message)
+        self.assertIn("unset", message)
+
+    def test_environment_repository_passes_while_enabled(self):
+        repository = "registry.example.invalid/example-agent"
+        with mock.patch.dict(os.environ, {ENV_IMAGE_REPOSITORY: repository}):
+            runs, passes, _ = evaluate_image_refusal(True)
+            image = render_compose(True)["services"]["zcode-web"]["image"]
+        self.assertTrue(runs)
+        self.assertTrue(passes)
+        digest = re.search(r"sha256:[a-f0-9]{64}", image).group()
+        self.assertEqual(image, repository + "@" + digest)
+
+    def test_disabled_service_never_runs_the_refusal(self):
+        runs, _passes, _message = evaluate_image_refusal(False)
+        self.assertFalse(runs)
 
     def test_role_default_keeps_the_service_on(self):
         self.assertIs(load(ROLE / "defaults/main/00-runtime.yml")[FLAG], True)
