@@ -42,6 +42,10 @@ class PoolCapacityGate(unittest.TestCase):
         proc = _run(FIXTURES / "fitting.yml")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
+    def test_a_host_with_no_pools_passes(self):
+        proc = _run(FIXTURES / "no_pools.yml")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
