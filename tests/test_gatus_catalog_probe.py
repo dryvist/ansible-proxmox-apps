@@ -112,6 +112,18 @@ class GatusCatalogProbe(unittest.TestCase):
             "[CERTIFICATE_EXPIRATION] > 240h",
         ])
 
+    def test_dify_ping_path_requires_http_200(self):
+        ep = render(services=[{"name": "dify", "sso": True,
+                      "url": "https://dify.example.test",
+                      "probe_url": "http://dify-guest:80",
+                      "probe_path": "/console/api/ping"}])["dify"]
+        self.assertEqual(ep["url"], "https://dify.example.test/console/api/ping")
+        self.assertEqual(ep["conditions"], [
+            "[STATUS] == 200",
+            "[RESPONSE_TIME] < 3000",
+            "[CERTIFICATE_EXPIRATION] > 240h",
+        ])
+
     def test_sso_row_without_a_probe_url_uses_the_public_url(self):
         ep = render(services=[{"name": "pool", "sso": True, "url": "https://pool.example.test",
                       "probe_url": ""}])["pool"]
