@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.47.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.47.0...v5.47.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **agent_sandbox:** pin the CI resolver checksum for the current source commit ([#3660](https://github.com/dryvist/ansible-proxmox-apps/issues/3660)) ([01922ea](https://github.com/dryvist/ansible-proxmox-apps/commit/01922eaa2168d34c566692c99635e9d5b0beaa45))
+
 ## [5.47.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.46.0...v5.47.0) (2026-11-14)
 
 
