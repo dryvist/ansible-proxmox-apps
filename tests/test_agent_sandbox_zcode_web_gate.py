@@ -1,9 +1,11 @@
 """The ZCode Web service is optional: off removes it from the compose project and the tasks."""
 
 import json
+import os
 from pathlib import Path
 import re
 import unittest
+from unittest import mock
 
 import yaml
 from ansible.errors import AnsibleError
@@ -14,6 +16,11 @@ ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "roles" / "agent_sandbox"
 FLAG = "agent_sandbox_zcode_web_enabled"
 DOCS_FLAG = "agent_sandbox_mirror_docs_enabled"
+# The role default names this example repository; the deployment sets the real
+# one through this environment variable, which the renovate manager tracks as
+# its depName.
+EXAMPLE_IMAGE_REPOSITORY = "ghcr.io/example-org/example-image"
+ENV_IMAGE_REPOSITORY = "AGENT_SANDBOX_ZCODE_WEB_IMAGE_REPOSITORY"
 # Tasks that stay on because the dispatcher and alert settings share the directory.
 ALWAYS_ON = {
     "Create the ZCode service credential mount directory",
@@ -88,7 +95,15 @@ class ZcodeWebGate(unittest.TestCase):
         match = re.search(pattern, text)
         self.assertIsNotNone(match)
         image = render_compose(True)["services"]["zcode-web"]["image"]
-        self.assertEqual(image, manager["depNameTemplate"] + "@" + match["currentDigest"])
+        self.assertEqual(
+            image,
+            EXAMPLE_IMAGE_REPOSITORY + "@" + match["currentDigest"],
+        )
+        with mock.patch.dict(
+            os.environ, {ENV_IMAGE_REPOSITORY: manager["depNameTemplate"]}
+        ):
+            tracked = render_compose(True)["services"]["zcode-web"]["image"]
+        self.assertEqual(tracked, manager["depNameTemplate"] + "@" + match["currentDigest"])
 
     def test_role_default_keeps_the_service_on(self):
         self.assertIs(load(ROLE / "defaults/main/00-runtime.yml")[FLAG], True)

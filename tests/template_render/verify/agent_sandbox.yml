@@ -181,7 +181,7 @@
         that:
           - >-
             agent_sandbox_zcode_web_image
-            == ('ghcr.io/dryvist/nix-agent-sandbox/agent@sha256:'
+            == ('ghcr.io/example-org/example-image@sha256:'
             ~ 'd710e646f68f2737505373cc73abb134ba33d0e3e7c2bca96283f6d4966ae3ff')
           - "('image: ' ~ agent_sandbox_zcode_web_image) in _as_compose"
           - "('container_name: ' ~ agent_sandbox_zcode_web_container) in _as_compose"
@@ -205,6 +205,49 @@
         fail_msg: >-
           ZCode Web must use the immutable image digest, non-root hardening,
           persistent state mounts, and a read-only credential file mount.
+
+    # lookup('env') reads the controller process environment, which no task can
+    # mutate, so the override case evaluates the role default in a child
+    # process that carries the variable.
+    - name: Assert a set environment variable replaces the example repository
+      vars:
+        _as_env_repository: registry.example.invalid/example-agent
+        _as_env_digest: d710e646f68f2737505373cc73abb134ba33d0e3e7c2bca96283f6d4966ae3ff
+      block:
+        - name: Evaluate the role default with the environment repository set
+          ansible.builtin.command:
+            argv:
+              - ansible
+              - localhost
+              - -i
+              - localhost,
+              - -c
+              - local
+              - -m
+              - ansible.builtin.debug
+              - -a
+              - >-
+                msg={{ '{{' }} agent_sandbox_zcode_web_image {{ '}}' }}
+              - -e
+              - "@{{ playbook_dir }}/../../../roles/agent_sandbox/defaults/main/00-runtime.yml"
+          environment:
+            AGENT_SANDBOX_ZCODE_WEB_IMAGE_REPOSITORY: "{{ _as_env_repository }}"
+            ANSIBLE_NOCOLOR: "1"
+          register: _as_env_image_case
+          changed_when: false
+
+        - name: Assert the override repository joined the unchanged digest
+          ansible.builtin.assert:
+            that:
+              - >-
+                (_as_env_repository ~ '@sha256:' ~ _as_env_digest)
+                in _as_env_image_case.stdout
+              - >-
+                ('ghcr.io/example-org/example-image@sha256:' ~ _as_env_digest)
+                not in _as_env_image_case.stdout
+            fail_msg: >-
+              A set AGENT_SANDBOX_ZCODE_WEB_IMAGE_REPOSITORY must replace the
+              example repository while the pinned digest is unchanged.
 
     - name: Assert the allow-list audit log is read-only and shipped to Stream
       vars:
