@@ -55,7 +55,7 @@ class RunAnsibleShimContract(unittest.TestCase):
     def test_exact_defaults_and_shared_runner_exec(self):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn(
-            "# renovate: datasource=github-releases depName=dryvist/homelab-contracts",
+            "# renovate: datasource=github-releases depName=jpe-ansible/homelab-contracts",
             source,
         )
         operations = [
@@ -75,7 +75,7 @@ class RunAnsibleShimContract(unittest.TestCase):
                 "fi",
                 *EXPORT_LINES,
                 ref_line,
-                'exec nix run "github:dryvist/homelab-contracts/${HOMELAB_CONTRACTS_REF}#run-ansible" -- "$@"',
+                'exec nix run "github:jpe-ansible/homelab-contracts/${HOMELAB_CONTRACTS_REF}#run-ansible" -- "$@"',
             ],
         )
 
@@ -125,7 +125,7 @@ class RunAnsibleShimContract(unittest.TestCase):
             captured_args,
             [
                 "run",
-                f"github:dryvist/homelab-contracts/{contracts_ref}#run-ansible",
+                f"github:jpe-ansible/homelab-contracts/{contracts_ref}#run-ansible",
                 "--",
                 "playbooks/site.yml",
                 "--limit",
