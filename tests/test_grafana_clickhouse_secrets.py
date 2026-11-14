@@ -15,7 +15,7 @@ TASKS = ROOT / "playbooks/tasks"
 SCOPE = TASKS / "scope_grafana_clickhouse_secrets.yml"
 FILTER = TASKS / "filter_grafana_clickhouse_secrets.yml"
 MAP = ROOT / "playbooks/site/vars/openbao_secrets_domain_groups.yml"
-PREFETCH = ROOT / "playbooks/site/00-load-and-telemetry.yml"
+PREFETCH = ROOT / "playbooks/site/00-resource-domain-secrets-prefetch.yml"
 TEMPLATE = ROOT / "roles/grafana_stack/templates/datasource.yml.j2"
 
 

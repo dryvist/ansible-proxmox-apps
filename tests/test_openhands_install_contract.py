@@ -104,6 +104,10 @@ class OpenHandsNodeRuntime(unittest.TestCase):
         register = _task(tasks, "Install the Agent Canvas runtime prerequisites")["register"]
         self.assertIn("ansible_check_mode", params["verdaccio_cache_node_runtime_skip_unpack"])
         self.assertIn(register, params["verdaccio_cache_node_runtime_skip_unpack"])
+        # A first --check pass only previews the install directory too, so the
+        # download is skipped rather than failing on a missing destination.
+        dir_register = _task(tasks, "Create the Agent Canvas install directory")["register"]
+        self.assertEqual(include["when"], f"not (ansible_check_mode and {dir_register} is changed)")
 
     def test_verdaccio_cache_installs_node_through_the_same_shared_tasks(self):
         verdaccio = _load(ROOT / "roles" / "verdaccio_cache" / "tasks" / "main.yml")
@@ -136,6 +140,12 @@ class OpenHandsCanvasInstall(unittest.TestCase):
         self.assertIn("--registry={{ openhands_npm_cache_url }}", argv)
         self.assertIn("--global", argv)
         self.assertIn("{{ openhands_canvas_dir }}", argv)
+
+    def test_canvas_install_has_its_own_declared_timeout(self):
+        install = _task(_install(), "Install Agent Canvas through the npm cache")
+        self.assertEqual(install["timeout"], "{{ openhands_canvas_install_timeout }}")
+        defaults = yaml.safe_load((ROLE / "defaults" / "main.yml").read_text())
+        self.assertGreater(defaults["openhands_canvas_install_timeout"], 240)
 
     def test_canvas_reinstalls_only_when_the_pin_is_not_installed(self):
         tasks = _install()

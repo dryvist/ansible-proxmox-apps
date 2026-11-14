@@ -157,7 +157,9 @@ class AgentSandboxCredentialContract(unittest.TestCase):
         self.assertIn('env_keep += "SSH_ORIGINAL_COMMAND"', sudoers)
 
         secret_scope = (ROOT / "playbooks/tasks/publish_secret_domain_facts.yml").read_text()
-        prefetch_play = (ROOT / "playbooks/site/00-load-and-telemetry.yml").read_text()
+        prefetch_play = (
+            ROOT / "playbooks/site/00-resource-domain-secrets-prefetch.yml"
+        ).read_text()
         self.assertIn(
             "ansible.builtin.import_tasks: ../tasks/publish_secret_domain_facts.yml",
             prefetch_play,

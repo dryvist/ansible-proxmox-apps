@@ -7,7 +7,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 SITE_PLAYBOOK = ROOT / "playbooks/site/04e-youtrack.yml"
-PREFETCH_PLAYBOOK = ROOT / "playbooks/site/00-load-and-telemetry.yml"
+PREFETCH_PLAYBOOK = ROOT / "playbooks/site/00-resource-domain-secrets-prefetch.yml"
 SCOPE_PLAYBOOK = ROOT / "playbooks/site/00a-secrets-scope-detect.yml"
 
 

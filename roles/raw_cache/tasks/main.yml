@@ -36,7 +36,9 @@
     owner: root
     group: root
     mode: "0644"
+  register: raw_cache_nginx_key_download
 
+# Read-only, so it also runs in check mode; skipped there only while the key is not on disk yet.
 - name: Inspect official nginx signing key
   ansible.builtin.command:
     argv:
@@ -47,12 +49,15 @@
       - /usr/share/keyrings/nginx-archive-keyring.asc
   register: raw_cache_nginx_key
   changed_when: false
+  check_mode: false
+  when: not (ansible_check_mode and raw_cache_nginx_key_download is changed)
 
 - name: Verify official nginx signing key fingerprint
   ansible.builtin.assert:
     that:
       - "'573BFD6B3D8FBC641079A6ABABF5BD827BD9BF62' in raw_cache_nginx_key.stdout"
     fail_msg: "The downloaded nginx repository key has an unexpected fingerprint."
+  when: not (ansible_check_mode and raw_cache_nginx_key_download is changed)
 
 - name: Configure official nginx stable package repository
   ansible.builtin.deb822_repository:
@@ -82,12 +87,13 @@
     path: /etc/nginx/sites-enabled/default
     state: absent
 
+# The nginx.org package runs workers as nginx, and nginx takes ownership of its cache path on load.
 - name: Create bounded raw_cache directory
   ansible.builtin.file:
     path: "{{ raw_cache_cache_dir }}"
     state: directory
-    owner: www-data
-    group: www-data
+    owner: nginx
+    group: nginx
     mode: "0750"
 
 - name: Install raw_cache nginx configuration

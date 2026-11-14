@@ -2,6 +2,7 @@
 """Contract checks for the Nginx raw download cache role."""
 
 from pathlib import Path
+import re
 
 import yaml
 
@@ -50,3 +51,43 @@ def test_raw_cache_is_native_nginx_and_checks_the_repository_key():
     assert "573BFD6B3D8FBC641079A6ABABF5BD827BD9BF62" in fingerprints[0]["ansible.builtin.assert"]["that"][0]
     assert repository["ansible.builtin.deb822_repository"]["install_python_debian"] is True
     assert any(task.get("ansible.builtin.systemd", {}).get("name") == "nginx" for task in tasks)
+
+
+def test_raw_cache_syslog_tags_are_valid_nginx_tags():
+    config = (ROLE / "templates" / "raw-cache.conf.j2").read_text()
+    tags = re.findall(r"tag=([^,;\s]+)", config)
+
+    assert tags
+    assert all(re.fullmatch(r"[A-Za-z0-9_]+", tag) for tag in tags)
+
+
+def test_raw_cache_key_inspection_runs_in_check_mode_once_the_key_is_on_disk():
+    tasks = yaml.safe_load((ROLE / "tasks" / "main.yml").read_text())
+    inspect = next(task for task in tasks if task.get("name") == "Inspect official nginx signing key")
+    verify = next(task for task in tasks if task.get("name") == "Verify official nginx signing key fingerprint")
+    guard = "not (ansible_check_mode and raw_cache_nginx_key_download is changed)"
+
+    assert inspect["check_mode"] is False
+    assert inspect["when"] == verify["when"] == guard
+
+
+def test_raw_cache_sizes_proxy_buffers_for_release_redirect_headers():
+    config = (ROLE / "templates" / "raw-cache.conf.j2").read_text()
+
+    assert config.count("proxy_buffer_size 32k;") == 2
+    assert config.count("proxy_buffers 8 32k;") == 2
+
+
+def test_raw_cache_directory_belongs_to_the_nginx_worker_user():
+    tasks = yaml.safe_load((ROLE / "tasks" / "main.yml").read_text())
+    directory = next(task for task in tasks if task.get("name") == "Create bounded raw_cache directory")
+
+    assert directory["ansible.builtin.file"]["owner"] == "nginx"
+    assert directory["ansible.builtin.file"]["group"] == "nginx"
+
+
+def test_raw_cache_verifies_upstream_chains_up_to_depth_three():
+    config = (ROLE / "templates" / "raw-cache.conf.j2").read_text()
+
+    assert config.count("proxy_ssl_verify on;") == 2
+    assert config.count("proxy_ssl_verify_depth 3;") == 2

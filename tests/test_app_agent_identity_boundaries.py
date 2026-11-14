@@ -78,9 +78,16 @@ def test_vikunja_shared_leaf_publishes_only_interactive_url_and_tokens():
     assert "vikunja_mcp_token_static_fields" in publisher
     assert "vikunja_mcp_user.project_allowlist" in publisher
     assert "vikunja_agent_read_allowlist" not in publisher
-    assert "vikunja_mcp_token_users + vikunja_openhands_token_users + vikunja_agent_tiers" in (
-        ROOT / "roles/vikunja/tasks/mcp_tokens.yml"
-    ).read_text()
+    token_loop = next(
+        task for task in _yaml(ROOT / "roles/vikunja/tasks/mcp_tokens.yml")
+        if task.get("name") == "Mint and publish MCP and app-agent tokens per identity"
+    )
+    assert set(token_loop["loop"].split()) >= {
+        "vikunja_mcp_token_users",
+        "vikunja_clerk_token_users",
+        "vikunja_openhands_token_users",
+        "vikunja_agent_tiers",
+    }
 
 
 def test_zammad_agent_write_defaults_and_exact_access_are_single_sourced():

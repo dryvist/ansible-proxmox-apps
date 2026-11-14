@@ -21,6 +21,9 @@
     github_runner_token_env_file: /etc/github-runner/access-token.env
     github_runner_token_path: github-admin/token/runner-register-dryvist
     github_runner_review_token_path: github-runner/token
+    # Unset owner list: every review pool must render exactly as before.
+    github_runner_register_owners: []
+    github_runner_registration_token_path_prefix: github-admin/token/runner-register
     github_runner_active_review_orgs: []
     github_runner_openbao_role_id: "role-id-not-a-real-credential"
     github_runner_openbao_secret_id: "secret-id-not-a-real-credential"
@@ -49,6 +52,17 @@
           - org: example-org-a
           - org: example-org-b
 
+    - name: Render the review config with one owner listed
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/openbao-agent-review-orgs.hcl.j2"
+        dest: "{{ _fixture_dir }}/test_openbao-agent-review-listed.hcl"
+        mode: "0600"
+      vars:
+        github_runner_register_owners: [example-org-b]
+        github_runner_active_review_orgs:
+          - org: example-org-a
+          - org: example-org-b
+
     - name: Read the rendered files
       ansible.builtin.slurp:
         src: "{{ _fixture_dir }}/{{ item }}"
@@ -57,12 +71,14 @@
         - test_openbao-agent.hcl
         - test_openbao-github-runner-agent.service
         - test_openbao-agent-review.hcl
+        - test_openbao-agent-review-listed.hcl
 
     - name: Decode the rendered files
       ansible.builtin.set_fact:
         _hcl_raw: "{{ _agent_raw.results[0].content | b64decode }}"
         _svc_raw: "{{ _agent_raw.results[1].content | b64decode }}"
         _hcl_review_raw: "{{ _agent_raw.results[2].content | b64decode }}"
+        _hcl_listed: "{{ (_agent_raw.results[3].content | b64decode).splitlines() }}"
 
     # Directive lines only: the files explain themselves at length and the
     # prose names the strings asserted below.
@@ -144,6 +160,20 @@
         fail_msg: >-
           Each review organization must render its own token stanza using only
           its org_name parameter and write to a mode-protected per-org file.
+
+    - name: Assert a listed owner mints from its own set and others keep the shared path
+      ansible.builtin.assert:
+        that:
+          - _hcl_listed | select('search', 'github-runner/token.*org_name=example-org-a') | length == 1
+          - _hcl_listed | select('search', 'github-admin/token/runner-register-example-org-b\\W') | length == 1
+          - _hcl_listed | select('search', 'org_name=example-org-b') | length == 0
+          - >-
+            _hcl_listed | select('search',
+            'destination\\s*=\\s*"/etc/github-runner/access-token-example-org-b.env"')
+            | length == 1
+        fail_msg: >-
+          Only an owner in github_runner_register_owners may switch to its
+          runner-register set; every other pool keeps the shared token path.
 
     - name: Assert the e2e credentials are rendered from the one Splunk bucket
       ansible.builtin.assert:

@@ -13,7 +13,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "roles/grafana_stack"
-QUERY = '{__name__=~"agent_quota_(used_percent|window_seconds|reset_timestamp_seconds)"}'
+QUERY = '{__name__=~"agent_quota_.*"}'
 SAMPLE_TOKEN = "fixture-quota-reader-token"
 SAMPLE_WRITE_TOKEN = "fixture-quota-writer-token"
 HOST_CONFIG = "/opt/grafana-stack/vmauth.yml"
