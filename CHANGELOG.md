@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.47.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.47.1...v5.47.2) (2026-11-14)
+
+
+### Bug Fixes
+
+* **deps:** resolve homelab-contracts from jpe-ansible ([#3664](https://github.com/dryvist/ansible-proxmox-apps/issues/3664)) ([02da2bd](https://github.com/dryvist/ansible-proxmox-apps/commit/02da2bd8e0fd025eb2fb53ab100a54c846cc32f0))
+
 ## [5.47.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.47.0...v5.47.1) (2026-11-14)
 
 
