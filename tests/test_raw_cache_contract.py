@@ -84,3 +84,10 @@ def test_raw_cache_directory_belongs_to_the_nginx_worker_user():
 
     assert directory["ansible.builtin.file"]["owner"] == "nginx"
     assert directory["ansible.builtin.file"]["group"] == "nginx"
+
+
+def test_raw_cache_verifies_upstream_chains_up_to_depth_three():
+    config = (ROLE / "templates" / "raw-cache.conf.j2").read_text()
+
+    assert config.count("proxy_ssl_verify on;") == 2
+    assert config.count("proxy_ssl_verify_depth 3;") == 2
