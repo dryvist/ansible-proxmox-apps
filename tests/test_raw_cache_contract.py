@@ -76,3 +76,11 @@ def test_raw_cache_sizes_proxy_buffers_for_release_redirect_headers():
 
     assert config.count("proxy_buffer_size 32k;") == 2
     assert config.count("proxy_buffers 8 32k;") == 2
+
+
+def test_raw_cache_directory_belongs_to_the_nginx_worker_user():
+    tasks = yaml.safe_load((ROLE / "tasks" / "main.yml").read_text())
+    directory = next(task for task in tasks if task.get("name") == "Create bounded raw_cache directory")
+
+    assert directory["ansible.builtin.file"]["owner"] == "nginx"
+    assert directory["ansible.builtin.file"]["group"] == "nginx"
