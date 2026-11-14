@@ -1,4 +1,16 @@
 ---
+# Resolved from this pool's optional overrides (cpu_limit, memory_limit)
+# before the renders below reference them: the unit template reads
+# github_runner_cpu_limit / github_runner_memory_limit, and a task var
+# cannot default onto the name it defines. Re-resolved every iteration, so
+# the next pool always starts from the role-wide values again.
+- name: Resolve this review pool's container limits
+  ansible.builtin.set_fact:
+    github_runner_pool_cpu_limit: >-
+      {{ github_runner_review_pool.cpu_limit | default(github_runner_cpu_limit) }}
+    github_runner_pool_memory_limit: >-
+      {{ github_runner_review_pool.memory_limit | default(github_runner_memory_limit) }}
+
 - name: Create review runner diagnostics directories
   ansible.builtin.file:
     path: "{{ github_runner_diag_host_dir }}/review-{{ github_runner_review_pool.org }}-{{ github_runner_review_slot }}"
@@ -40,6 +52,7 @@
     github_runner_group: "{{ github_runner_review_pool.group | default('pr-agent') }}"
     github_runner_review_slots: "{{ github_runner_review_pool.replicas | default(2) }}"
     github_runner_slot: "{{ github_runner_review_slot }}"
+    github_runner_labels_extra: "{{ github_runner_review_pool.labels | default('') }}"
   no_log: true
   notify: Restart review github runners
 
@@ -54,6 +67,8 @@
     github_runner_replicas: "{{ github_runner_review_pool.replicas | default(2) }}"
     github_runner_container_prefix: "github-runner-review-{{ github_runner_review_pool.org }}"
     github_runner_name_prefix: "review-{{ github_runner_review_pool.org }}"
+    github_runner_cpu_limit: "{{ github_runner_pool_cpu_limit }}"
+    github_runner_memory_limit: "{{ github_runner_pool_memory_limit }}"
     github_runner_unit_env_file: "{{ github_runner_env_file }}-review-{{ github_runner_review_pool.org }}"
     github_runner_unit_token_env_file: >-
       {{ (github_runner_token_env_file | dirname) ~ '/access-token-'

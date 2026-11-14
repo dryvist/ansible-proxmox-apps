@@ -79,6 +79,7 @@ CASES = [
             ("tasks/main.yml", "Check for the GitHub runner token agent systemd unit", "github_runner_agent_unit_file", "/etc/systemd/system/openbao-github-runner-agent.service"),
             ("tasks/reconcile_service_units.yml", "Check for optional organization review runner systemd unit templates", "github_runner_review_unit_file_checks", "/etc/systemd/system/github-runner-review-{{ item.org }}@.service"),
             ("tasks/reconcile_service_units.yml", "Check for the standard GitHub runner systemd unit template", "github_runner_unit_file", "/etc/systemd/system/github-runner@.service"),
+            ("tasks/reconcile_heavy_runner_units.yml", "Check for the heavy runner systemd unit template", "github_runner_heavy_unit_file", "/etc/systemd/system/github-runner-heavy@.service"),
             ("tasks/data_disk_timers.yml", "Check for the Docker data reclaim systemd timer unit", "github_runner_docker_prune_timer_unit_file", "/etc/systemd/system/github-runner-docker-prune.timer"),
             ("tasks/data_disk_timers.yml", "Check for the Molecule orphan-container reaper systemd timer unit", "github_runner_molecule_reaper_timer_unit_file", "/etc/systemd/system/github-runner-molecule-reaper.timer"),
         ],
@@ -87,6 +88,7 @@ CASES = [
             ("tasks/reconcile_service_units.yml", "Stop the runner token agent when no replicas are wanted", "not ansible_check_mode or github_runner_agent_unit_file.stat.exists"),
             ("tasks/reconcile_runner_units.yml", "Enable and start the pooled runners", "not ansible_check_mode or github_runner_unit_file.stat.exists"),
             ("tasks/reconcile_review_runner_units.yml", "Enable and start the configured review runners", "not ansible_check_mode or (github_runner_review_unit_file_checks.results | default([]) | selectattr('stat.exists') | list | length) == (github_runner_active_review_orgs | length)"),
+            ("tasks/reconcile_heavy_runner_units.yml", "Enable and start the configured heavy runners", "not ansible_check_mode or (github_runner_heavy_unit_file.stat.exists | default(false))"),
             ("tasks/data_disk_timers.yml", "Enable the Docker data reclaim timer", "not ansible_check_mode or github_runner_docker_prune_timer_unit_file.stat.exists"),
             ("tasks/data_disk_timers.yml", "Enable the Molecule orphan-container reaper timer", "not ansible_check_mode or github_runner_molecule_reaper_timer_unit_file.stat.exists"),
         ],
@@ -94,6 +96,7 @@ CASES = [
             ("Restart the runner token agent", "not ansible_check_mode or github_runner_agent_unit_file.stat.exists"),
             ("Restart github runners", "not ansible_check_mode or github_runner_unit_file.stat.exists"),
             ("Restart review github runners", "not ansible_check_mode or (github_runner_review_unit_file_checks.results | default([]) | selectattr('stat.exists') | list | length) == (github_runner_active_review_orgs | length)"),
+            ("Restart heavy github runners", "not ansible_check_mode or (github_runner_heavy_unit_file.stat.exists | default(false))"),
         ],
     },
     {

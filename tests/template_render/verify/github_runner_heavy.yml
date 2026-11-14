@@ -1,0 +1,198 @@
+---
+# The optional heavy pool and the per-pool override capability. Split out of
+# github_runner.yml to stay under the repo's per-file token budget
+# (.token-limits.yaml): it renders the heavy pool's unit and env file, plus
+# a pool WITH overrides, and pins the role-wide values against the standard
+# pool at the same time (github_runner.yml covers the no-override renders).
+- name: Render and verify the github_runner heavy pool and per-pool overrides
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_files:
+    - ../../../roles/github_runner/defaults/main.yml
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _template_dir: "{{ playbook_dir }}/../../../roles/github_runner/templates"
+    # Role defaults plus the facts the role sets at converge time.
+    github_runner_image: "myoung34/github-runner:2.338.0-ubuntu-noble"
+    github_runner_container_prefix: "github-runner"
+    github_runner_name_prefix: "proxmox-runner"
+    github_runner_network: ci_runners
+    github_runner_env_file: /etc/github-runner/runner.env
+    github_runner_stop_timeout: 120
+    github_runner_cpu_limit: "1.0"
+    github_runner_memory_limit: "4g"
+    github_runner_org: example-org
+    github_runner_group: example-group
+    github_runner_labels_common: "self-hosted,Linux,X64"
+    github_runner_labels_pool: "proxmox"
+    github_runner_review_slots: 2
+    github_runner_diag_host_dir: /var/lib/docker/github-runner-diag
+    github_runner_tool_cache_host_dir: /var/lib/docker/github-runner-toolcache
+    github_runner_tool_cache_mount: /opt/hostedtoolcache
+    github_runner_token_env_file: /etc/github-runner/access-token.env
+    github_runner_e2e_env_file: /etc/github-runner/e2e.env
+    github_runner_inventory_file: /etc/github-runner/tofu_inventory.json
+    github_runner_inventory_mount: /opt/e2e/tofu_inventory.json
+    github_runner_apt_proxy_url: ""
+    github_runner_bao_addr: "https://openbao.example.invalid"
+    _heavy_diag_mount_flag: >-
+      --volume\s+{{ github_runner_diag_host_dir }}/heavy-%i:/actions-runner/_diag
+
+  tasks:
+    - name: Read fixture identity values from the render directory
+      ansible.builtin.stat:
+        path: "{{ _fixture_dir }}"
+      register: _heavy_fixture_identity
+
+    - name: Set fixture UID and GID facts
+      ansible.builtin.set_fact:
+        github_runner_container_uid: "{{ _heavy_fixture_identity.stat.uid }}"
+        github_runner_container_gid: "{{ _heavy_fixture_identity.stat.gid }}"
+
+    - name: Build the fixture container user fact
+      ansible.builtin.set_fact:
+        github_runner_container_user: "{{ github_runner_container_uid }}:{{ github_runner_container_gid }}"
+
+    - name: Read a fixture GID from the local filesystem
+      ansible.builtin.stat:
+        path: /etc/group
+      register: _heavy_fixture_group
+
+    - name: Set the fixture group ID from the stat result
+      ansible.builtin.set_fact:
+        github_runner_docker_gid: "{{ _heavy_fixture_group.stat.gid }}"
+
+    # deploy_heavy_pool.yml renders this unit through the same template with
+    # these same task vars; one replica is the declared default.
+    - name: Render the heavy runner systemd unit
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/github-runner@.service.j2"
+        dest: "{{ _fixture_dir }}/test_github-runner-heavy@.service"
+        mode: "0644"
+      vars:
+        github_runner_replicas: "{{ github_runner_heavy_pool_replicas }}"
+        github_runner_container_prefix: "github-runner-heavy"
+        github_runner_name_prefix: "heavy"
+        github_runner_unit_env_file: "{{ github_runner_env_file }}-heavy"
+        github_runner_unit_diag_dir: "{{ github_runner_diag_host_dir }}/heavy-%i"
+        github_runner_unit_tool_cache_dir: "{{ github_runner_tool_cache_host_dir }}/heavy-%i"
+        github_runner_cpu_limit: "{{ github_runner_heavy_pool_cpu_limit }}"
+        github_runner_memory_limit: "{{ github_runner_heavy_pool_memory_limit }}"
+
+    # A heavy slot replaces the pooled label with the heavy label, exactly as
+    # a review slot replaces it with `review`. Every input is pinned at task
+    # level: task vars outrank the defaults this play loads via vars_files.
+    - name: Render the heavy runner environment file
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/runner.env.j2"
+        dest: "{{ _fixture_dir }}/test_runner-heavy.env"
+        mode: "0600"
+      vars:
+        github_runner_org: example-org
+        github_runner_group: example-group
+        github_runner_bao_addr: "https://openbao.example.invalid"
+        github_runner_labels_pool: "{{ github_runner_heavy_pool_label }}"
+        github_runner_review_slots: 0
+        github_runner_slot: 1
+
+    - name: Read the heavy renders
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/{{ item }}"
+      register: _heavy_raw
+      loop:
+        - test_github-runner-heavy@.service
+        - test_runner-heavy.env
+
+    - name: Reduce the heavy renders to their directive lines
+      ansible.builtin.set_fact:
+        _heavy_unit: "{{ (_heavy_raw.results[0].content | b64decode).splitlines()
+                        | reject('match', '\\s*#') | reject('match', '\\s*$') | list }}"
+        _heavy_env: "{{ (_heavy_raw.results[1].content | b64decode).splitlines()
+                       | reject('match', '\\s*#') | reject('match', '\\s*$') | list }}"
+
+    - name: Assert the heavy unit carries the heavy pool's limits and names
+      ansible.builtin.assert:
+        that:
+          - _heavy_unit | select('search', '(^|\\s)--cpus 8\\.0(\\s|$)') | length > 0
+          - _heavy_unit | select('search', '(^|\\s)--memory 24g(\\s|$)') | length > 0
+          - _heavy_unit | select('search', '(^|\\s)--name github-runner-heavy-%i(\\s|$)') | length > 0
+          - _heavy_unit | select('search', '--env-file\\s+/etc/github-runner/runner\\.env-heavy-%i(\\s|$)') | length > 0
+          - _heavy_unit | select('search', 'RUNNER_NAME_PREFIX=heavy-%i') | length > 0
+          - _heavy_unit | select('search', _heavy_diag_mount_flag) | length > 0
+        fail_msg: >-
+          The heavy pool's unit must run one runner with the pool's own
+          limits, container name, env file, runner name prefix and _diag
+          directory, all distinct from the standard pool's.
+
+    - name: Assert the heavy labels replace the pool label
+      ansible.builtin.assert:
+        that:
+          - "'LABELS=self-hosted,Linux,X64,heavy' in _heavy_env"
+          - _heavy_env | select('search', '(^|,)proxmox(,|$)') | length == 0
+          - _heavy_env | select('search', '(^|,)review(,|$)') | length == 0
+          - "'ORG_NAME=example-org' in _heavy_env"
+        fail_msg: >-
+          A heavy slot carries the common labels plus `heavy` and never the
+          pooled label: a job requesting `runs-on: proxmox` must never land
+          on the heavy lane and occupy it.
+
+    # A pool WITH overrides, in the exact task-var shape deploy_review_pool.yml
+    # passes when its github_runner_review_orgs entry sets cpu_limit,
+    # memory_limit and labels.
+    - name: Render an overridden pool's systemd unit
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/github-runner@.service.j2"
+        dest: "{{ _fixture_dir }}/test_github-runner-review-example-org-b@.service"
+        mode: "0644"
+      vars:
+        github_runner_replicas: 2
+        github_runner_container_prefix: "github-runner-review-example-org-b"
+        github_runner_name_prefix: "review-example-org-b"
+        github_runner_cpu_limit: "0.5"
+        github_runner_memory_limit: "2g"
+        github_runner_unit_env_file: "{{ github_runner_env_file }}-review-example-org-b"
+        github_runner_unit_token_env_file: "/etc/github-runner/access-token-example-org-b.env"
+        github_runner_unit_diag_dir: "{{ github_runner_diag_host_dir }}/review-example-org-b-%i"
+        github_runner_unit_tool_cache_dir: "{{ github_runner_tool_cache_host_dir }}/review-example-org-b-%i"
+
+    - name: Render an overridden pool's environment file
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/runner.env.j2"
+        dest: "{{ _fixture_dir }}/test_runner-review-example-org-b.env"
+        mode: "0600"
+      vars:
+        github_runner_org: example-org-b
+        github_runner_group: pr-agent
+        github_runner_review_slots: 2
+        github_runner_slot: 2
+        github_runner_labels_extra: "gpu"
+
+    - name: Read the overridden pool's renders
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/{{ item }}"
+      register: _overridden_raw
+      loop:
+        - test_github-runner-review-example-org-b@.service
+        - test_runner-review-example-org-b.env
+
+    - name: Reduce the overridden pool's renders to their directive lines
+      ansible.builtin.set_fact:
+        _overridden_unit: "{{ (_overridden_raw.results[0].content | b64decode).splitlines()
+                             | reject('match', '\\s*#') | reject('match', '\\s*$') | list }}"
+        _overridden_env: "{{ (_overridden_raw.results[1].content | b64decode).splitlines()
+                            | reject('match', '\\s*#') | reject('match', '\\s*$') | list }}"
+
+    - name: Assert an overridden pool uses its own limits and labels
+      ansible.builtin.assert:
+        that:
+          - _overridden_unit | select('search', '(^|\\s)--cpus 0\\.5(\\s|$)') | length > 0
+          - _overridden_unit | select('search', '(^|\\s)--memory 2g(\\s|$)') | length > 0
+          - "'LABELS=self-hosted,Linux,X64,review,gpu' in _overridden_env"
+        fail_msg: >-
+          A pool that sets cpu_limit, memory_limit and labels must render
+          those values, and its extra labels must be appended after the
+          common and review labels.
