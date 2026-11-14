@@ -1,0 +1,66 @@
+---
+# The optional heavy pool's rendered state: per-slot directories, one env
+# file per slot, and the unit template. Included only when
+# github_runner_heavy_pool_enabled is true; teardown runs either way, in
+# reconcile_heavy_runner_units.yml, so flipping the flag off stops and
+# removes what a previous converge started.
+- name: Create heavy runner diagnostics directories
+  ansible.builtin.file:
+    path: "{{ github_runner_diag_host_dir }}/heavy-{{ github_runner_heavy_slot }}"
+    state: directory
+    recurse: true
+    owner: "{{ github_runner_container_uid }}"
+    group: "{{ github_runner_container_gid }}"
+    mode: "u=rwX,g=rX,o=rX"
+  loop: "{{ range(1, github_runner_heavy_pool_replicas | int + 1) | list }}"
+  loop_control:
+    loop_var: github_runner_heavy_slot
+
+- name: Create heavy runner tool cache directories
+  ansible.builtin.file:
+    path: "{{ github_runner_tool_cache_host_dir }}/heavy-{{ github_runner_heavy_slot }}"
+    state: directory
+    owner: "{{ github_runner_container_uid }}"
+    group: "{{ github_runner_container_gid }}"
+    mode: "0755"
+  loop: "{{ range(1, github_runner_heavy_pool_replicas | int + 1) | list }}"
+  loop_control:
+    loop_var: github_runner_heavy_slot
+
+- name: Deploy heavy runner environment files
+  ansible.builtin.template:
+    src: runner.env.j2
+    dest: "{{ github_runner_env_file }}-heavy-{{ github_runner_heavy_slot }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ range(1, github_runner_heavy_pool_replicas | int + 1) | list }}"
+  loop_control:
+    loop_var: github_runner_heavy_slot
+  vars:
+    # The heavy slot replaces the pooled label with the heavy label, exactly
+    # as a review slot replaces it with `review`: a job pinning the pool
+    # label must never land here and occupy the heavy lane.
+    github_runner_labels_pool: "{{ github_runner_heavy_pool_label }}"
+    github_runner_review_slots: 0
+    github_runner_slot: "{{ github_runner_heavy_slot }}"
+  no_log: true
+  notify: Restart heavy github runners
+
+- name: Deploy the heavy runner systemd unit template
+  ansible.builtin.template:
+    src: github-runner@.service.j2
+    dest: /etc/systemd/system/github-runner-heavy@.service
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    github_runner_replicas: "{{ github_runner_heavy_pool_replicas }}"
+    github_runner_container_prefix: "github-runner-heavy"
+    github_runner_name_prefix: "heavy"
+    github_runner_unit_env_file: "{{ github_runner_env_file }}-heavy"
+    github_runner_unit_diag_dir: "{{ github_runner_diag_host_dir }}/heavy-%i"
+    github_runner_unit_tool_cache_dir: "{{ github_runner_tool_cache_host_dir }}/heavy-%i"
+    github_runner_cpu_limit: "{{ github_runner_heavy_pool_cpu_limit }}"
+    github_runner_memory_limit: "{{ github_runner_heavy_pool_memory_limit }}"
+  notify: Restart heavy github runners
