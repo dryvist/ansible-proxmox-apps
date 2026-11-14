@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.47.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.46.0...v5.47.0) (2026-11-14)
+
+
+### Features
+
+* **agent_sandbox:** move to nix-agent-sandbox 1.22.0 ([#3654](https://github.com/dryvist/ansible-proxmox-apps/issues/3654)) ([b84b922](https://github.com/dryvist/ansible-proxmox-apps/commit/b84b922648e7392ea574107f4145a4d3db1b77d4))
+
+
+### Bug Fixes
+
+* **github_runner:** initialise the capacity demand list ([#3656](https://github.com/dryvist/ansible-proxmox-apps/issues/3656)) ([d6c53df](https://github.com/dryvist/ansible-proxmox-apps/commit/d6c53df4e4d067ab18b68e65a65f3aaca84c9e28))
+* **github_runner:** let the capacity check pass on a host with no pools ([d6c53df](https://github.com/dryvist/ansible-proxmox-apps/commit/d6c53df4e4d067ab18b68e65a65f3aaca84c9e28))
+
 ## [5.46.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.45.0...v5.46.0) (2026-11-14)
 
 
