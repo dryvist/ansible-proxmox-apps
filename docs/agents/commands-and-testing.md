@@ -108,6 +108,16 @@ scripts/run-ansible.sh playbooks/homebox-feed.yml --limit localhost
 scripts/run-ansible.sh playbooks/homebox-feed.yml --limit localhost \
   -e homebox_feed_apply=true
 
+# Fire one GitHub workflow_dispatch for pull-request reconciliation in the
+# target repository (owner/repository/workflow/ref and the OpenBao GitHub
+# mount + permission set all come from the environment; the ref defaults to
+# main). The short-lived GitHub token is minted per run with the run's own
+# OpenBao identity and never written to disk; the dispatched workflow owns
+# what the reconciliation does. A Semaphore template in the target
+# repository calls this every 5 minutes while enabled.
+scripts/run-ansible.sh playbooks/pr-reconcile-dispatch.yml \
+  -i localhost, --limit localhost
+
 # Lint
 ansible-lint
 ```
