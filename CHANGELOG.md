@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.46.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.45.0...v5.46.0) (2026-11-14)
+
+
+### Features
+
+* **github_runner:** allow per-pool limits and add an optional heavy pool ([#3652](https://github.com/dryvist/ansible-proxmox-apps/issues/3652)) ([cd2734a](https://github.com/dryvist/ansible-proxmox-apps/commit/cd2734ab065799e88e17cbfdf1272c6e91c4709b))
+
 ## [5.45.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.44.0...v5.45.0) (2026-11-14)
 
 
