@@ -1,0 +1,90 @@
+diff --git a/.github/workflows/ci-gate.yml b/.github/workflows/ci-gate.yml
+index 489a2c9c..8c94d74b 100644
+--- a/.github/workflows/ci-gate.yml
++++ b/.github/workflows/ci-gate.yml
+@@ -19,12 +19,11 @@ on:
+   pull_request:
+     branches: [develop, main]
+     types: [opened, synchronize, reopened]
+-  push:
+-    branches: [develop, main]
++  merge_group:
+ 
+ concurrency:
+   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+-  cancel-in-progress: true
++  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+ 
+ permissions:
+   contents: read
+@@ -44,6 +43,18 @@ jobs:
+     with:
+       # Molecule is owned locally (see header); the shared workflow runs lint only.
+       molecule: false
++      # Lane path lists forwarded to the shared merge-flow classifier; each
++      # input replaces the shared default list, so the defaults are restated
++      # with this repository's additions appended. The shared release at v1
++      # does not declare these inputs yet — the runner warns "Unexpected
++      # input(s)" and ignores them until the release carrying them ships
++      # under the same major tag, so the @v1 pin must not change.
++      # Instruction files must never be matched by low_risk_paths alone: the
++      # classifier exempts instruction matches from the tiny lane, which is
++      # what keeps agents/** and auto-ai-agent/** out of it despite **.md.
++      low_risk_paths: 'docs/**,**.md,**.mdx,tests/**,molecule/**'
++      instruction_paths: 'AGENTS.md,**/AGENTS.md,**/prompts/**,**/skills/**,**/rules/**,agents/**,auto-ai-agent/**'
++      guarded_paths: '.github/workflows/**,**/*secret*,**/*credential*,**/*token*,**/vault/**,*.sops.*,.sops.yaml,.github/**,**/*openbao*,playbooks/rotate-key.yml,playbooks/verify-approle-ttls.yml'
+       molecule_scenario_filters: &molecule_scenario_filters |
+         default:
+           - 'roles/docker_engine/**'
+@@ -359,6 +370,9 @@ jobs:
+           # Main-target PRs and main pushes require the complete Molecule
+           # matrix. Develop uses the shared focused selection and retains
+           # the classifier and local contracts in this gate.
++          # Merge queue entries keep the develop selection; e2e has no
++          # merge_group condition, so its skip is structural. Skips never
++          # shield a failure - every job that runs still decides the gate.
+           allowed-skips: >-
+             ${{ (github.event_name == 'pull_request' &&
+             github.event.pull_request.base.ref == 'develop' &&
+@@ -368,5 +382,7 @@ jobs:
+             github.event.pull_request.head.repo.full_name != github.repository) &&
+             'e2e') ||
+             ((github.event_name == 'push' && github.ref == 'refs/heads/develop') &&
+-            'e2e, molecule, template-render, nautobot-seed, status-stack-autokuma-render, agent-sandbox-limited-render') || '' }}
++            'e2e, molecule, template-render, nautobot-seed, status-stack-autokuma-render, agent-sandbox-limited-render') ||
++            ((github.event_name == 'merge_group') &&
++            'data-contract, inventory-contract, secrets-contract, molecule, template-render, nautobot-seed, status-stack-autokuma-render, agent-sandbox-limited-render, e2e') || '' }}
+           jobs: ${{ toJSON(needs) }}
+diff --git a/.github/workflows/post-merge.yml b/.github/workflows/post-merge.yml
+new file mode 100644
+index 00000000..8bca7191
+--- /dev/null
++++ b/.github/workflows/post-merge.yml
+@@ -0,0 +1,27 @@
++---
++# Post-merge settlement for the merge queue. The gate (ci-gate.yml) and this
++# workflow are one merge-flow pair: pushes to develop run the shared
++# _post-merge workflow, which fast-forwards the green ref across commits
++# whose heavy checks the gate's fast lanes deferred, and reverts deferred
++# pull requests that went red after merge.
++
++name: Post Merge
++
++on:
++  push:
++    branches: [develop]
++
++jobs:
++  post-merge:
++    permissions:
++      contents: write    # green ref moves, post-merge-red dispatches
++      pull-requests: write
++      checks: read       # AI Merge Gate verdicts on the head commits
++      actions: read      # the gate's run report reads this run's jobs
++    uses: JacobPEvans/.github/.github/workflows/_post-merge.yml@v1
++    with:
++      # This repository's gate stack, forwarded verbatim.
++      profile: ansible
++    secrets:
++      GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
++      slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
