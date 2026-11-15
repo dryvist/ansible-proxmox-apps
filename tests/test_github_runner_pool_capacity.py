@@ -11,6 +11,7 @@ with the summed numbers, and a fitting host must pass.
 """
 
 from pathlib import Path
+import os
 import subprocess
 import unittest
 
@@ -18,13 +19,16 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "github_runner_pool_capacity"
 
 
-def _run(fixture):
+def _run(fixture, *args):
     return subprocess.run(
-        ["ansible-playbook", str(fixture), "-c", "local"],
+        ["ansible-playbook", str(fixture), "-c", "local", *args],
         cwd=ROOT,
         check=False,
         capture_output=True,
         text=True,
+        # ansible.cfg caches facts on disk; a fixture must start without facts
+        # from an earlier run.
+        env={**os.environ, "ANSIBLE_CACHE_PLUGIN": "memory"},
     )
 
 
@@ -45,6 +49,24 @@ class PoolCapacityGate(unittest.TestCase):
     def test_a_host_with_no_pools_passes(self):
         proc = _run(FIXTURES / "no_pools.yml")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_the_gate_gathers_its_facts_in_a_check_run_without_play_facts(self):
+        # The runner play sets gather_facts: false, and the pool check runs
+        # with --check; the gate must still read the host's capacity.
+        proc = _run(FIXTURES / "gathered.yml", "--check")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_a_host_that_cannot_report_its_capacity_fails_closed(self):
+        proc = _run(FIXTURES / "no_facts.yml")
+        out = proc.stdout + proc.stderr
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn(
+            "The pool capacity gate reads ansible_processor_vcpus and ansible_memtotal_mb",
+            out,
+        )
+        # The gate fails, carrying the gather error; the host stays reachable.
+        self.assertNotIn("no gather error reported", out)
+        self.assertIn("unreachable=0", out)
 
 
 if __name__ == "__main__":

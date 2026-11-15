@@ -1,0 +1,40 @@
+---
+# Fixture for tests/test_github_runner_pool_capacity.py: no capacity facts are
+# declared and the play skips fact gathering, as the runner play does. The
+# gate must gather the two hardware facts itself, then pass with a demand small
+# enough for any host the suite runs on.
+- name: Gather the capacity facts inside the gate
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    github_runner_replicas: 1
+    github_runner_cpu_limit: "0.1"
+    github_runner_memory_limit: "64m"
+    github_runner_labels_common: "self-hosted,Linux,X64"
+    github_runner_active_review_orgs: []
+    github_runner_heavy_pool_enabled: false
+    github_runner_heavy_pool_replicas: 1
+    github_runner_heavy_pool_label: heavy
+    github_runner_heavy_pool_cpu_limit: "8.0"
+    github_runner_heavy_pool_memory_limit: "24g"
+    github_runner_host_cpu_reserve: 0
+    github_runner_host_memory_reserve_mb: 0
+
+  tasks:
+    # A fact cache from an earlier run would supply the facts and skip the
+    # gate's own gather; start from none whatever cache the caller configured.
+    - name: Clear any cached facts so the gate starts without them
+      ansible.builtin.meta: clear_facts
+
+    - name: Run the capacity gate
+      ansible.builtin.include_tasks: ../../roles/github_runner/tasks/validate_pool_limits.yml
+
+    - name: Require the gate to have gathered both facts
+      ansible.builtin.assert:
+        that:
+          - github_runner_capacity_facts_gather is not skipped
+          - ansible_processor_vcpus | int > 0
+          - ansible_memtotal_mb | int > 0
