@@ -1,0 +1,444 @@
+---
+# The CI-fix automations: two event automations, ci-fix-public and
+# ci-fix-private, that the role keeps on the automation service the launcher
+# itself serves. One private config-zone document carries the three values
+# that are not public-safe: the two agent profile ids and the owner login
+# list the trigger filters match.
+#
+# Every skip condition ends this part with one debug note and no
+# automation-service call: the loader flag off, an empty config path, an
+# absent document or field, a field that is not JSON, the automation service
+# not answering, or no backend key to authenticate with. A field that parses
+# but has the wrong shape fails the shape assert instead of loading half of
+# it. The automations are always created with enabled: false; turning them on
+# is an operator action in Canvas.
+#
+# The pinned automation service release validates body fields strictly: its
+# prompt-preset create endpoint rejects a tags field, so the tag set is
+# converged by the compare-and-update pass that also repairs drift.
+
+- name: Initialise the CI-fix skip reason
+  ansible.builtin.set_fact:
+    openhands_ci_fix_skip_reason: ""
+
+- name: Note the CI-fix automations loader is disabled
+  ansible.builtin.set_fact:
+    openhands_ci_fix_skip_reason: "openhands_ci_fix_enabled is false"
+  when:
+    - openhands_ci_fix_skip_reason | length == 0
+    - not (openhands_ci_fix_enabled | bool)
+
+- name: Note the CI-fix config path is empty
+  ansible.builtin.set_fact:
+    openhands_ci_fix_skip_reason: "openhands_ci_fix_config_path is empty"
+  when:
+    - openhands_ci_fix_skip_reason | length == 0
+    - openhands_ci_fix_config_path | length == 0
+
+- name: Read the CI-fix config document
+  # The same read the workstation connection profile makes, on the controller,
+  # with the same converge-environment variables.
+  ansible.builtin.uri:
+    url: >-
+      {{ openhands_ci_fix_config_addr | trim | regex_replace('/+$', '') }}/v1/{{
+      openhands_ci_fix_config_path }}
+    method: GET
+    headers:
+      X-Vault-Token: "{{ openhands_ci_fix_config_token }}"
+    status_code: [200, 404]
+    timeout: 60
+  register: openhands_ci_fix_config_read
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  changed_when: false
+  check_mode: false
+  no_log: true
+  when: openhands_ci_fix_skip_reason | length == 0
+
+- name: Note the CI-fix config document is absent
+  ansible.builtin.set_fact:
+    openhands_ci_fix_skip_reason: "the config document is absent at the configured path"
+  when:
+    - openhands_ci_fix_skip_reason | length == 0
+    - (openhands_ci_fix_config_read.get('status', 0) | int) == 404
+
+- name: Note the CI-fix config document carries no loader field
+  ansible.builtin.set_fact:
+    openhands_ci_fix_skip_reason: >-
+      the config document has no {{ openhands_ci_fix_config_field }} field
+  when:
+    - openhands_ci_fix_skip_reason | length == 0
+    - >-
+      ((openhands_ci_fix_config_read.get('json', {}) or {}).get('data') or {}).get('data', {}).get(
+      openhands_ci_fix_config_field, '') | string | trim | length == 0
+
+- name: Parse the CI-fix config field
+  block:
+    - name: Parse the CI-fix config field as JSON
+      ansible.builtin.set_fact:
+        openhands_ci_fix_config_doc: >-
+          {{ ((openhands_ci_fix_config_read.get('json', {}) or {}).get('data') or {}).get('data', {}).get(
+             openhands_ci_fix_config_field, '') | from_json }}
+      no_log: true
+  rescue:
+    - name: Note the CI-fix config field is not valid JSON
+      ansible.builtin.set_fact:
+        openhands_ci_fix_skip_reason: >-
+          the {{ openhands_ci_fix_config_field }} field is not valid JSON
+      when: openhands_ci_fix_skip_reason | length == 0
+
+- name: Assert the CI-fix config document's shape
+  ansible.builtin.assert:
+    that:
+      - openhands_ci_fix_config_doc is mapping
+      - openhands_ci_fix_config_doc.get('owners', []) is sequence
+      - not (openhands_ci_fix_config_doc.get('owners', []) is string)
+      - openhands_ci_fix_config_doc.get('owners', []) | length > 0
+      - openhands_ci_fix_config_doc.get('owners', []) | reject('string') | list | length == 0
+      - openhands_ci_fix_config_doc.get('profile_public', '') is match(openhands_ci_fix_uuid_pattern)
+      - openhands_ci_fix_config_doc.get('profile_private', '') is match(openhands_ci_fix_uuid_pattern)
+    fail_msg: >-
+      The {{ openhands_ci_fix_config_field }} field must be a JSON object with
+      owners (a non-empty list of strings) and profile_public and
+      profile_private UUID strings.
+    quiet: true
+  vars:
+    openhands_ci_fix_uuid_pattern: >-
+      ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+  when: openhands_ci_fix_skip_reason | length == 0
+
+- name: Render the CI-fix trigger's JMESPath list literals
+  ansible.builtin.set_fact:
+    openhands_ci_fix_workflows_literal: >-
+      {{ '[' ~ (openhands_ci_fix_gate_workflows
+                | map('replace', '\\', '\\\\')
+                | map('replace', "'", "\\'")
+                | map('regex_replace', '^', "'")
+                | map('regex_replace', '$', "'")
+                | join(', ')) ~ ']' }}
+    openhands_ci_fix_owners_literal: >-
+      {{ '[' ~ (openhands_ci_fix_config_doc.get('owners', [])
+                | map('replace', '\\', '\\\\')
+                | map('replace', "'", "\\'")
+                | map('regex_replace', '^', "'")
+                | map('regex_replace', '$', "'")
+                | join(', ')) ~ ']' }}
+  no_log: true
+  when: openhands_ci_fix_skip_reason | length == 0
+
+- name: Check the automation service answers on the launcher port
+  when: openhands_ci_fix_skip_reason | length == 0
+  block:
+    - name: Probe the launcher's root path
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openhands_canvas_port }}/"
+        method: GET
+        status_code: "{{ openhands_canvas_health_statuses }}"
+      register: openhands_ci_fix_probe
+      changed_when: false
+      check_mode: false
+  rescue:
+    - name: Note the automation service is not answering on the launcher port
+      ansible.builtin.set_fact:
+        openhands_ci_fix_skip_reason: >-
+          the automation service is not answering on the launcher port
+      when: openhands_ci_fix_skip_reason | length == 0
+
+- name: Check the launcher's backend key file exists
+  ansible.builtin.stat:
+    path: "{{ openhands_backend_key_file }}"
+  register: openhands_ci_fix_backend_key_stat
+  changed_when: false
+  check_mode: false
+  when: openhands_ci_fix_skip_reason | length == 0
+
+- name: Note the launcher's backend key file is missing or empty
+  ansible.builtin.set_fact:
+    openhands_ci_fix_skip_reason: "the launcher's backend key file is missing or empty"
+  when:
+    - openhands_ci_fix_skip_reason | length == 0
+    - >-
+      not (openhands_ci_fix_backend_key_stat.stat.exists | default(false))
+      or ((openhands_ci_fix_backend_key_stat.stat.size | default(0)) | int) == 0
+
+- name: Read the launcher's backend key file
+  ansible.builtin.slurp:
+    src: "{{ openhands_backend_key_file }}"
+  register: openhands_ci_fix_backend_key_file
+  changed_when: false
+  check_mode: false
+  no_log: true
+  when:
+    - openhands_ci_fix_skip_reason | length == 0
+    - openhands_ci_fix_backend_key_stat.stat.exists | default(false)
+
+- name: List the automation service's automations
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openhands_canvas_port }}/api/automation/v1/automations"
+    method: GET
+    headers:
+      X-Session-API-Key: "{{ openhands_ci_fix_backend_key_file.content | b64decode | trim }}"
+    status_code: [200]
+    timeout: 60
+  register: openhands_ci_fix_automations
+  changed_when: false
+  check_mode: false
+  no_log: true
+  when: openhands_ci_fix_skip_reason | length == 0
+
+- name: Converge the CI-fix automations
+  vars:
+    openhands_ci_fix_timeout: 3600
+    openhands_ci_fix_tags: [ci-fix]
+    openhands_ci_fix_plan_automations:
+      - name: ci-fix-public
+        profile: "{{ openhands_ci_fix_config_doc.get('profile_public', '') }}"
+        private: false
+      - name: ci-fix-private
+        profile: "{{ openhands_ci_fix_config_doc.get('profile_private', '') }}"
+        private: true
+  block:
+    - name: Create each missing CI-fix automation
+      # The prompt-preset create endpoint takes no tags field; the update pass
+      # below converges the tag set after the create.
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openhands_canvas_port }}/api/automation/v1/preset/prompt"
+        method: POST
+        headers:
+          X-Session-API-Key: "{{ openhands_ci_fix_backend_key_file.content | b64decode | trim }}"
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          prompt: "{{ openhands_ci_fix_prompt }}"
+          trigger: "{{ _openhands_ci_fix_trigger }}"
+          agent_profile_id: "{{ item.profile }}"
+          timeout: "{{ openhands_ci_fix_timeout | int }}"
+          enabled: false
+        status_code: [200, 201]
+        timeout: 60
+      vars:
+        _openhands_ci_fix_existing: >-
+          {{ (openhands_ci_fix_automations.json | default({}, true)).get('automations', [])
+             | selectattr('name', 'equalto', item.name) | list | first | default({}, true) }}
+        _openhands_ci_fix_filter: >-
+          {{ [
+               "workflow_run.conclusion == 'failure'",
+               "contains(" ~ openhands_ci_fix_workflows_literal ~ ", workflow_run.name)",
+               "length(workflow_run.pull_requests) > `0`",
+               "workflow_run.head_repository.full_name == workflow_run.repository.full_name",
+               "repository.private == " ~ ('`true`' if item.private | bool else '`false`'),
+               "contains(" ~ openhands_ci_fix_owners_literal ~ ", repository.owner.login)",
+             ] | join(' && ') }}
+        _openhands_ci_fix_subject_key_expr: >-
+          {{ "join('#', [repository.full_name, "
+             ~ "to_string(workflow_run.pull_requests[0].number), "
+             ~ "workflow_run.name])" }}
+        _openhands_ci_fix_trigger: >-
+          {{ {'type': 'event',
+              'source': openhands_ci_fix_event_source,
+              'on': 'workflow_run.completed',
+              'filter': _openhands_ci_fix_filter,
+              'destination': 'continue_conversation',
+              'subject_key_expr': _openhands_ci_fix_subject_key_expr} }}
+      loop: "{{ openhands_ci_fix_plan_automations }}"
+      when:
+        - openhands_ci_fix_skip_reason | length == 0
+        - not ansible_check_mode
+        - _openhands_ci_fix_existing | length == 0
+      changed_when: true
+      no_log: true
+
+    - name: Read the automation service's automations after any create
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openhands_canvas_port }}/api/automation/v1/automations"
+        method: GET
+        headers:
+          X-Session-API-Key: "{{ openhands_ci_fix_backend_key_file.content | b64decode | trim }}"
+        status_code: [200]
+        timeout: 60
+      register: openhands_ci_fix_automations_after
+      changed_when: false
+      check_mode: false
+      no_log: true
+      when:
+        - openhands_ci_fix_skip_reason | length == 0
+        - not ansible_check_mode
+
+    - name: Set the automation list the drift pass reads
+      ansible.builtin.set_fact:
+        openhands_ci_fix_automations_effective: >-
+          {{ (openhands_ci_fix_automations_after.json
+              | default(openhands_ci_fix_automations.json | default({}, true), true)
+              | default({}, true)).get('automations', []) }}
+      when: openhands_ci_fix_skip_reason | length == 0
+
+    - name: Update each drifted CI-fix automation
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1:{{ openhands_canvas_port }}/api/automation/v1/automations/{{
+          _openhands_ci_fix_existing.id }}
+        method: PATCH
+        headers:
+          X-Session-API-Key: "{{ openhands_ci_fix_backend_key_file.content | b64decode | trim }}"
+        body_format: json
+        body:
+          trigger: "{{ _openhands_ci_fix_trigger }}"
+          agent_profile_id: "{{ item.profile }}"
+          prompt: "{{ openhands_ci_fix_prompt }}"
+          timeout: "{{ openhands_ci_fix_timeout | int }}"
+          tags: "{{ openhands_ci_fix_tags }}"
+          enabled: false
+        status_code: [200]
+        timeout: 60
+      vars:
+        _openhands_ci_fix_existing: >-
+          {{ (openhands_ci_fix_automations_effective | default([], true))
+             | selectattr('name', 'equalto', item.name) | list | first | default({}, true) }}
+        _openhands_ci_fix_filter: >-
+          {{ [
+               "workflow_run.conclusion == 'failure'",
+               "contains(" ~ openhands_ci_fix_workflows_literal ~ ", workflow_run.name)",
+               "length(workflow_run.pull_requests) > `0`",
+               "workflow_run.head_repository.full_name == workflow_run.repository.full_name",
+               "repository.private == " ~ ('`true`' if item.private | bool else '`false`'),
+               "contains(" ~ openhands_ci_fix_owners_literal ~ ", repository.owner.login)",
+             ] | join(' && ') }}
+        _openhands_ci_fix_subject_key_expr: >-
+          {{ "join('#', [repository.full_name, "
+             ~ "to_string(workflow_run.pull_requests[0].number), "
+             ~ "workflow_run.name])" }}
+        _openhands_ci_fix_trigger: >-
+          {{ {'type': 'event',
+              'source': openhands_ci_fix_event_source,
+              'on': 'workflow_run.completed',
+              'filter': _openhands_ci_fix_filter,
+              'destination': 'continue_conversation',
+              'subject_key_expr': _openhands_ci_fix_subject_key_expr} }}
+        _openhands_ci_fix_trigger_matches: >-
+          {{ ((_openhands_ci_fix_existing.get('trigger') or {}).get('type') == 'event')
+             and ((_openhands_ci_fix_existing.get('trigger') or {}).get('source') == openhands_ci_fix_event_source)
+             and ((_openhands_ci_fix_existing.get('trigger') or {}).get('on') == 'workflow_run.completed')
+             and ((_openhands_ci_fix_existing.get('trigger') or {}).get('filter') == _openhands_ci_fix_filter)
+             and ((_openhands_ci_fix_existing.get('trigger') or {}).get('destination') == 'continue_conversation')
+             and ((_openhands_ci_fix_existing.get('trigger') or {}).get('subject_key_expr')
+                  == _openhands_ci_fix_subject_key_expr) }}
+        _openhands_ci_fix_profile_matches: >-
+          {{ (_openhands_ci_fix_existing.get('agent_profile_id') | default('', true) | string | lower)
+             == (item.profile | string | lower) }}
+        _openhands_ci_fix_prompt_matches: >-
+          {{ _openhands_ci_fix_existing.get('prompt') == openhands_ci_fix_prompt }}
+        _openhands_ci_fix_timeout_matches: >-
+          {{ (_openhands_ci_fix_existing.get('timeout') | default(0) | int) == (openhands_ci_fix_timeout | int) }}
+        _openhands_ci_fix_tags_matches: >-
+          {{ ((_openhands_ci_fix_existing.get('tags') or []) | map('string') | list | sort)
+             == (openhands_ci_fix_tags | map('string') | list | sort) }}
+        _openhands_ci_fix_enabled_matches: >-
+          {{ not (_openhands_ci_fix_existing.get('enabled') | default(true) | bool) }}
+        _openhands_ci_fix_needs_update: >-
+          {{ not (_openhands_ci_fix_trigger_matches
+                  and _openhands_ci_fix_profile_matches
+                  and _openhands_ci_fix_prompt_matches
+                  and _openhands_ci_fix_timeout_matches
+                  and _openhands_ci_fix_tags_matches
+                  and _openhands_ci_fix_enabled_matches) }}
+      loop: "{{ openhands_ci_fix_plan_automations }}"
+      when:
+        - openhands_ci_fix_skip_reason | length == 0
+        - not ansible_check_mode
+        - _openhands_ci_fix_existing | length > 0
+        - _openhands_ci_fix_needs_update
+      changed_when: true
+      no_log: true
+
+    - name: Note the CI-fix automation changes check mode would make
+      ansible.builtin.debug:
+        msg:
+          automation: "{{ item.name }}"
+          action: "{{ 'create' if _openhands_ci_fix_existing | length == 0 else 'update' }}"
+          changes: "{{ _openhands_ci_fix_changes }}"
+      vars:
+        _openhands_ci_fix_existing: >-
+          {{ (openhands_ci_fix_automations_effective | default([], true))
+             | selectattr('name', 'equalto', item.name) | list | first | default({}, true) }}
+        _openhands_ci_fix_filter: >-
+          {{ [
+               "workflow_run.conclusion == 'failure'",
+               "contains(" ~ openhands_ci_fix_workflows_literal ~ ", workflow_run.name)",
+               "length(workflow_run.pull_requests) > `0`",
+               "workflow_run.head_repository.full_name == workflow_run.repository.full_name",
+               "repository.private == " ~ ('`true`' if item.private | bool else '`false`'),
+               "contains(" ~ openhands_ci_fix_owners_literal ~ ", repository.owner.login)",
+             ] | join(' && ') }}
+        _openhands_ci_fix_subject_key_expr: >-
+          {{ "join('#', [repository.full_name, "
+             ~ "to_string(workflow_run.pull_requests[0].number), "
+             ~ "workflow_run.name])" }}
+        _openhands_ci_fix_trigger: >-
+          {{ {'type': 'event',
+              'source': openhands_ci_fix_event_source,
+              'on': 'workflow_run.completed',
+              'filter': _openhands_ci_fix_filter,
+              'destination': 'continue_conversation',
+              'subject_key_expr': _openhands_ci_fix_subject_key_expr} }}
+        _openhands_ci_fix_trigger_matches: >-
+          {{ ((_openhands_ci_fix_existing.get('trigger') or {}).get('type') == 'event')
+             and ((_openhands_ci_fix_existing.get('trigger') or {}).get('source') == openhands_ci_fix_event_source)
+             and ((_openhands_ci_fix_existing.get('trigger') or {}).get('on') == 'workflow_run.completed')
+             and ((_openhands_ci_fix_existing.get('trigger') or {}).get('filter') == _openhands_ci_fix_filter)
+             and ((_openhands_ci_fix_existing.get('trigger') or {}).get('destination') == 'continue_conversation')
+             and ((_openhands_ci_fix_existing.get('trigger') or {}).get('subject_key_expr')
+                  == _openhands_ci_fix_subject_key_expr) }}
+        _openhands_ci_fix_profile_matches: >-
+          {{ (_openhands_ci_fix_existing.get('agent_profile_id') | default('', true) | string | lower)
+             == (item.profile | string | lower) }}
+        _openhands_ci_fix_prompt_matches: >-
+          {{ _openhands_ci_fix_existing.get('prompt') == openhands_ci_fix_prompt }}
+        _openhands_ci_fix_timeout_matches: >-
+          {{ (_openhands_ci_fix_existing.get('timeout') | default(0) | int) == (openhands_ci_fix_timeout | int) }}
+        _openhands_ci_fix_tags_matches: >-
+          {{ ((_openhands_ci_fix_existing.get('tags') or []) | map('string') | list | sort)
+             == (openhands_ci_fix_tags | map('string') | list | sort) }}
+        _openhands_ci_fix_enabled_matches: >-
+          {{ not (_openhands_ci_fix_existing.get('enabled') | default(true) | bool) }}
+        _openhands_ci_fix_needs_update: >-
+          {{ not (_openhands_ci_fix_trigger_matches
+                  and _openhands_ci_fix_profile_matches
+                  and _openhands_ci_fix_prompt_matches
+                  and _openhands_ci_fix_timeout_matches
+                  and _openhands_ci_fix_tags_matches
+                  and _openhands_ci_fix_enabled_matches) }}
+        _openhands_ci_fix_changes: >-
+          {{ {}
+             | combine({} if _openhands_ci_fix_trigger_matches
+                       else {'trigger': {'current': _openhands_ci_fix_existing.get('trigger') | default({}, true),
+                                         'managed': _openhands_ci_fix_trigger}})
+             | combine({} if _openhands_ci_fix_profile_matches
+                       else {'agent_profile_id': {'current': _openhands_ci_fix_existing.get('agent_profile_id')
+                                                             | default('', true) | string,
+                                                  'managed': item.profile}})
+             | combine({} if _openhands_ci_fix_prompt_matches
+                       else {'prompt': {'current': _openhands_ci_fix_existing.get('prompt') | default('', true),
+                                        'managed': openhands_ci_fix_prompt}})
+             | combine({} if _openhands_ci_fix_timeout_matches
+                       else {'timeout': {'current': _openhands_ci_fix_existing.get('timeout') | default(0),
+                                         'managed': openhands_ci_fix_timeout | int}})
+             | combine({} if _openhands_ci_fix_tags_matches
+                       else {'tags': {'current': _openhands_ci_fix_existing.get('tags') | default([], true),
+                                      'managed': openhands_ci_fix_tags}})
+             | combine({} if _openhands_ci_fix_enabled_matches
+                       else {'enabled': {'current': _openhands_ci_fix_existing.get('enabled') | default(true),
+                                         'managed': False}}) }}
+      loop: "{{ openhands_ci_fix_plan_automations }}"
+      when:
+        - openhands_ci_fix_skip_reason | length == 0
+        - ansible_check_mode
+        - _openhands_ci_fix_existing | length == 0 or _openhands_ci_fix_needs_update
+      changed_when: false
+
+- name: Note why the CI-fix automations loader skipped
+  ansible.builtin.debug:
+    msg: "CI-fix automations skipped: {{ openhands_ci_fix_skip_reason }}"
+  when: openhands_ci_fix_skip_reason | length > 0

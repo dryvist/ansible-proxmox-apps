@@ -85,6 +85,56 @@ API. It uses:
 The input check requires `openhands_router_key_file` when the service is
 enabled. No unit reads that file.
 
+## CI-fix automations
+
+With `openhands_ci_fix_enabled` on, the role keeps two event automations on
+the automation service through its REST API, `ci-fix-public` and
+`ci-fix-private`. Both listen for failed CI Gate runs on pull requests and
+continue one conversation per pull request and check, under the agent profile
+the private config names. They are always created with `enabled: false`;
+turning them on is an operator action in Canvas.
+
+The automation service's REST API lives under `/api/automation/v1` on the
+launcher port and authenticates with the backend key, so the loader reads
+`openhands_backend_key_file` and only runs while the launcher answers. The
+loader lists the automations, creates the ones missing by name, updates the
+ones whose managed fields drifted, and reports `changed` only on a real
+create or update. In check mode it makes no write and prints the field-level
+diff. One quirk of the pinned automation service release: the prompt-preset
+create endpoint rejects a `tags` field, so the create carries every other
+managed field and the tag set is converged by the update pass.
+
+### The private config document
+
+Three values are not public-safe and come from one config-zone KV document at
+`openhands_ci_fix_config_path`, field `openhands_ci_fix_config_field`. The
+document is read on the controller with the same converge-environment
+variables the workstation connection profile reads. The field must be a JSON
+object:
+
+- `owners`: a non-empty list of GitHub login strings the trigger filters
+  match on `repository.owner.login`,
+- `profile_public` and `profile_private`: the agent profile UUIDs for the
+  public and private automation.
+
+The real path is set in inventory, never in this role. With the loader flag
+off, the path empty, the document or field absent, or the field not valid
+JSON, the loader ends with one debug note naming which condition held and
+never fails the converge. A field that parses but has the wrong shape fails
+the shape assert instead of loading half of it.
+
+### Trigger
+
+Each automation's trigger matches failed runs of the workflows in
+`openhands_ci_fix_gate_workflows` owned by the configured owners, on the
+`openhands_ci_fix_event_source` source, only while
+`workflow_run.head_repository.full_name` equals
+`workflow_run.repository.full_name` (no forks) and
+`repository.private` is `false` for the public automation or `true` for the
+private one. The conversation subject is the repository, pull request number
+and workflow name, so each failing check continues its own conversation. The
+prompt is `openhands_ci_fix_prompt`.
+
 ## Variables
 
 - `openhands_canvas_port`: the launcher's port, `openhands_port` by default.
@@ -93,6 +143,16 @@ enabled. No unit reads that file.
 - `openhands_router_base_url` and `openhands_router_model`: the router endpoint
   and model alias the LLM profile uses.
 - `openhands_secrets_dir`: the root-only directory of the generated secrets.
+- `openhands_ci_fix_enabled`: whether the CI-fix automations loader runs,
+  `false` by default.
+- `openhands_ci_fix_config_path`: the config-zone KV path of the private
+  document, `""` by default; empty skips the loader.
+- `openhands_ci_fix_config_field`: the private document's field,
+  `OPENHANDS_CI_FIX_CONFIG` by default.
+- `openhands_ci_fix_gate_workflows`: the workflows the triggers match,
+  `["CI Gate"]` by default.
+- `openhands_ci_fix_event_source`: the event source, `github` by default.
+- `openhands_ci_fix_prompt`: the prompt every CI-fix conversation starts from.
 
 ## State
 
