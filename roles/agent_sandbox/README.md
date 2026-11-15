@@ -242,7 +242,7 @@ shadow mode.
 | `agent_sandbox_ci_resolver_role_id` | Supplies the resolver AppRole role ID from the platform environment document. |
 | `agent_sandbox_ci_resolver_secret_id` | Supplies the resolver AppRole secret ID from the platform environment document. |
 | `agent_sandbox_ci_resolver_repos` | Lists repositories the resolver checks for failed runs. |
-| `agent_sandbox_ci_resolver_workbook_repository` | Reads `AGENT_SANDBOX_CI_RESOLVER_WORKBOOK_REPOSITORY` for the workbook repository (owner/name) the resolver clones and publishes fixes to. |
+| `agent_sandbox_ci_resolver_workbook_repository` | Names the workbook repository (owner/name), read from the environment. |
 | `agent_sandbox_ci_resolver_max_attempts` | Limits attempts to resolve each failure. |
 | `agent_sandbox_ci_resolver_vikunja_project` | Selects the Vikunja project that receives resolver results. |
 | `agent_sandbox_ci_resolver_zammad_group` | Selects the Zammad group that receives resolver reports. |
