@@ -92,6 +92,23 @@
     github_runner_capacity_total_memory_mb: >-
       {{ github_runner_capacity_demand | map(attribute='memory_mb') | map('float') | sum }}
 
+# The runner play runs with gather_facts: false, so a run scoped to this role
+# reaches the gate without the two facts it reads. Gather only those, and only
+# when either is missing. failed_when: false leaves a host that cannot report
+# them to the assert below, which fails closed with the reason.
+- name: Gather the hardware facts the capacity gate reads when either is missing
+  ansible.builtin.setup:
+    gather_subset:
+      - "!all"
+      - "!min"
+      - hardware
+    filter:
+      - ansible_processor_vcpus
+      - ansible_memtotal_mb
+  register: github_runner_capacity_facts_gather
+  failed_when: false
+  when: ansible_processor_vcpus is not defined or ansible_memtotal_mb is not defined
+
 - name: Require this host's capacity facts
   ansible.builtin.assert:
     that:
@@ -99,9 +116,10 @@
       - ansible_memtotal_mb is defined
     fail_msg: >-
       The pool capacity gate reads ansible_processor_vcpus and
-      ansible_memtotal_mb, and neither is defined on this host. Converge the
-      role where facts are gathered or the fact cache is populated; the gate
-      cannot judge a host whose capacity it cannot see.
+      ansible_memtotal_mb, and at least one is still undefined on this host
+      after gathering the hardware facts
+      ({{ github_runner_capacity_facts_gather.msg | default('no gather error reported') }}).
+      The gate cannot judge a host whose capacity it cannot see.
 
 - name: Fail when the pools overcommit this host
   ansible.builtin.assert:

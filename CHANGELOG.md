@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.48.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.47.2...v5.48.0) (2026-11-15)
+
+
+### Features
+
+* **agent_sandbox:** move to nix-agent-sandbox 1.23.0 ([#3668](https://github.com/dryvist/ansible-proxmox-apps/issues/3668)) ([e6621c6](https://github.com/dryvist/ansible-proxmox-apps/commit/e6621c615bebca9a1182a79061947768d6186ab0))
+
 ## [5.47.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.47.1...v5.47.2) (2026-11-14)
 
 

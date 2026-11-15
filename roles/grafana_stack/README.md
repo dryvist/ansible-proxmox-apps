@@ -67,8 +67,8 @@ from the JSON. Before
 the verified cutover flag is set, Grafana alerts use the direct webhook; after
 it is set, Cribl routes them through the ntfy push relay to the hub while
 retaining the unrolled alert events in Splunk. Notification groups use
-`grafana_folder`, `alertname`, and `severity`; the default repeat is 30m, with
-warning and info repeats set to 1h.
+`grafana_folder`, `alertname`, and `severity`; every repeat is 24h; a new
+group still notifies after the 30s group wait.
 
 - `llm-router-down`: Prometheus `up{job="llm_router"}` is zero or missing.
 - `llm-judge-failing`: the MacBook Cribl Edge judge Process Set has not
