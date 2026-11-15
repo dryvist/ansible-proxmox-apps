@@ -106,7 +106,8 @@ def test_github_tokens_come_from_the_mint_or_the_env_fallback():
     request = mint["community.hashi_vault.vault_write"]
     assert request["path"] == "{{ pr_status_github_mint_mount }}/token"
     assert request["data"]["org_name"] == "{{ pr_status_census_org }}"
-    assert request["data"]["permissions"] == {"contents": "read", "metadata": "read"}
+    assert request["data"]["permissions"] == {
+        "contents": "read", "metadata": "read", "pull_requests": "read"}
     assert mint["failed_when"] is False
     assert mint["loop"] == "{{ pr_status_owners }}"
     require_env = next(task for _, task in _task_list()
