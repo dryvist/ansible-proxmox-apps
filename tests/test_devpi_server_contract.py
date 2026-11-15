@@ -43,6 +43,22 @@ def test_devpi_server_unit_is_journaled_and_health_checked():
     assert tasks.index(flush_handlers) < tasks.index(health)
 
 
+def test_devpi_server_pip_install_has_its_target_library():
+    tasks = yaml.safe_load((ROLE / "tasks" / "main.yml").read_text())
+    packages = next(task for task in tasks if task["name"] == "Install devpi_server runtime packages")
+
+    assert any("ansible.builtin.pip" in task for task in tasks)
+    assert "python3-packaging" in packages["ansible.builtin.apt"]["name"]
+
+
+def test_devpi_server_become_user_has_sudo():
+    tasks = yaml.safe_load((ROLE / "tasks" / "main.yml").read_text())
+    packages = next(task for task in tasks if task["name"] == "Install devpi_server runtime packages")
+
+    assert any("become_user" in task for task in tasks)
+    assert "sudo" in packages["ansible.builtin.apt"]["name"]
+
+
 def test_baseline_play_targets_the_apt_cache_group():
     plays = yaml.safe_load((ROOT / "playbooks/site/01-baseline-infra.yml").read_text())
     play = next(play for play in plays if play.get("name") == "Deploy phase-1 package caches")

@@ -1,0 +1,25 @@
+---
+# One allowlist shape for the guard verification in agent_dispatch_access.yml.
+# A separate file because the block and its rescue must run as whole tasks for
+# each looped case. The guard runs from a fixture copy of the role's real
+# assert task, so this checks the actual conditions rather than a hand-copied
+# duplicate of them.
+- name: "Verify the dispatcher allowlist guard for: {{ item.name }}"
+  block:
+    - name: Run the guard
+      ansible.builtin.include_tasks: "{{ _dispatch_allowlist_guard_fixture.path }}"
+      vars:
+        agent_sandbox_dispatch_repo_allowlist: "{{ item.allowlist }}"
+
+    - name: Fail if the guard accepted a case that must be rejected
+      ansible.builtin.fail:
+        msg: "The dispatcher allowlist guard accepted: {{ item.name }}"
+      when: not item.expect_accepted
+  rescue:
+    - name: Assert the guard rejected the case
+      ansible.builtin.assert:
+        that:
+          - not item.expect_accepted
+          - >-
+            ansible_failed_task.name
+            == 'Validate the repository owner allowlist the dispatcher exports'

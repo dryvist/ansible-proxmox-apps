@@ -20,6 +20,11 @@
       {{ (lookup('file', playbook_dir ~ '/../../../roles/agent_sandbox/tasks/main/deploy.yml')
       | from_yaml | selectattr('name', 'equalto', 'Allow dispatcher traversal without listing secrets')
       | first) }}
+    _dispatch_allowlist_guard_task: >-
+      {{ (lookup('file', playbook_dir ~ '/../../../roles/agent_sandbox/tasks/main/dispatcher_install.yml')
+      | from_yaml
+      | selectattr('name', 'equalto', 'Validate the repository owner allowlist the dispatcher exports')
+      | first) }}
   tasks:
     - name: Allocate a state task render fixture
       ansible.builtin.tempfile:
@@ -96,6 +101,7 @@
         agent_sandbox_dispatch_authorized_keys:
           - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA client-one
           - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB client-two
+        agent_sandbox_dispatch_repo_allowlist: [example-org, example-org-2]
       ansible.builtin.set_fact:
         _dispatch_keys: "{{ lookup('template', _dispatch_templates ~ '/dispatch-authorized-keys.j2') }}"
         _dispatch_sshd: "{{ lookup('template', _dispatch_templates ~ '/dispatch-sshd.conf.j2') }}"
@@ -158,9 +164,50 @@
       ansible.builtin.assert:
         that:
           - "('export AGENT_REPO_DENYLIST=' ~ (agent_sandbox_dispatch_repo_denylist | quote)) in _dispatch_profile"
+          - >-
+            ('export AGENT_REPO_ALLOWLIST='
+            ~ (['example-org', 'example-org-2'] | join(',') | quote)) in _dispatch_profile
           - "('export GIT_MIRROR_URL=' ~ (agent_sandbox_git_mirror_url | quote)) in _dispatch_profile"
           - "('export VIKUNJA_URL=' ~ (agent_sandbox_dispatch_vikunja_url | quote)) in _dispatch_profile"
           - "('export ZAMMAD_URL=' ~ (agent_sandbox_dispatch_zammad_url | quote)) in _dispatch_profile"
+
+    - name: Allocate the allowlist guard fixture
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .yml
+      register: _dispatch_allowlist_guard_fixture
+
+    - name: Write the allowlist guard fixture
+      ansible.builtin.copy:
+        content: "{{ [_dispatch_allowlist_guard_task] | to_yaml }}"
+        dest: "{{ _dispatch_allowlist_guard_fixture.path }}"
+        mode: "0600"
+
+    - name: Verify the allowlist guard against every allowlist shape
+      ansible.builtin.include_tasks: agent_dispatch_access_case.yml
+      loop:
+        - name: empty list
+          allowlist: []
+          expect_accepted: false
+        - name: underscored owner
+          allowlist: ["bad_name!"]
+          expect_accepted: false
+        - name: trailing hyphen
+          allowlist: ["trailing-"]
+          expect_accepted: false
+        - name: mapping instead of a list
+          allowlist: {owner: example-org}
+          expect_accepted: false
+        - name: example owners
+          allowlist: [example-org, example-org-2]
+          expect_accepted: true
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Remove the allowlist guard fixture
+      ansible.builtin.file:
+        path: "{{ _dispatch_allowlist_guard_fixture.path }}"
+        state: absent
 
     - name: Assert the dispatcher profile assigns no credential
       ansible.builtin.assert:

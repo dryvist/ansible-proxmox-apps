@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.50.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.50.0...v5.50.1) (2026-11-15)
+
+
+### Bug Fixes
+
+* **devpi_server:** install python3-packaging for the pip task ([#3697](https://github.com/dryvist/ansible-proxmox-apps/issues/3697)) ([6a4436f](https://github.com/dryvist/ansible-proxmox-apps/commit/6a4436ffdde38def2f35aac33a4d6ef8c85ae64d))
+
 ## [5.50.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.49.1...v5.50.0) (2026-11-15)
 
 
