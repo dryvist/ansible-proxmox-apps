@@ -154,11 +154,13 @@ def test_metrics_reads_and_the_jobs_query_fail_open():
     assert "pr_status_jobs_read.status" in _fields(jobs)
 
 
-def test_the_template_labels_each_series_by_lane_then_the_first_non_name_label():
+def test_the_template_names_each_series_by_accelerator_label_and_sorts_by_lane():
     text = TEMPLATE.read_text(encoding="utf-8")
-    assert "s.metric.get('lane')" in text
-    assert "reject('equalto', '__name__')" in text
-    assert "default('-')" in text
+    assert "s.metric.get('accelerator')" in text
+    assert "'unknown lane'" in text
+    assert "sort(attribute='lane')" in text
+    assert "r.busy | round | int" in text
+    assert "busy, 4 h:" in text
 
 
 def test_the_post_reuses_the_alert_hub_publish():
@@ -199,8 +201,8 @@ def test_the_message_is_all_green_when_every_figure_is_on_target():
         "pr_status_open_total": 12,
         "pr_status_merged_total": 3,
         "pr_status_busy_series": [
-            {"metric": {"lane": "lane-a", "__name__": "accelerator:busy_percent:avg5m"},
-             "value": [1767000000, "62.5"]},
+            {"metric": {"accelerator": "lane-a", "__name__": "accelerator:busy_percent:avg5m"},
+             "value": [1767000000, "62.4"]},
         ],
         "pr_status_jobs_measured": True,
         "pr_status_jobs_text": "5",
@@ -209,9 +211,41 @@ def test_the_message_is_all_green_when_every_figure_is_on_target():
         "2026-01-01 12:00 UTC pull-request and lane status\n"
         f"{GREEN} open pull requests: 12\n"
         f"{GREEN} merged in the last hour: 3\n"
-        f"{GREEN} busy percent lane-a: 62.5%\n"
+        f"{GREEN} lane-a busy, 4 h: 62%\n"
         f"{GREEN} jobs: 5"
     )
+
+
+def test_the_accelerator_lines_name_each_lane_in_lane_order_with_whole_percents():
+    text = _render({
+        "pr_status_generated_utc": "2026-01-01 12:00 UTC",
+        "pr_status_open_total": 12,
+        "pr_status_merged_total": 3,
+        "pr_status_busy_series": [
+            {"metric": {"accelerator": "lane-b", "__name__": "accelerator:busy_percent:avg5m"},
+             "value": [1767000000, "82.58"]},
+            {"metric": {"accelerator": "lane-a"},
+             "value": [1767000000, "15.79"]},
+        ],
+        "pr_status_jobs_measured": True,
+        "pr_status_jobs_text": "5",
+    })
+    assert text == (
+        "2026-01-01 12:00 UTC pull-request and lane status\n"
+        f"{GREEN} open pull requests: 12\n"
+        f"{GREEN} merged in the last hour: 3\n"
+        f"{RED} lane-a busy, 4 h: 16%\n"
+        f"{GREEN} lane-b busy, 4 h: 83%\n"
+        f"{GREEN} jobs: 5"
+    )
+    busy_lines = [line for line in text.splitlines() if "busy, 4 h:" in line]
+    assert len(busy_lines) == 2
+    assert [line.split(" ", 2)[1] for line in busy_lines] == ["lane-a", "lane-b"]  # lane order
+    for line, (mark, value) in zip(busy_lines, ((RED, 15.79), (GREEN, 82.58))):
+        assert line.startswith(mark)  # green at 50+, yellow 25 to 49, red below 25
+        whole_percent = line.split("busy, 4 h: ")[1]
+        assert whole_percent == f"{round(value)}%"  # whole number, then %
+        assert "." not in line  # no fraction anywhere on the line
 
 
 def test_the_message_turns_yellow_at_thirty_five_open_pull_requests():
@@ -229,7 +263,7 @@ def test_the_message_turns_yellow_at_thirty_five_open_pull_requests():
         "2026-01-01 13:00 UTC pull-request and lane status\n"
         f"{YELLOW} open pull requests: 35\n"
         f"{GREEN} merged in the last hour: 1\n"
-        f"{YELLOW} busy percent job: 30.0%\n"
+        f"{YELLOW} unknown lane busy, 4 h: 30%\n"  # series carries no accelerator label
         f"{GREEN} jobs: 7"
     )
 

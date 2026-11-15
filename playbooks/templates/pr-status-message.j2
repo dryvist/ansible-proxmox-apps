@@ -17,12 +17,14 @@
    pr_status_jobs_measured   whether the jobs query returned a series
    pr_status_jobs_text       the jobs query value, or "unmeasured"
 
- Each busy series is labelled by its `lane`, falling back to its first
- non-name label, then to "-".
+ Each busy series is named by the value of its `accelerator` label — the lane
+ it measures — printed as a whole percent over the query's 4 h window, sorted
+ by lane name so the order is stable hour to hour; a series without the label
+ is named "unknown lane".
 -#}
 {{ pr_status_generated_utc }} pull-request and lane status
 {{ '🟢' if pr_status_open_total < 30 else ('🟡' if pr_status_open_total <= 40 else '🔴') }} open pull requests: {{ pr_status_open_total }}
 🟢 merged in the last hour: {{ pr_status_merged_total }}
-{% for s in pr_status_busy_series %}{% set busy = s.value[1] | float %}{% set label = s.metric.get('lane') or ((s.metric.keys() | reject('equalto', '__name__') | list) | first | default('-')) %}{{ '🟢' if busy >= 50 else ('🟡' if busy >= 25 else '🔴') }} busy percent {{ label }}: {{ busy }}%
+{% set rows = [] %}{% for s in pr_status_busy_series %}{% set lane = s.metric.get('accelerator') or 'unknown lane' %}{% set _ = rows.append({'lane': lane, 'busy': s.value[1] | float}) %}{% endfor %}{% for r in rows | sort(attribute='lane') %}{{ '🟢' if r.busy >= 50 else ('🟡' if r.busy >= 25 else '🔴') }} {{ r.lane }} busy, 4 h: {{ r.busy | round | int }}%
 {% endfor %}{% if pr_status_busy_series | length == 0 %}🔴 busy percent: unmeasured
 {% endif %}{{ '🟢' if pr_status_jobs_measured else '🔴' }} jobs: {{ pr_status_jobs_text }}
