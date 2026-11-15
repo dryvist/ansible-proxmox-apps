@@ -22,9 +22,8 @@ These render the REAL expressions out of the task files, never a reimplementatio
 -- retyping a template performs its own escaping and can pass while the real
 expression fails.
 
-The upstream site where the false "absent" is minted, openbao_secrets' KV read
-gate, is not covered here: it lives in its own task file and is exercised end to
-end against mock results by dryvist.secrets_management/tests/openbao_secrets/verify_read_gate.yml.
+openbao_secrets' KV read gate, where the false "absent" is minted, is tested end
+to end by dryvist.secrets_management/tests/openbao_secrets/verify_read_gate.yml.
 """
 
 from pathlib import Path
