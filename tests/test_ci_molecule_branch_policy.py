@@ -14,6 +14,11 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/ci-gate.yml"
 FIXTURE = ROOT / "tests/ci_molecule_branch_policy/main-event.json"
+HEAVY_JOBS = {
+    "data-contract", "inventory-contract", "secrets-contract", "molecule", "e2e",
+    "template-render", "nautobot-seed", "status-stack-autokuma-render",
+    "agent-sandbox-limited-render",
+}
 
 
 class MoleculeBranchPolicy(unittest.TestCase):
@@ -22,11 +27,17 @@ class MoleculeBranchPolicy(unittest.TestCase):
         self.events = json.loads(FIXTURE.read_text(encoding="utf-8"))
 
     def expression(self, expression, github, scenarios="[]", relevant="false",
-                   cancelled=False, tiny="false", molecule_workflow="false"):
+                   cancelled=False, heavy_jobs="true", tier="warm", labels=(),
+                   molecule_workflow="false"):
         # These clauses use only boolean/string operations shared by GitHub
         # expressions and Jinja. Execute the source clauses, rather than
-        # asserting their spelling or reproducing their branch decisions.
+        # asserting their spelling or reproducing their branch decisions. The
+        # label glob and contains() exist only in GitHub expressions, so they
+        # run against the same fixture data as the neighbouring terms.
         expression = expression.strip().removeprefix("${{").removesuffix("}}").strip()
+        expression = expression.replace(
+            "github.event.pull_request.labels.*.name", "labels"
+        )
         expression = expression.replace("&&", "and").replace("||", "or")
         expression = re.sub(r"!(?!=)", "not ", expression)
         return Environment(undefined=StrictUndefined).compile_expression(expression)(
@@ -34,18 +45,21 @@ class MoleculeBranchPolicy(unittest.TestCase):
             needs={
                 "ci": {"outputs": {
                     "molecule": relevant, "molecule_scenarios": scenarios,
-                    "tiny": tiny, "ansible": "true",
+                    "ansible": "true",
                 }},
                 "changes": {"outputs": {
                     "molecule": relevant, "molecule_scenarios": scenarios,
-                    "tiny": tiny, "ansible": "true",
+                    "ansible": "true",
                 }},
                 "scope": {"outputs": {
                     "deploy": "true", "molecule_workflow": molecule_workflow,
                 }},
+                "lane": {"outputs": {"heavy_jobs": heavy_jobs, "tier": tier}},
             },
             vars={"E2E_RUNNERS_ENABLED": "true"},
             cancelled=lambda: cancelled,
+            labels=list(labels),
+            contains=lambda items, value: value in items,
         )
 
     def matrix(self, github, scenarios="[]", relevant="false", cancelled=False,
@@ -87,6 +101,22 @@ class MoleculeBranchPolicy(unittest.TestCase):
 
     def all_scenarios(self):
         return sorted(path.parent.name for path in (ROOT / "molecule").glob("*/molecule.yml"))
+
+    def test_merge_queue_entries_trigger_the_gate(self):
+        # PyYAML reads the workflow's `on:` key as the boolean True.
+        self.assertIn("merge_group", self.workflow[True])
+        self.assertIn("push", self.workflow[True])
+
+    def test_one_lane_job_decides_the_heavy_jobs(self):
+        lane = self.workflow["jobs"]["lane"]
+        self.assertEqual(lane["uses"], "JacobPEvans/.github/.github/workflows/_lane.yml@v1")
+        self.assertEqual(lane["permissions"], {"contents": "read", "pull-requests": "read"})
+        for job_id in HEAVY_JOBS:
+            job = self.workflow["jobs"][job_id]
+            needs = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
+            with self.subTest(job=job_id):
+                self.assertIn("lane", needs)
+        self.assertIn("lane", self.workflow["jobs"]["gate"]["needs"])
 
     def test_main_promotion_runs_every_scenario_for_empty_or_focused_classifier_outputs(self):
         github = self.events["main_pull_request"]
@@ -142,15 +172,11 @@ class MoleculeBranchPolicy(unittest.TestCase):
             )
         )
 
-    def test_tiny_develop_pr_only_skips_local_suites(self):
-        heavy_jobs = {
-            "data-contract", "inventory-contract", "secrets-contract", "molecule", "e2e",
-            "template-render", "nautobot-seed", "status-stack-autokuma-render",
-            "agent-sandbox-limited-render",
-        }
-        for job_id in heavy_jobs:
+    def test_lane_gated_develop_pr_only_skips_local_suites(self):
+        for job_id in HEAVY_JOBS:
             condition = self.workflow["jobs"][job_id]["if"]
-            self.assertIn("needs.changes.outputs.tiny != 'true'", condition, job_id)
+            self.assertIn("needs.lane.outputs.heavy_jobs != 'false'", condition, job_id)
+            self.assertIn("needs.lane.outputs.tier != 'hot'", condition, job_id)
 
         molecule = self.workflow["jobs"]["molecule"]
         molecule_needs = molecule["needs"] if isinstance(molecule["needs"], list) else [molecule["needs"]]
@@ -159,39 +185,88 @@ class MoleculeBranchPolicy(unittest.TestCase):
 
         develop_pr = deepcopy(self.events["main_pull_request"])
         develop_pr["event"]["pull_request"]["base"]["ref"] = "develop"
-        for job_id in heavy_jobs:
-            with self.subTest(job=job_id):
+        merge_group = deepcopy(self.events["develop_push"])
+        merge_group["event_name"] = "merge_group"
+        for job_id in HEAVY_JOBS:
+            with self.subTest(job=job_id, lane="closed"):
                 self.assertFalse(
                     self.expression(
                         self.workflow["jobs"][job_id]["if"], develop_pr,
-                        scenarios='["default"]', relevant="true", tiny="true",
+                        scenarios='["default"]', relevant="true", heavy_jobs="false",
                     )
                 )
 
-        for job_id in heavy_jobs - {"e2e"}:
-            with self.subTest(job=job_id, tiny=False):
+        for job_id in HEAVY_JOBS - {"e2e"}:
+            with self.subTest(job=job_id, lane="open"):
                 self.assertTrue(
                     self.expression(
                         self.workflow["jobs"][job_id]["if"], develop_pr,
-                        scenarios='["default"]', relevant="true", tiny="false",
+                        scenarios='["default"]', relevant="true",
+                    )
+                )
+
+        for job_id in HEAVY_JOBS - {"e2e"}:
+            with self.subTest(job=job_id, tier="hot", event="merge_group"):
+                self.assertTrue(
+                    self.expression(
+                        self.workflow["jobs"][job_id]["if"], merge_group,
+                        scenarios='["default"]', relevant="true", tier="hot",
+                    )
+                )
+            with self.subTest(job=job_id, tier="hot", event="pull_request"):
+                self.assertFalse(
+                    self.expression(
+                        self.workflow["jobs"][job_id]["if"], develop_pr,
+                        scenarios='["default"]', relevant="true", tier="hot",
+                    )
+                )
+            with self.subTest(job=job_id, tier="hot", event="preflight pull request"):
+                self.assertTrue(
+                    self.expression(
+                        self.workflow["jobs"][job_id]["if"], develop_pr,
+                        scenarios='["default"]', relevant="true", tier="hot",
+                        labels=("preflight",),
                     )
                 )
 
         main_push = deepcopy(self.events["develop_push"])
         main_push["ref"] = "refs/heads/main"
         for github in (self.events["main_pull_request"], main_push):
-            for job_id in heavy_jobs:
+            for job_id in HEAVY_JOBS:
                 with self.subTest(job=job_id, event=github["event_name"]):
                     self.assertTrue(
                         self.expression(
                             self.workflow["jobs"][job_id]["if"], github,
-                            scenarios='["default"]', relevant="true", tiny="false",
+                            scenarios='["default"]', relevant="true",
                         )
                     )
 
-        self.assertTrue(heavy_jobs <= self.allowed_skips(develop_pr))
+        for job_id in HEAVY_JOBS:
+            with self.subTest(job=job_id, event="push"):
+                self.assertFalse(
+                    self.expression(
+                        self.workflow["jobs"][job_id]["if"], self.events["develop_push"],
+                        scenarios='["default"]', relevant="true",
+                    )
+                )
+
+        self.assertTrue(HEAVY_JOBS <= self.allowed_skips(develop_pr))
         self.assertNotIn("tiny", self.workflow["jobs"]["scope"].get("if", ""))
         self.assertNotIn("tiny", self.workflow["jobs"]["gate"].get("if", ""))
+
+    def test_gate_waives_heavy_skips_only_outside_main_runs(self):
+        develop_pr = deepcopy(self.events["main_pull_request"])
+        develop_pr["event"]["pull_request"]["base"]["ref"] = "develop"
+        merge_group = deepcopy(self.events["develop_push"])
+        merge_group["event_name"] = "merge_group"
+        for github in (develop_pr, merge_group, self.events["develop_push"]):
+            with self.subTest(event=github["event_name"]):
+                self.assertTrue(HEAVY_JOBS <= self.allowed_skips(github))
+
+        main_push = deepcopy(self.events["develop_push"])
+        main_push["ref"] = "refs/heads/main"
+        self.assertEqual(self.allowed_skips(main_push), set())
+        self.assertEqual(self.allowed_skips(self.events["main_pull_request"]), set())
 
     def test_main_push_runs_every_scenario(self):
         github = deepcopy(self.events["develop_push"])
@@ -200,10 +275,8 @@ class MoleculeBranchPolicy(unittest.TestCase):
             with self.subTest(scenarios=scenarios):
                 self.assert_full_matrix(self.matrix(github, scenarios, "true"))
 
-    def test_develop_push_preserves_the_shared_focused_policy(self):
-        self.assertEqual(
-            self.matrix(self.events["develop_push"], '["default"]', "true"), ["default"]
-        )
+    def test_develop_push_starts_no_matrix(self):
+        self.assertIsNone(self.matrix(self.events["develop_push"], '["default"]', "true"))
 
     def test_cancelled_promotion_does_not_start_a_matrix(self):
         self.assertIsNone(self.matrix(self.events["main_pull_request"], cancelled=True))
