@@ -1,0 +1,487 @@
+diff --git a/.github/workflows/ci-gate.yml b/.github/workflows/ci-gate.yml
+index 489a2c9c..0b7e9148 100644
+--- a/.github/workflows/ci-gate.yml
++++ b/.github/workflows/ci-gate.yml
+@@ -19,12 +19,14 @@ on:
+   pull_request:
+     branches: [develop, main]
+     types: [opened, synchronize, reopened]
++  merge_group:
+   push:
+     branches: [develop, main]
+ 
+ concurrency:
+   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+-  cancel-in-progress: true
++  # A merge queue entry runs to the end; pull request and push runs cancel.
++  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
+ 
+ permissions:
+   contents: read
+@@ -167,6 +169,19 @@ jobs:
+       molecule_scenario_filters: *molecule_scenario_filters
+       molecule_contract_filters: *molecule_contract_filters
+ 
++  # One lane decision for the heavy jobs.
++  lane:
++    permissions:
++      contents: read
++      pull-requests: read
++    uses: JacobPEvans/.github/.github/workflows/_lane.yml@v1
++    with:
++      guarded_paths: "\
++        .github/**,**/*secret*,**/*credential*,**/*token*,**/vault/**,\
++        *.sops.*,.sops.yaml"
++    secrets:
++      GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
++
+   lane-alias-parity:
+     name: Lane Alias Parity
+     uses: ./.github/workflows/_lane-alias-parity.yml
+@@ -215,14 +230,22 @@ jobs:
+ 
+   data-contract:
+     name: Data Contract
+-    needs: [changes, scope]
+-    # `changes.outputs.ansible` identifies Ansible-relevant changes; the push
+-    # condition keeps the post-merge contract sweep running.
++    needs: [changes, scope, lane]
++    # `changes.outputs.ansible` identifies Ansible-relevant changes for pull
++    # requests and merge queue entries; pushes to main and promotions into
++    # main always run the contract.
+     if: >-
+-      needs.changes.outputs.tiny != 'true' &&
++      needs.lane.outputs.heavy_jobs != 'false' &&
++      (
++        needs.lane.outputs.tier != 'hot' ||
++        github.event_name != 'pull_request' ||
++        github.event.pull_request.base.ref == 'main' ||
++        contains(github.event.pull_request.labels.*.name, 'preflight')
++      ) &&
+       needs.scope.outputs.deploy == 'true' &&
+-      (needs.changes.outputs.ansible == 'true' ||
+-       github.event_name == 'push' ||
++      ((github.event_name != 'push' &&
++        needs.changes.outputs.ansible == 'true') ||
++       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        github.event.pull_request.base.ref == 'main')
+     uses: ./.github/workflows/_data-contract.yml
+ 
+@@ -231,12 +254,19 @@ jobs:
+   # they are one contract in two files, not two policies.
+   inventory-contract:
+     name: Inventory Contract
+-    needs: [changes, scope]
++    needs: [changes, scope, lane]
+     if: >-
+-      needs.changes.outputs.tiny != 'true' &&
++      needs.lane.outputs.heavy_jobs != 'false' &&
++      (
++        needs.lane.outputs.tier != 'hot' ||
++        github.event_name != 'pull_request' ||
++        github.event.pull_request.base.ref == 'main' ||
++        contains(github.event.pull_request.labels.*.name, 'preflight')
++      ) &&
+       needs.scope.outputs.deploy == 'true' &&
+-      (needs.changes.outputs.ansible == 'true' ||
+-       github.event_name == 'push' ||
++      ((github.event_name != 'push' &&
++        needs.changes.outputs.ansible == 'true') ||
++       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        github.event.pull_request.base.ref == 'main')
+     uses: ./.github/workflows/_inventory-contract.yml
+ 
+@@ -246,25 +276,39 @@ jobs:
+   # policies.
+   secrets-contract:
+     name: Secrets Contract
+-    needs: [changes, scope]
++    needs: [changes, scope, lane]
+     if: >-
+-      needs.changes.outputs.tiny != 'true' &&
++      needs.lane.outputs.heavy_jobs != 'false' &&
++      (
++        needs.lane.outputs.tier != 'hot' ||
++        github.event_name != 'pull_request' ||
++        github.event.pull_request.base.ref == 'main' ||
++        contains(github.event.pull_request.labels.*.name, 'preflight')
++      ) &&
+       needs.scope.outputs.deploy == 'true' &&
+-      (needs.changes.outputs.ansible == 'true' ||
+-       github.event_name == 'push' ||
++      ((github.event_name != 'push' &&
++        needs.changes.outputs.ansible == 'true') ||
++       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        github.event.pull_request.base.ref == 'main')
+     uses: ./.github/workflows/_secrets-contract.yml
+ 
+   molecule:
+     name: Molecule
+-    needs: [changes, scope]
++    needs: [changes, scope, lane]
+     if: &molecule_condition >-
+-      needs.changes.outputs.tiny != 'true' &&
++      needs.lane.outputs.heavy_jobs != 'false' &&
++      (
++        needs.lane.outputs.tier != 'hot' ||
++        github.event_name != 'pull_request' ||
++        github.event.pull_request.base.ref == 'main' ||
++        contains(github.event.pull_request.labels.*.name, 'preflight')
++      ) &&
+       !cancelled() &&
+       ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'pull_request' &&
+         github.event.pull_request.base.ref == 'main') ||
+-       (needs.changes.outputs.molecule == 'true' &&
++       (github.event_name != 'push' &&
++        needs.changes.outputs.molecule == 'true' &&
+         needs.changes.outputs.molecule_scenarios != '' &&
+         needs.changes.outputs.molecule_scenarios != '[]'))
+     uses: JacobPEvans/.github/.github/workflows/_molecule.yml@v1
+@@ -304,35 +348,41 @@ jobs:
+ 
+   template-render:
+     name: Molecule
+-    needs: changes
++    needs: [changes, lane]
+     if: *molecule_condition
+     uses: ./.github/workflows/_template-render.yml
+ 
+   nautobot-seed:
+     name: Molecule / Nautobot Seed Bundle Tests
+-    needs: changes
++    needs: [changes, lane]
+     if: *molecule_condition
+     uses: ./.github/workflows/_nautobot-seed.yml
+ 
+   status-stack-autokuma-render:
+     name: Molecule / status_stack AutoKuma Bulk Render Tests
+-    needs: changes
++    needs: [changes, lane]
+     if: *molecule_condition
+     uses: ./.github/workflows/_status-stack-autokuma-render.yml
+ 
+   agent-sandbox-limited-render:
+     name: Molecule / Agent Sandbox Limited Inventory Render
+-    needs: changes
++    needs: [changes, lane]
+     if: *molecule_condition
+     uses: ./.github/workflows/_agent-sandbox-limited-render.yml
+ 
+   e2e:
+     name: E2E Tests
+-    needs: [changes, scope]
++    needs: [changes, scope, lane]
+     # This suite reads integrated service health through the self-hosted pool.
+     # Never run fork-controlled code on those runners.
+     if: >-
+-      needs.changes.outputs.tiny != 'true' &&
++      needs.lane.outputs.heavy_jobs != 'false' &&
++      (
++        needs.lane.outputs.tier != 'hot' ||
++        github.event_name != 'pull_request' ||
++        github.event.pull_request.base.ref == 'main' ||
++        contains(github.event.pull_request.labels.*.name, 'preflight')
++      ) &&
+       !cancelled() &&
+       vars.E2E_RUNNERS_ENABLED == 'true' &&
+       needs.scope.outputs.deploy == 'true' &&
+@@ -348,7 +398,22 @@ jobs:
+     # the deployment checks run, so a failure there skips them — and a skip the
+     # gate forgives is a green board with nothing having run. The job that
+     # decides what to skip can never itself be skippable.
+-    needs: [ci, changes, scope, agent-platform-conformance, lane-alias-parity, data-contract, inventory-contract, secrets-contract, molecule, template-render, nautobot-seed, status-stack-autokuma-render, agent-sandbox-limited-render, e2e]
++    needs:
++      - ci
++      - changes
++      - scope
++      - agent-platform-conformance
++      - lane
++      - lane-alias-parity
++      - data-contract
++      - inventory-contract
++      - secrets-contract
++      - molecule
++      - template-render
++      - nautobot-seed
++      - status-stack-autokuma-render
++      - agent-sandbox-limited-render
++      - e2e
+     if: ${{ always() && !cancelled() }}
+     runs-on: ubuntu-latest
+     timeout-minutes: 5
+@@ -356,17 +421,21 @@ jobs:
+       - name: Check all results
+         uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1
+         with:
+-          # Main-target PRs and main pushes require the complete Molecule
+-          # matrix. Develop uses the shared focused selection and retains
+-          # the classifier and local contracts in this gate.
++          # Main-target pull requests and main pushes run the complete Molecule
++          # matrix. Merge queue entries and pull requests into develop use the
++          # shared focused selection; the lane decides whether the heavy jobs
++          # run there, and develop pushes run none.
+           allowed-skips: >-
+-            ${{ (github.event_name == 'pull_request' &&
+-            github.event.pull_request.base.ref == 'develop' &&
+-            'data-contract, inventory-contract, secrets-contract, molecule, template-render, nautobot-seed, status-stack-autokuma-render, agent-sandbox-limited-render, e2e') ||
++            ${{ ((github.event_name == 'pull_request' &&
++            github.event.pull_request.base.ref != 'main') ||
++            github.event_name == 'merge_group' ||
++            (github.event_name == 'push' &&
++            github.ref == 'refs/heads/develop')) &&
++            'data-contract, inventory-contract, secrets-contract, molecule,
++            template-render, nautobot-seed, status-stack-autokuma-render,
++            agent-sandbox-limited-render, e2e' ||
+             ((github.event_name == 'pull_request' &&
+             github.event.pull_request.base.ref == 'main' &&
+             github.event.pull_request.head.repo.full_name != github.repository) &&
+-            'e2e') ||
+-            ((github.event_name == 'push' && github.ref == 'refs/heads/develop') &&
+-            'e2e, molecule, template-render, nautobot-seed, status-stack-autokuma-render, agent-sandbox-limited-render') || '' }}
++            'e2e') || '' }}
+           jobs: ${{ toJSON(needs) }}
+diff --git a/.github/workflows/post-merge.yml b/.github/workflows/post-merge.yml
+new file mode 100644
+index 00000000..e24bebce
+--- /dev/null
++++ b/.github/workflows/post-merge.yml
+@@ -0,0 +1,23 @@
++---
++# Settles deferred checks and moves the green pointer after each merge to develop.
++name: Post Merge
++
++on:
++  push:
++    branches: [develop]
++
++permissions: {}
++
++jobs:
++  post-merge:
++    permissions:
++      contents: write
++      pull-requests: write
++      checks: read
++      actions: read
++    uses: JacobPEvans/.github/.github/workflows/_post-merge.yml@v1
++    with:
++      profile: ansible
++    secrets:
++      GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
++      slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+diff --git a/tests/test_ci_molecule_branch_policy.py b/tests/test_ci_molecule_branch_policy.py
+index a2fdce23..a17916d5 100644
+--- a/tests/test_ci_molecule_branch_policy.py
++++ b/tests/test_ci_molecule_branch_policy.py
+@@ -14,6 +14,11 @@ import yaml
+ ROOT = Path(__file__).resolve().parents[1]
+ WORKFLOW = ROOT / ".github/workflows/ci-gate.yml"
+ FIXTURE = ROOT / "tests/ci_molecule_branch_policy/main-event.json"
++HEAVY_JOBS = {
++    "data-contract", "inventory-contract", "secrets-contract", "molecule", "e2e",
++    "template-render", "nautobot-seed", "status-stack-autokuma-render",
++    "agent-sandbox-limited-render",
++}
+ 
+ 
+ class MoleculeBranchPolicy(unittest.TestCase):
+@@ -22,11 +27,17 @@ class MoleculeBranchPolicy(unittest.TestCase):
+         self.events = json.loads(FIXTURE.read_text(encoding="utf-8"))
+ 
+     def expression(self, expression, github, scenarios="[]", relevant="false",
+-                   cancelled=False, tiny="false", molecule_workflow="false"):
++                   cancelled=False, heavy_jobs="true", tier="warm", labels=(),
++                   molecule_workflow="false"):
+         # These clauses use only boolean/string operations shared by GitHub
+         # expressions and Jinja. Execute the source clauses, rather than
+-        # asserting their spelling or reproducing their branch decisions.
++        # asserting their spelling or reproducing their branch decisions. The
++        # label glob and contains() exist only in GitHub expressions, so they
++        # run against the same fixture data as the neighbouring terms.
+         expression = expression.strip().removeprefix("${{").removesuffix("}}").strip()
++        expression = expression.replace(
++            "github.event.pull_request.labels.*.name", "labels"
++        )
+         expression = expression.replace("&&", "and").replace("||", "or")
+         expression = re.sub(r"!(?!=)", "not ", expression)
+         return Environment(undefined=StrictUndefined).compile_expression(expression)(
+@@ -34,18 +45,21 @@ class MoleculeBranchPolicy(unittest.TestCase):
+             needs={
+                 "ci": {"outputs": {
+                     "molecule": relevant, "molecule_scenarios": scenarios,
+-                    "tiny": tiny, "ansible": "true",
++                    "ansible": "true",
+                 }},
+                 "changes": {"outputs": {
+                     "molecule": relevant, "molecule_scenarios": scenarios,
+-                    "tiny": tiny, "ansible": "true",
++                    "ansible": "true",
+                 }},
+                 "scope": {"outputs": {
+                     "deploy": "true", "molecule_workflow": molecule_workflow,
+                 }},
++                "lane": {"outputs": {"heavy_jobs": heavy_jobs, "tier": tier}},
+             },
+             vars={"E2E_RUNNERS_ENABLED": "true"},
+             cancelled=lambda: cancelled,
++            labels=list(labels),
++            contains=lambda items, value: value in items,
+         )
+ 
+     def matrix(self, github, scenarios="[]", relevant="false", cancelled=False,
+@@ -88,6 +102,22 @@ class MoleculeBranchPolicy(unittest.TestCase):
+     def all_scenarios(self):
+         return sorted(path.parent.name for path in (ROOT / "molecule").glob("*/molecule.yml"))
+ 
++    def test_merge_queue_entries_trigger_the_gate(self):
++        # PyYAML reads the workflow's `on:` key as the boolean True.
++        self.assertIn("merge_group", self.workflow[True])
++        self.assertIn("push", self.workflow[True])
++
++    def test_one_lane_job_decides_the_heavy_jobs(self):
++        lane = self.workflow["jobs"]["lane"]
++        self.assertEqual(lane["uses"], "JacobPEvans/.github/.github/workflows/_lane.yml@v1")
++        self.assertEqual(lane["permissions"], {"contents": "read", "pull-requests": "read"})
++        for job_id in HEAVY_JOBS:
++            job = self.workflow["jobs"][job_id]
++            needs = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
++            with self.subTest(job=job_id):
++                self.assertIn("lane", needs)
++        self.assertIn("lane", self.workflow["jobs"]["gate"]["needs"])
++
+     def test_main_promotion_runs_every_scenario_for_empty_or_focused_classifier_outputs(self):
+         github = self.events["main_pull_request"]
+         for scenarios in ("[]", "", '["default"]'):
+@@ -142,15 +172,11 @@ class MoleculeBranchPolicy(unittest.TestCase):
+             )
+         )
+ 
+-    def test_tiny_develop_pr_only_skips_local_suites(self):
+-        heavy_jobs = {
+-            "data-contract", "inventory-contract", "secrets-contract", "molecule", "e2e",
+-            "template-render", "nautobot-seed", "status-stack-autokuma-render",
+-            "agent-sandbox-limited-render",
+-        }
+-        for job_id in heavy_jobs:
++    def test_lane_gated_develop_pr_only_skips_local_suites(self):
++        for job_id in HEAVY_JOBS:
+             condition = self.workflow["jobs"][job_id]["if"]
+-            self.assertIn("needs.changes.outputs.tiny != 'true'", condition, job_id)
++            self.assertIn("needs.lane.outputs.heavy_jobs != 'false'", condition, job_id)
++            self.assertIn("needs.lane.outputs.tier != 'hot'", condition, job_id)
+ 
+         molecule = self.workflow["jobs"]["molecule"]
+         molecule_needs = molecule["needs"] if isinstance(molecule["needs"], list) else [molecule["needs"]]
+@@ -159,40 +185,89 @@ class MoleculeBranchPolicy(unittest.TestCase):
+ 
+         develop_pr = deepcopy(self.events["main_pull_request"])
+         develop_pr["event"]["pull_request"]["base"]["ref"] = "develop"
+-        for job_id in heavy_jobs:
+-            with self.subTest(job=job_id):
++        merge_group = deepcopy(self.events["develop_push"])
++        merge_group["event_name"] = "merge_group"
++        for job_id in HEAVY_JOBS:
++            with self.subTest(job=job_id, lane="closed"):
+                 self.assertFalse(
+                     self.expression(
+                         self.workflow["jobs"][job_id]["if"], develop_pr,
+-                        scenarios='["default"]', relevant="true", tiny="true",
++                        scenarios='["default"]', relevant="true", heavy_jobs="false",
+                     )
+                 )
+ 
+-        for job_id in heavy_jobs - {"e2e"}:
+-            with self.subTest(job=job_id, tiny=False):
++        for job_id in HEAVY_JOBS - {"e2e"}:
++            with self.subTest(job=job_id, lane="open"):
++                self.assertTrue(
++                    self.expression(
++                        self.workflow["jobs"][job_id]["if"], develop_pr,
++                        scenarios='["default"]', relevant="true",
++                    )
++                )
++
++        for job_id in HEAVY_JOBS - {"e2e"}:
++            with self.subTest(job=job_id, tier="hot", event="merge_group"):
++                self.assertTrue(
++                    self.expression(
++                        self.workflow["jobs"][job_id]["if"], merge_group,
++                        scenarios='["default"]', relevant="true", tier="hot",
++                    )
++                )
++            with self.subTest(job=job_id, tier="hot", event="pull_request"):
++                self.assertFalse(
++                    self.expression(
++                        self.workflow["jobs"][job_id]["if"], develop_pr,
++                        scenarios='["default"]', relevant="true", tier="hot",
++                    )
++                )
++            with self.subTest(job=job_id, tier="hot", event="preflight pull request"):
+                 self.assertTrue(
+                     self.expression(
+                         self.workflow["jobs"][job_id]["if"], develop_pr,
+-                        scenarios='["default"]', relevant="true", tiny="false",
++                        scenarios='["default"]', relevant="true", tier="hot",
++                        labels=("preflight",),
+                     )
+                 )
+ 
+         main_push = deepcopy(self.events["develop_push"])
+         main_push["ref"] = "refs/heads/main"
+         for github in (self.events["main_pull_request"], main_push):
+-            for job_id in heavy_jobs:
++            for job_id in HEAVY_JOBS:
+                 with self.subTest(job=job_id, event=github["event_name"]):
+                     self.assertTrue(
+                         self.expression(
+                             self.workflow["jobs"][job_id]["if"], github,
+-                            scenarios='["default"]', relevant="true", tiny="false",
++                            scenarios='["default"]', relevant="true",
+                         )
+                     )
+ 
+-        self.assertTrue(heavy_jobs <= self.allowed_skips(develop_pr))
++        for job_id in HEAVY_JOBS:
++            with self.subTest(job=job_id, event="push"):
++                self.assertFalse(
++                    self.expression(
++                        self.workflow["jobs"][job_id]["if"], self.events["develop_push"],
++                        scenarios='["default"]', relevant="true",
++                    )
++                )
++
++        self.assertTrue(HEAVY_JOBS <= self.allowed_skips(develop_pr))
+         self.assertNotIn("tiny", self.workflow["jobs"]["scope"].get("if", ""))
+         self.assertNotIn("tiny", self.workflow["jobs"]["gate"].get("if", ""))
+ 
++    def test_gate_waives_heavy_skips_only_outside_main_runs(self):
++        develop_pr = deepcopy(self.events["main_pull_request"])
++        develop_pr["event"]["pull_request"]["base"]["ref"] = "develop"
++        merge_group = deepcopy(self.events["develop_push"])
++        merge_group["event_name"] = "merge_group"
++        for github in (develop_pr, merge_group, self.events["develop_push"]):
++            with self.subTest(event=github["event_name"]):
++                self.assertTrue(HEAVY_JOBS <= self.allowed_skips(github))
++
++        main_push = deepcopy(self.events["develop_push"])
++        main_push["ref"] = "refs/heads/main"
++        self.assertEqual(self.allowed_skips(main_push), set())
++        self.assertEqual(self.allowed_skips(self.events["main_pull_request"]), set())
++
+     def test_main_push_runs_every_scenario(self):
+         github = deepcopy(self.events["develop_push"])
+         github["ref"] = "refs/heads/main"
+@@ -200,10 +275,8 @@ class MoleculeBranchPolicy(unittest.TestCase):
+             with self.subTest(scenarios=scenarios):
+                 self.assert_full_matrix(self.matrix(github, scenarios, "true"))
+ 
+-    def test_develop_push_preserves_the_shared_focused_policy(self):
+-        self.assertEqual(
+-            self.matrix(self.events["develop_push"], '["default"]', "true"), ["default"]
+-        )
++    def test_develop_push_starts_no_matrix(self):
++        self.assertIsNone(self.matrix(self.events["develop_push"], '["default"]', "true"))
+ 
+     def test_cancelled_promotion_does_not_start_a_matrix(self):
+         self.assertIsNone(self.matrix(self.events["main_pull_request"], cancelled=True))
