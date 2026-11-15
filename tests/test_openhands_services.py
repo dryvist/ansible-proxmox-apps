@@ -49,8 +49,8 @@ class OpenHandsServiceInstall(unittest.TestCase):
 
     def test_both_services_install_at_their_pins_through_the_pypi_cache(self):
         defaults = _load(ROLE / "defaults" / "main.yml")
-        self.assertEqual(defaults["openhands_agent_server_version"], "1.58.1")
-        self.assertEqual(defaults["openhands_automation_version"], "1.26.0")
+        self.assertEqual(defaults["openhands_agent_server_version"], "1.62.0")
+        self.assertEqual(defaults["openhands_automation_version"], "1.32.1")
         install = _task(_load(SERVICES), "Install the agent server and automation through the PyPI cache")
         argv = install["ansible.builtin.command"]["argv"]
         self.assertEqual(argv[0], "{{ openhands_uv_venv }}/bin/uv")
