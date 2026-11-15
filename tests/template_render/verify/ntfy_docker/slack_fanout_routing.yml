@@ -43,20 +43,17 @@
     file: ../../../../roles/ntfy_docker/defaults/main.yml
     name: _ntfy_role_defaults
 
-- name: Assert hermes-all resolves to the status webhook and hermes-noise and hermes-alerts are gone
+- name: Assert the webhooks are exactly the seeded secrets and no Hermes topic remains
   vars:
     bao_ntfy_secrets:
       status: https://hooks.example.test/status
     _seeded_webhooks: "{{ _ntfy_role_defaults.ntfy_docker_slack_webhooks }}"
   ansible.builtin.assert:
     that:
-      - "_seeded_webhooks['hermes-all'] == 'https://hooks.example.test/status'"
-      - "'hermes-all' in _ntfy_role_defaults.ntfy_docker_inform_topics"
-      - "'hermes-noise' not in _ntfy_role_defaults.ntfy_docker_topics"
-      - "'hermes-noise' not in _ntfy_role_defaults.ntfy_docker_inform_topics"
-      - "'hermes-alerts' not in _ntfy_role_defaults.ntfy_docker_topics"
-      - "'hermes-alerts' not in _ntfy_role_defaults.ntfy_docker_inform_topics"
-    fail_msg: "hermes-all, hermes-noise or hermes-alerts routing is wrong: {{ _seeded_webhooks | list }}"
+      - "_seeded_webhooks == {'status': 'https://hooks.example.test/status'}"
+      - "_ntfy_role_defaults.ntfy_docker_inform_topics == ['status']"
+      - "_ntfy_role_defaults.ntfy_docker_topics | select('match', 'hermes-') | list == []"
+    fail_msg: "webhook map or Hermes topics are wrong: {{ _seeded_webhooks | list }}"
 
 # Runs the real topic and inform lists and asserts the resulting Slack instances.
 - name: Plan the Slack fan-out with the real role defaults
@@ -72,13 +69,11 @@
     ntfy_docker_slack_routes: "{{ _ntfy_role_defaults.ntfy_docker_slack_routes }}"
     ntfy_docker_slack_webhooks: "{{ _ntfy_role_defaults.ntfy_docker_slack_webhooks }}"
 
-- name: Assert router-budget reaches all-alerts and hermes-all is its own instance
+- name: Assert router-budget reaches all-alerts and status is its own instance
   ansible.builtin.assert:
     that:
       - "'all-router-budget' in ntfy_docker_slack_instances"
-      - "ntfy_docker_slack_instances['hermes-all'] == 'hermes-all'"
       - "ntfy_docker_slack_instances['status'] == 'status'"
-      - "'all-hermes-all' not in ntfy_docker_slack_instances"
-      - "'all-hermes-noise' not in ntfy_docker_slack_instances"
-      - "'all-hermes-alerts' not in ntfy_docker_slack_instances"
+      - "'all-status' not in ntfy_docker_slack_instances"
+      - "ntfy_docker_slack_instances | select('match', '(all-)?hermes-') | list == []"
     fail_msg: "real routing is wrong: {{ ntfy_docker_slack_instances }}"

@@ -22,9 +22,8 @@ These render the REAL expressions out of the task files, never a reimplementatio
 -- retyping a template performs its own escaping and can pass while the real
 expression fails.
 
-The upstream site where the false "absent" is minted, openbao_secrets' KV read
-gate, is not covered here: it lives in its own task file and is exercised end to
-end against mock results by dryvist.secrets_management/tests/openbao_secrets/verify_read_gate.yml.
+openbao_secrets' KV read gate, where the false "absent" is minted, is tested end
+to end by dryvist.secrets_management/tests/openbao_secrets/verify_read_gate.yml.
 """
 
 from pathlib import Path
@@ -271,7 +270,7 @@ class PublishReadBeforeWrite(unittest.TestCase):
 class KvRetentionProbe(unittest.TestCase):
     """A denied config read must not fire a privileged retention write."""
 
-    REL = SECRETS_ROLES / "openbao/tasks/init/03-kv-mounts-and-seed-secrets.yml"
+    REL = SECRETS_ROLES / "openbao/tasks/init/03b-kv-mounts.yml"
     FAIL_TASK = 'FAIL -- the retention read was DENIED, so "unset" cannot be concluded'
     WRITE_TASK = "Set KV v2 version retention on the tuned mounts (write-if-changed)"
 
@@ -296,6 +295,7 @@ class KvRetentionProbe(unittest.TestCase):
             {
                 "item": [{"path": "secret", "max_versions": 10}, check],
                 "openbao_absent_stderr_marker": BAO_ABSENT,
+                "openbao_kv_mount_targets": [{"name": "secret"}],
             },
         )
 

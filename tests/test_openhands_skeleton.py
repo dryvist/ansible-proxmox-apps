@@ -115,8 +115,8 @@ class OpenHandsRoleContract(unittest.TestCase):
     def test_defaults_pin_versions_port_state_dir_and_conversation_limits(self):
         defaults = _load(ROLE / "defaults" / "main.yml")
         self.assertEqual(defaults["openhands_canvas_version"], "1.34.0")
-        self.assertEqual(defaults["openhands_agent_server_version"], "1.58.1")
-        self.assertEqual(defaults["openhands_automation_version"], "1.26.0")
+        self.assertEqual(defaults["openhands_agent_server_version"], "1.62.0")
+        self.assertEqual(defaults["openhands_automation_version"], "1.32.1")
         self.assertEqual(defaults["openhands_port"], 443)
         self.assertEqual(defaults["openhands_canvas_port"], "{{ openhands_port }}")
         self.assertEqual(defaults["openhands_backend_key_file"], "")
