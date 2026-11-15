@@ -29,12 +29,43 @@ class AgentSandboxCiResolverContract(unittest.TestCase):
         repos = inventory["agent_sandbox_ci_resolver_repos"]
         self.assertEqual(len(repos), 10)
         self.assertEqual(len(set(repos)), len(repos))
-        self.assertLessEqual(
-            {repo.split("/")[0] for repo in repos}, {"dryvist", "jpe-ai-agents", "jpe-ansible"}
-        )
+        for repo in repos:
+            self.assertRegex(repo, r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$")
         self.assertEqual(self.defaults["agent_sandbox_ci_resolver_max_attempts"], 3)
         self.assertNotIn("agent_sandbox_ci_resolver_max_attempts", inventory)
         self.assertEqual(self.defaults["agent_sandbox_ci_resolver_model_tiers"], "t2,t3")
+
+    def test_ci_resolver_workbook_repository_is_environment_driven(self):
+        self.assertIn(
+            "AGENT_SANDBOX_CI_RESOLVER_WORKBOOK_REPOSITORY",
+            self.defaults["agent_sandbox_ci_resolver_workbook_repository"],
+        )
+        self.assertIn(
+            "example-org/example-workbook",
+            self.defaults["agent_sandbox_ci_resolver_workbook_repository"],
+        )
+        validation = _task(self.tasks, "Validate CI resolver prerequisites")
+        conditions = validation["ansible.builtin.assert"]["that"]
+        self.assertIn(
+            "agent_sandbox_ci_resolver_workbook_repository"
+            " != 'example-org/example-workbook'",
+            conditions,
+        )
+        clone = _task(self.install_tasks, "Clone the CI resolver workbook as the dispatcher user")
+        self.assertEqual(
+            clone["ansible.builtin.git"]["repo"],
+            "https://github.com/{{ agent_sandbox_ci_resolver_workbook_repository }}.git",
+        )
+        learn_service = (ROLE / "templates" / "ci-resolver-learn.service.j2").read_text()
+        self.assertIn(
+            "https://github.com/{{ agent_sandbox_ci_resolver_workbook_repository }}.git"
+            " /run/ci-resolver-learn/workbook",
+            learn_service,
+        )
+        self.assertIn(
+            "--publish {{ agent_sandbox_ci_resolver_workbook_repository }}",
+            learn_service,
+        )
 
     def test_ci_resolver_is_off_by_default_and_pinned(self):
         self.assertIs(self.defaults["agent_sandbox_ci_resolver_enabled"], False)
