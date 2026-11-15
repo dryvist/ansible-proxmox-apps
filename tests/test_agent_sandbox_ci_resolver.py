@@ -20,20 +20,38 @@ class AgentSandboxCiResolverContract(unittest.TestCase):
         self.install = _task(self.tasks, "Install CI resolver")
         self.install_tasks = self.install["block"]
 
-    def test_inventory_enables_live_resolver_with_public_repository_scope(self):
+    def test_inventory_enables_live_resolver_with_environment_scoped_repositories(self):
         inventory = yaml.safe_load(
             (ROOT / "inventory" / "host_vars" / "ai-sandbox-01.yml").read_text()
         )
         self.assertIs(inventory["agent_sandbox_ci_resolver_enabled"], True)
         self.assertIs(inventory["agent_sandbox_ci_resolver_shadow"], False)
-        repos = inventory["agent_sandbox_ci_resolver_repos"]
-        self.assertEqual(len(repos), 10)
-        self.assertEqual(len(set(repos)), len(repos))
-        for repo in repos:
-            self.assertRegex(repo, r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$")
+        self.assertNotIn("agent_sandbox_ci_resolver_repos", inventory)
         self.assertEqual(self.defaults["agent_sandbox_ci_resolver_max_attempts"], 3)
         self.assertNotIn("agent_sandbox_ci_resolver_max_attempts", inventory)
         self.assertEqual(self.defaults["agent_sandbox_ci_resolver_model_tiers"], "t2,t3")
+
+    def test_ci_resolver_repos_are_environment_driven_and_non_empty(self):
+        default = self.defaults["agent_sandbox_ci_resolver_repos"]
+        self.assertIn("AGENT_SANDBOX_CI_RESOLVER_REPOS", default)
+        self.assertIn("from_json", default)
+        self.assertIn("default('[]', true)", default)
+        validation = _task(self.tasks, "Validate CI resolver prerequisites")
+        conditions = validation["ansible.builtin.assert"]["that"]
+        self.assertIn("agent_sandbox_ci_resolver_repos is not string", conditions)
+        self.assertIn("agent_sandbox_ci_resolver_repos | length > 0", conditions)
+        self.assertIn(
+            "agent_sandbox_ci_resolver_repos"
+            " | reject('match', '^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$')"
+            " | list | length == 0",
+            conditions,
+        )
+        self.assertIn(
+            "AGENT_SANDBOX_CI_RESOLVER_REPOS",
+            validation["ansible.builtin.assert"]["fail_msg"],
+        )
+        environment = (ROLE / "templates" / "ci-resolver.env.j2").read_text()
+        self.assertIn("{{ agent_sandbox_ci_resolver_repos | join(',') }}", environment)
 
     def test_ci_resolver_workbook_repository_is_environment_driven(self):
         self.assertIn(
