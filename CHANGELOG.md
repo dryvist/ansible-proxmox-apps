@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.49.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.49.0...v5.49.1) (2026-11-15)
+
+
+### Bug Fixes
+
+* **deps:** pin ansible-secrets-management v0.113.0 ([#3679](https://github.com/dryvist/ansible-proxmox-apps/issues/3679)) ([da9e459](https://github.com/dryvist/ansible-proxmox-apps/commit/da9e459d639b5270eeb38452a9a9df801d98f360))
+
 ## [5.49.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.48.0...v5.49.0) (2026-11-15)
 
 
