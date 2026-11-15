@@ -58,11 +58,15 @@ class PoolCapacityGate(unittest.TestCase):
 
     def test_a_host_that_cannot_report_its_capacity_fails_closed(self):
         proc = _run(FIXTURES / "no_facts.yml")
+        out = proc.stdout + proc.stderr
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn(
             "The pool capacity gate reads ansible_processor_vcpus and ansible_memtotal_mb",
-            proc.stdout + proc.stderr,
+            out,
         )
+        # The gate fails, carrying the gather error; the host stays reachable.
+        self.assertNotIn("no gather error reported", out)
+        self.assertIn("unreachable=0", out)
 
 
 if __name__ == "__main__":
