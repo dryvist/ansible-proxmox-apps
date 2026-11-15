@@ -1,5 +1,20 @@
 # Changelog
 
+## [5.49.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.48.0...v5.49.0) (2026-11-15)
+
+
+### Features
+
+* **agent:** zcode run j-3571419a34e04552 ([ba4a4c4](https://github.com/dryvist/ansible-proxmox-apps/commit/ba4a4c486751bc658007949f2d2c365348b684c8))
+
+
+### Bug Fixes
+
+* **agent_sandbox:** read the CI resolver workbook repository from the environment ([#3673](https://github.com/dryvist/ansible-proxmox-apps/issues/3673)) ([171534c](https://github.com/dryvist/ansible-proxmox-apps/commit/171534c8bc03d3676c4d27726cab8e86ee264c80))
+* **agent_sandbox:** read the repository list variable from the environment ([#3675](https://github.com/dryvist/ansible-proxmox-apps/issues/3675)) ([ba4a4c4](https://github.com/dryvist/ansible-proxmox-apps/commit/ba4a4c486751bc658007949f2d2c365348b684c8))
+* **github_runner:** gather the capacity facts the pool gate reads ([#3671](https://github.com/dryvist/ansible-proxmox-apps/issues/3671)) ([27dc13c](https://github.com/dryvist/ansible-proxmox-apps/commit/27dc13c1a09c66b81b90bac0aa27c5f7683a0767))
+* **grafana_stack:** repeat critical alert notifications every 24h ([#3674](https://github.com/dryvist/ansible-proxmox-apps/issues/3674)) ([4d96150](https://github.com/dryvist/ansible-proxmox-apps/commit/4d9615047e5a094d4cd90fa48130380598a9b2b8))
+
 ## [5.48.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.47.2...v5.48.0) (2026-11-15)
 
 
