@@ -271,7 +271,7 @@ class PublishReadBeforeWrite(unittest.TestCase):
 class KvRetentionProbe(unittest.TestCase):
     """A denied config read must not fire a privileged retention write."""
 
-    REL = SECRETS_ROLES / "openbao/tasks/init/03-kv-mounts-and-seed-secrets.yml"
+    REL = SECRETS_ROLES / "openbao/tasks/init/03b-kv-mounts.yml"
     FAIL_TASK = 'FAIL -- the retention read was DENIED, so "unset" cannot be concluded'
     WRITE_TASK = "Set KV v2 version retention on the tuned mounts (write-if-changed)"
 
@@ -296,6 +296,7 @@ class KvRetentionProbe(unittest.TestCase):
             {
                 "item": [{"path": "secret", "max_versions": 10}, check],
                 "openbao_absent_stderr_marker": BAO_ABSENT,
+                "openbao_kv_mount_targets": [{"name": "secret"}],
             },
         )
 
