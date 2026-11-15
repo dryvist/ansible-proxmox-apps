@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.50.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.49.1...v5.50.0) (2026-11-15)
+
+
+### Features
+
+* **openhands:** pin the automation service to 1.32.1 and the agent server to 1.62.0 ([#3690](https://github.com/dryvist/ansible-proxmox-apps/issues/3690)) ([9063c26](https://github.com/dryvist/ansible-proxmox-apps/commit/9063c261dfd02fa55c7c2b7d35983db11b580032))
+
+
+### Bug Fixes
+
+* mint the status post read token with pull request read ([#3688](https://github.com/dryvist/ansible-proxmox-apps/issues/3688)) ([0569cf8](https://github.com/dryvist/ansible-proxmox-apps/commit/0569cf8e2fd489063bb962210375001cb672679a))
+* **ntfy_docker:** drop the hermes-all topic and name the ext-notify webhook leaf ([#3685](https://github.com/dryvist/ansible-proxmox-apps/issues/3685)) ([49f8659](https://github.com/dryvist/ansible-proxmox-apps/commit/49f86591606bfd830133600c55cfb08cc8e4b162))
+
 ## [5.49.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.49.0...v5.49.1) (2026-11-15)
 
 
