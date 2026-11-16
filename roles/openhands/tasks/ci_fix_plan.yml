@@ -1,0 +1,35 @@
+---
+# Plan the CI-fix automation writes from the declared bodies and the
+# automations the service already has (matched by name). Pure data, no API
+# call, so it is testable offline. `enabled` is set on create only: an
+# operator may switch an existing automation on, and the loader never undoes it.
+
+- name: Plan the CI-fix automation writes
+  vars:
+    _managed: [prompt, agent_profile_id, timeout, tags]
+  ansible.builtin.set_fact:
+    _openhands_ci_fix_plan: >-
+      {%- set ns = namespace(items=[]) -%}
+      {%- for body in _openhands_ci_fix_bodies -%}
+      {%-   set found = _openhands_ci_fix_existing | selectattr('name', 'equalto', body.name) | list -%}
+      {%-   if found | length == 0 -%}
+      {%-     set ns.items = ns.items + [{'name': body.name, 'action': 'create', 'id': '', 'changes': body}] -%}
+      {%-   else -%}
+      {%-     set current = found | first -%}
+      {%-     set changes = namespace(d={}) -%}
+      {%-     for key in _managed -%}
+      {%-       if current.get(key) != body[key] -%}
+      {%-         set changes.d = changes.d | combine({key: body[key]}) -%}
+      {%-       endif -%}
+      {%-     endfor -%}
+      {%-     set current_trigger = current.get('trigger') or {} -%}
+      {%-     set drift = namespace(any=false) -%}
+      {%-     for key, value in body.trigger.items() -%}
+      {%-       if current_trigger.get(key) != value -%}{%- set drift.any = true -%}{%- endif -%}
+      {%-     endfor -%}
+      {%-     if drift.any -%}{%- set changes.d = changes.d | combine({'trigger': body.trigger}) -%}{%- endif -%}
+      {%-     set ns.items = ns.items + [{'name': body.name, 'action': ('update' if changes.d else 'none'),
+                                         'id': current.id | string, 'changes': changes.d}] -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ ns.items }}

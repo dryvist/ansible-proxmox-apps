@@ -1,0 +1,60 @@
+---
+# Decide whether the CI-fix automation loader should run. This file never
+# fails the play: _openhands_ci_fix_ready is true only when the role is
+# enabled and OPENHANDS_CI_FIX_CONFIG parses as a JSON object, which then
+# lands in _openhands_ci_fix. Every skip path reports its reason through the
+# one debug message at the end.
+
+- name: Reset the CI-fix loader decision
+  ansible.builtin.set_fact:
+    _openhands_ci_fix_ready: false
+    _openhands_ci_fix_skip_reason: ""
+    _openhands_ci_fix_parsed: null
+
+- name: Skip the CI-fix automation loader when disabled
+  ansible.builtin.set_fact:
+    _openhands_ci_fix_ready: false
+    _openhands_ci_fix_skip_reason: "disabled"
+  when: not (openhands_ci_fix_enabled | bool)
+
+- name: Skip the CI-fix automation loader on an empty config
+  ansible.builtin.set_fact:
+    _openhands_ci_fix_ready: false
+    _openhands_ci_fix_skip_reason: "OPENHANDS_CI_FIX_CONFIG is empty"
+  when:
+    - openhands_ci_fix_enabled | bool
+    - openhands_ci_fix_config | trim | length == 0
+
+- name: Parse the CI-fix config as a JSON object
+  when:
+    - openhands_ci_fix_enabled | bool
+    - openhands_ci_fix_config | trim | length > 0
+  block:
+    - name: Record the parsed CI-fix config
+      ansible.builtin.set_fact:
+        _openhands_ci_fix_parsed: "{{ openhands_ci_fix_config | from_json }}"
+  rescue:
+    - name: Skip the CI-fix automation loader on a config that does not parse
+      ansible.builtin.set_fact:
+        _openhands_ci_fix_ready: false
+        _openhands_ci_fix_skip_reason: "OPENHANDS_CI_FIX_CONFIG is not a JSON object"
+
+- name: Skip the CI-fix automation loader on a config that is not an object
+  ansible.builtin.set_fact:
+    _openhands_ci_fix_ready: false
+    _openhands_ci_fix_skip_reason: "OPENHANDS_CI_FIX_CONFIG is not a JSON object"
+  when:
+    - _openhands_ci_fix_parsed is not none
+    - _openhands_ci_fix_parsed is not mapping
+
+- name: Mark the CI-fix automation loader ready with its config
+  ansible.builtin.set_fact:
+    _openhands_ci_fix_ready: true
+    _openhands_ci_fix: "{{ _openhands_ci_fix_parsed }}"
+  when:
+    - _openhands_ci_fix_parsed is mapping
+
+- name: Report the CI-fix automation loader skip reason
+  ansible.builtin.debug:
+    msg: "CI-fix automations skipped: {{ _openhands_ci_fix_skip_reason }}"
+  when: not (_openhands_ci_fix_ready | default(false) | bool)

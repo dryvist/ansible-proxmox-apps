@@ -1,0 +1,88 @@
+---
+# Create or update the CI-fix automations through the automation service API
+# on this host (openhands-automation: GET and PATCH under /v1, create through
+# POST /v1/preset/prompt). Check mode reads and plans but writes nothing.
+
+- name: Read the backend key for the automation API
+  ansible.builtin.slurp:
+    src: "{{ openhands_backend_key_file }}"
+  register: _openhands_ci_fix_key
+  no_log: true
+
+- name: List the existing automations
+  ansible.builtin.uri:
+    url: "{{ _openhands_ci_fix_api }}?limit=100"
+    method: GET
+    headers:
+      X-Session-API-Key: "{{ _openhands_ci_fix_key.content | b64decode | trim }}"
+    return_content: true
+    status_code: 200
+  register: _openhands_ci_fix_list
+  check_mode: false
+  changed_when: false
+  no_log: true
+
+- name: Record the existing automations
+  ansible.builtin.set_fact:
+    _openhands_ci_fix_existing: "{{ _openhands_ci_fix_list.json.automations | default([]) }}"
+
+- name: Plan the CI-fix automation writes
+  ansible.builtin.include_tasks: ci_fix_plan.yml
+
+- name: Report the CI-fix automation plan
+  ansible.builtin.debug:
+    msg: >-
+      {{ (_openhands_ci_fix_plan | map(attribute='name')
+          | zip(_openhands_ci_fix_plan | map(attribute='action')) | list)
+         if not ansible_check_mode else _openhands_ci_fix_plan }}
+
+- name: Create the missing CI-fix automations
+  ansible.builtin.uri:
+    url: "{{ _openhands_ci_fix_api }}/preset/prompt"
+    method: POST
+    headers:
+      X-Session-API-Key: "{{ _openhands_ci_fix_key.content | b64decode | trim }}"
+    body_format: json
+    # The prompt preset rejects unknown fields, so tags follow in a PATCH.
+    body: "{{ item.changes | dict2items | rejectattr('key', 'equalto', 'tags') | items2dict }}"
+    status_code: 201
+  loop: "{{ _openhands_ci_fix_plan | selectattr('action', 'equalto', 'create') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _openhands_ci_fix_created
+  changed_when: true
+  when: not ansible_check_mode
+  no_log: true
+
+- name: Tag the created CI-fix automations
+  ansible.builtin.uri:
+    url: "{{ _openhands_ci_fix_api }}/{{ item.json.id }}"
+    method: PATCH
+    headers:
+      X-Session-API-Key: "{{ _openhands_ci_fix_key.content | b64decode | trim }}"
+    body_format: json
+    body:
+      tags: "{{ item.item.changes.tags }}"
+    status_code: 200
+  loop: "{{ _openhands_ci_fix_created.results | default([]) | selectattr('json', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  changed_when: true
+  when: not ansible_check_mode
+  no_log: true
+
+- name: Update the drifted CI-fix automations
+  ansible.builtin.uri:
+    url: "{{ _openhands_ci_fix_api }}/{{ item.id }}"
+    method: PATCH
+    headers:
+      X-Session-API-Key: "{{ _openhands_ci_fix_key.content | b64decode | trim }}"
+    body_format: json
+    body: "{{ item.changes }}"
+    status_code: 200
+  loop: "{{ _openhands_ci_fix_plan | selectattr('action', 'equalto', 'update') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: true
+  when: not ansible_check_mode
+  no_log: true
