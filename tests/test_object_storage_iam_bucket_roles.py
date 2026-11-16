@@ -10,7 +10,7 @@ ROLE = ROOT / "roles" / "object_storage"
 DEFAULTS = ROLE / "defaults" / "main" / "00-core.yml"
 IAM = ROLE / "tasks" / "iam.yml"
 BUCKET_IAM = ROLE / "tasks" / "iam_bucket.yml"
-BUCKET_TASKS = ROLE / "tasks" / "main.yml"
+BUCKET_TASKS = ROLE / "tasks" / "buckets.yml"
 
 
 def _task(tasks, name):

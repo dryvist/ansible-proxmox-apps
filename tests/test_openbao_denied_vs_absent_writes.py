@@ -332,7 +332,7 @@ class KvRetentionProbe(unittest.TestCase):
 class ObjectStorageProbes(unittest.TestCase):
     """head-bucket returns 403 and 404 with no rc-level distinction."""
 
-    REL = ROOT / "roles/object_storage/tasks/main.yml"
+    REL = ROOT / "roles/object_storage/tasks/buckets.yml"
     CASES = [
         ("Check which default buckets already exist", "object_storage_bucket_check"),
         ("Read current versioning status", "object_storage_versioning_current"),
