@@ -199,6 +199,7 @@
     label: "{{ item.name }}"
   environment: "{{ object_storage_aws_env }}"
   register: object_storage_bucket_check
+  check_mode: false
   changed_when: false
   # A DENIED read is not an ABSENT one: `head-bucket` and the `get-*` calls
   # return 403 and 404 with no rc-level distinction, so tolerate ONLY the
@@ -211,6 +212,17 @@
     'NoSuchBucket' not in (object_storage_bucket_check.stderr | default('')) and
     'NoSuchLifecycleConfiguration' not in (object_storage_bucket_check.stderr | default(''))
   no_log: true
+
+- name: Report create missing default buckets (check mode)
+  ansible.builtin.debug:
+    msg: "Check mode: would create default bucket {{ item.item.name }}"
+  loop: "{{ object_storage_bucket_check.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - ansible_check_mode
+    - item.rc != 0
+  changed_when: true
 
 - name: Create missing default buckets
   ansible.builtin.command:
@@ -231,6 +243,7 @@
     label: "{{ item.name }}"
   environment: "{{ object_storage_aws_env }}"
   register: object_storage_versioning_current
+  check_mode: false
   changed_when: false
   # Denied vs absent: see the note on the bucket-existence probe above.
   failed_when: >-
@@ -241,6 +254,17 @@
     'NoSuchBucket' not in (object_storage_versioning_current.stderr | default('')) and
     'NoSuchLifecycleConfiguration' not in (object_storage_versioning_current.stderr | default(''))
   no_log: true
+
+- name: Report enable versioning where not already enabled (check mode)
+  ansible.builtin.debug:
+    msg: "Check mode: would enable versioning on bucket {{ item.item.name }}"
+  loop: "{{ object_storage_versioning_current.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - ansible_check_mode
+    - "'Enabled' not in (item.stdout | default(''))"
+  changed_when: true
 
 - name: Enable versioning where not already enabled
   ansible.builtin.command:
@@ -270,6 +294,7 @@
     label: "{{ item.name }}"
   environment: "{{ object_storage_aws_env }}"
   register: object_storage_policy_current
+  check_mode: false
   changed_when: false
   failed_when: false
   no_log: true
@@ -290,6 +315,19 @@
     label: "{{ item.name }}"
   vars:
     bucket: "{{ item.name }}"
+
+- name: Report set anonymous download policy where missing (check mode)
+  ansible.builtin.debug:
+    msg: "Check mode: would set the anonymous download policy on bucket {{ item.item.name }}"
+  loop: "{{ object_storage_policy_current.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - ansible_check_mode
+    - >-
+        item.rc != 0 or
+        's3:GetObject' not in (item.stdout | default(''))
+  changed_when: true
 
 - name: Set anonymous download policy where missing
   ansible.builtin.command:
@@ -329,6 +367,7 @@
     label: "{{ item.name }}"
   environment: "{{ object_storage_aws_env }}"
   register: object_storage_lifecycle_current
+  check_mode: false
   changed_when: false
   # Denied vs absent: see the note on the bucket-existence probe above.
   failed_when: >-
@@ -350,6 +389,32 @@
   loop: "{{ object_storage_default_buckets | selectattr('versioning', 'defined') | selectattr('versioning') | list }}"
   loop_control:
     label: "{{ item.name }}"
+
+- name: Report apply the noncurrent-version expiration rule (check mode)
+  ansible.builtin.debug:
+    msg: "Check mode: would apply the noncurrent-version expiration rule to bucket {{ item.item.name }}"
+  loop: "{{ object_storage_lifecycle_current.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - ansible_check_mode
+    - >-
+        item.rc != 0 or
+        (item.stdout | default('')) is not search('NoncurrentVersionExpiration') or
+        (
+          item.item.noncurrent_expiration_days is defined and
+          (
+            (item.stdout | from_json).Rules
+            | selectattr('NoncurrentVersionExpiration', 'defined')
+            | map(attribute='NoncurrentVersionExpiration.NoncurrentDays')
+            | first | default(-1)
+          ) != item.item.noncurrent_expiration_days
+        ) or
+        (
+          (item.item.expire_delete_markers | default(false)) and
+          (item.stdout | default('')) is not search('ExpiredObjectDeleteMarker')
+        )
+  changed_when: true
 
 - name: Apply the noncurrent-version expiration rule
   ansible.builtin.command:

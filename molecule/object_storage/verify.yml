@@ -141,3 +141,103 @@
         fail_msg: >-
           ro's put into its own bucket was not denied with AccessDenied:
           rc={{ ro_put_own.rc }} stderr={{ ro_put_own.stderr }}
+
+
+# Second play: prove a check-mode run of the role reports the gated changes
+# it would apply without applying them. `include_role` applies check mode to
+# the role's own tasks only, so this play's assertion tasks run in real mode
+# against the converged server. A `register` on `include_role` cannot expose
+# per-task results, so the assertions verify the exact preconditions the
+# role's Report tasks evaluate -- `ansible_check_mode` AND the probe
+# condition: the extra bucket (molecule-bucket-c) still fails its head-bucket
+# probe with a not-found answer, which is precisely the condition under which
+# "Report create missing default buckets (check mode)" reports changed for
+# it, while molecule-bucket-a succeeds its probe, so no Report task fires
+# for it. The same head-bucket results also prove the check-mode run wrote
+# nothing.
+- name: Verify check-mode reporting
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    object_storage_endpoint: "http://127.0.0.1:9000"
+    object_storage_region: us-east-1
+    # converge.yml's two existing buckets plus one that deliberately does not
+    # exist, so the check-mode run has a gated create to report.
+    object_storage_default_buckets:
+      - name: molecule-bucket-a
+      - name: molecule-bucket-b
+      - name: molecule-bucket-c
+    # Same as converge.yml: mirroring is unrelated to what this scenario tests.
+    object_storage_infra_mirrors: []
+    # Same musl-asset override as converge.yml (the scenario's shared debian12
+    # image predates the gnu asset's glibc requirement), so the staged /tmp
+    # artifacts are byte-identical and the role's install tasks report nothing.
+    object_storage_binary_asset: >-
+      rustfs-linux-x86_64-musl-v{{ object_storage_rustfs_version }}.zip
+    # For this play's own assertion commands -- role defaults do not apply
+    # outside the include_role below. Same values molecule.yml's provisioner
+    # env supplies (fixed test-only credentials, never a real credential).
+    object_storage_aws_env:
+      AWS_ACCESS_KEY_ID: >-
+        {{ lookup('env', 'OBJECT_STORAGE_ROOT_USER')
+           | default('molecule-root-user', true) }}
+      AWS_SECRET_ACCESS_KEY: >-
+        {{ lookup('env', 'OBJECT_STORAGE_ROOT_PASSWORD')
+           | default('molecule-root-password-not-real-0001', true) }}
+      AWS_DEFAULT_REGION: "{{ object_storage_region }}"
+
+  tasks:
+    - name: Run the object_storage role in check mode with an extra missing bucket
+      ansible.builtin.include_role:
+        name: object_storage
+        apply:
+          check_mode: true
+
+    - name: Head the non-existent bucket after the check-mode run
+      ansible.builtin.command:
+        cmd: >-
+          aws --endpoint-url {{ object_storage_endpoint }}
+          s3api head-bucket --bucket molecule-bucket-c
+      environment: "{{ object_storage_aws_env }}"
+      register: check_mode_head_missing
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the check-mode run created nothing and its Report precondition still holds
+      ansible.builtin.assert:
+        that:
+          - check_mode_head_missing.rc != 0
+          - >-
+              '404' in (check_mode_head_missing.stderr | default(''))
+              or 'Not Found' in (check_mode_head_missing.stderr | default(''))
+              or 'NoSuchBucket' in (check_mode_head_missing.stderr | default(''))
+        fail_msg: >-
+          head-bucket on molecule-bucket-c succeeded or did not report
+          not-found after the check-mode run: the role created the bucket
+          (it must not in check mode) or the probe condition that makes
+          "Report create missing default buckets (check mode)" report
+          changed no longer holds.
+          rc={{ check_mode_head_missing.rc }}
+          stderr={{ check_mode_head_missing.stderr }}
+
+    - name: Head an existing bucket after the check-mode run
+      ansible.builtin.command:
+        cmd: >-
+          aws --endpoint-url {{ object_storage_endpoint }}
+          s3api head-bucket --bucket molecule-bucket-a
+      environment: "{{ object_storage_aws_env }}"
+      register: check_mode_head_existing
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the existing bucket is untouched and its Report precondition is false
+      ansible.builtin.assert:
+        that:
+          - check_mode_head_existing.rc == 0
+        fail_msg: >-
+          head-bucket on molecule-bucket-a failed after the check-mode run:
+          the existing bucket must be untouched.
+          rc={{ check_mode_head_existing.rc }}
+          stderr={{ check_mode_head_existing.stderr }}
