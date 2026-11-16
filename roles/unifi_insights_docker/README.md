@@ -56,8 +56,8 @@ existing database volume.
 
 ## Container settings
 
-Set in `defaults/main.yml`. `AUTH_ENABLED` stays `true`. MaxMind and
-AbuseIPDB keys are not configured.
+Set in `defaults/main.yml`. `AUTH_ENABLED` is `false`: the Authelia-gated route is the only login, and
+the wall kiosk route is IP-scoped. MaxMind and AbuseIPDB keys are not configured.
 
 ## Data
 
