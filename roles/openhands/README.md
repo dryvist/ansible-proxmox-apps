@@ -104,10 +104,23 @@ requests (`openhands_ci_fix_gate_workflows`) from event source
 
 The converge environment supplies `OPENHANDS_CI_FIX_CONFIG`, a JSON object with
 `owners` (repository owners), `profile_public` and `profile_private` (agent
-profile UUIDs). When the variable is empty or not a JSON object, the role skips
-this part and says why. Matching is by name. Only the prompt, profile, timeout,
-tags and trigger are managed, so switching an automation on by hand survives
-later converges. Check mode prints the plan and writes nothing.
+profile names). When the variable is empty or not a JSON object, the role skips
+this part and says why.
+
+The role lists the agent profiles through the agent server API on the host and
+resolves both names to their ids. It reports which profiles it found. A
+missing profile stops the run, with its name, before any automation write.
+With `openhands_ci_fix_profiles_create: true` (default `false`), the role
+instead creates each missing profile. It saves an LLM profile of the same name
+first, on model `litellm_proxy/<route>` with `openhands_router_base_url` and the
+key from `openhands_router_key_file`. Then it saves an agent profile that
+references it. The config then also needs `route_public` and `route_private`,
+the router model aliases for the two profiles.
+
+Automations match by name. Only the prompt, profile, timeout, tags and trigger
+are managed, so switching an automation on by hand survives later converges.
+Check mode prints the profile report and the plan and writes nothing; a profile
+it would create shows as `to-create:<name>` in the plan.
 
 ## State
 

@@ -1,0 +1,97 @@
+---
+# Resolve the two CI-fix agent profiles by name through the agent server API on
+# this host (GET and POST /api/agent-profiles, POST /api/profiles for LLM
+# profiles). With openhands_ci_fix_profiles_create, each missing profile is
+# created with an LLM profile of the same name on its router route. Check mode
+# reports and writes nothing. Expects _openhands_ci_fix_key (ci_fix_apply.yml).
+
+- name: List the agent profiles
+  ansible.builtin.uri:
+    url: "{{ _openhands_agent_api }}/agent-profiles"
+    method: GET
+    headers:
+      X-Session-API-Key: "{{ _openhands_ci_fix_key.content | b64decode | trim }}"
+    status_code: 200
+  register: _openhands_ci_fix_profile_list
+  check_mode: false
+  changed_when: false
+  no_log: true
+
+- name: Resolve the configured CI-fix profiles
+  ansible.builtin.include_tasks: ci_fix_profile_resolve.yml
+  vars:
+    _openhands_ci_fix_profiles: "{{ _openhands_ci_fix_profile_list.json.profiles }}"
+    _openhands_ci_fix_require: "{{ not openhands_ci_fix_profiles_create }}"
+
+- name: Report the CI-fix profiles check mode would create
+  ansible.builtin.set_fact:
+    _openhands_ci_fix_profile_ids: >-
+      {{ _openhands_ci_fix_profile_ids | combine(dict(_openhands_ci_fix_profile_missing
+         | zip(_openhands_ci_fix_profile_missing | map('regex_replace', '^', 'to-create:')))) }}
+  when:
+    - ansible_check_mode
+    - _openhands_ci_fix_profile_missing | length > 0
+
+- name: Create the missing CI-fix profiles
+  when:
+    - not ansible_check_mode
+    - _openhands_ci_fix_profile_missing | length > 0
+  vars:
+    _routes: >-
+      {{ {_openhands_ci_fix.profile_public: _openhands_ci_fix.route_public | default(''),
+          _openhands_ci_fix.profile_private: _openhands_ci_fix.route_private | default('')} }}
+  block:
+    - name: Read the router key for the LLM profiles
+      ansible.builtin.slurp:
+        src: "{{ openhands_router_key_file }}"
+      register: _openhands_ci_fix_router_key
+      no_log: true
+
+    - name: Save an LLM profile on each missing profile's route
+      ansible.builtin.uri:
+        url: "{{ _openhands_agent_api }}/profiles/{{ item }}"
+        method: POST
+        headers:
+          X-Session-API-Key: "{{ _openhands_ci_fix_key.content | b64decode | trim }}"
+        body_format: json
+        body:
+          llm:
+            model: "litellm_proxy/{{ _routes[item] }}"
+            base_url: "{{ openhands_router_base_url }}"
+            api_key: "{{ _openhands_ci_fix_router_key.content | b64decode | trim }}"
+          include_secrets: true
+        status_code: 201
+      loop: "{{ _openhands_ci_fix_profile_missing }}"
+      changed_when: true
+      no_log: true
+
+    - name: Save an agent profile on each new LLM profile
+      ansible.builtin.uri:
+        url: "{{ _openhands_agent_api }}/agent-profiles/{{ item }}"
+        method: POST
+        headers:
+          X-Session-API-Key: "{{ _openhands_ci_fix_key.content | b64decode | trim }}"
+        body_format: json
+        body:
+          agent_kind: openhands
+          llm_profile_ref: "{{ item }}"
+        status_code: 201
+      loop: "{{ _openhands_ci_fix_profile_missing }}"
+      changed_when: true
+      no_log: true
+
+    - name: List the agent profiles after creation
+      ansible.builtin.uri:
+        url: "{{ _openhands_agent_api }}/agent-profiles"
+        method: GET
+        headers:
+          X-Session-API-Key: "{{ _openhands_ci_fix_key.content | b64decode | trim }}"
+        status_code: 200
+      register: _openhands_ci_fix_profile_list
+      no_log: true
+
+    - name: Resolve the CI-fix profiles after creation
+      ansible.builtin.include_tasks: ci_fix_profile_resolve.yml
+      vars:
+        _openhands_ci_fix_profiles: "{{ _openhands_ci_fix_profile_list.json.profiles }}"
+        _openhands_ci_fix_require: true
