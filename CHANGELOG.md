@@ -1,5 +1,29 @@
 # Changelog
 
+## [5.54.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.53.1...v5.54.0) (2026-11-16)
+
+
+### Features
+
+* **agent:** autonomous opencode-local run j-3e12e6443b917d1d ([#3746](https://github.com/dryvist/ansible-proxmox-apps/issues/3746)) ([5b6b4f7](https://github.com/dryvist/ansible-proxmox-apps/commit/5b6b4f7b1717832632a164fd4b9fe8fb618432e8))
+* **agent:** autonomous opencode-local run j-445128b0f9421751 ([#3747](https://github.com/dryvist/ansible-proxmox-apps/issues/3747)) ([97a2433](https://github.com/dryvist/ansible-proxmox-apps/commit/97a2433f112cf94af0e5c25832a37cccbfd1d43e))
+* **agent:** autonomous opencode-local run j-dcafeb02718407f0 ([#3749](https://github.com/dryvist/ansible-proxmox-apps/issues/3749)) ([d2664d1](https://github.com/dryvist/ansible-proxmox-apps/commit/d2664d174e7a4187b2d64229829468d11b17a98f))
+* **agent:** opencode-local run j-3e12e6443b917d1d ([5b6b4f7](https://github.com/dryvist/ansible-proxmox-apps/commit/5b6b4f7b1717832632a164fd4b9fe8fb618432e8))
+* **agent:** opencode-local run j-445128b0f9421751 ([97a2433](https://github.com/dryvist/ansible-proxmox-apps/commit/97a2433f112cf94af0e5c25832a37cccbfd1d43e))
+* **agent:** opencode-local run j-dcafeb02718407f0 ([d2664d1](https://github.com/dryvist/ansible-proxmox-apps/commit/d2664d174e7a4187b2d64229829468d11b17a98f))
+* **object_storage:** set the RustFS drive timeout profile ([#3741](https://github.com/dryvist/ansible-proxmox-apps/issues/3741)) ([8b58131](https://github.com/dryvist/ansible-proxmox-apps/commit/8b58131d16b03934084a2aa354c4e6e172b42302))
+* **postgres:** manage max_connections and shared_buffers ([#3739](https://github.com/dryvist/ansible-proxmox-apps/issues/3739)) ([3e992ae](https://github.com/dryvist/ansible-proxmox-apps/commit/3e992ae6f1fd7c8c7dccdc8f571465e21de59946))
+* **vikunja:** add selectors for the token loop and the OpenHands trigger ([#3729](https://github.com/dryvist/ansible-proxmox-apps/issues/3729)) ([9d119c9](https://github.com/dryvist/ansible-proxmox-apps/commit/9d119c91d708981b5c8893ff907832ccb8e8ffb5))
+
+
+### Bug Fixes
+
+* **vikunja:** give token fields and decisions separate set_fact tasks ([#3732](https://github.com/dryvist/ansible-proxmox-apps/issues/3732)) ([6465d65](https://github.com/dryvist/ansible-proxmox-apps/commit/6465d6569fa5661c21b805b241c9ad1f53fb3bd4))
+* **vikunja:** read the tier account effective permission from the response header ([#3724](https://github.com/dryvist/ansible-proxmox-apps/issues/3724)) ([2098f17](https://github.com/dryvist/ansible-proxmox-apps/commit/2098f17d9e9cac3896906236c4a517501775281b))
+* **vikunja:** read the tier's effective permission from the response header ([2098f17](https://github.com/dryvist/ansible-proxmox-apps/commit/2098f17d9e9cac3896906236c4a517501775281b))
+* **vikunja:** resolve token fields and decisions in separate set_fact tasks ([6465d65](https://github.com/dryvist/ansible-proxmox-apps/commit/6465d6569fa5661c21b805b241c9ad1f53fb3bd4))
+* **zammad:** read the agent-tier token in check mode ([#3738](https://github.com/dryvist/ansible-proxmox-apps/issues/3738)) ([83fb1d4](https://github.com/dryvist/ansible-proxmox-apps/commit/83fb1d434d0c98b6185c8a1aa1323588de021bec))
+
 ## [5.53.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.53.0...v5.53.1) (2026-11-16)
 
 
