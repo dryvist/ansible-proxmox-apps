@@ -44,8 +44,12 @@ Read from the apps OpenBao domain through `bao_apps_secrets`, in
 | --- | --- | --- |
 | `unifi_insights_postgres_password` | `POSTGRES_PASSWORD`, which also keys the embedded database | yes |
 | `unifi_insights_secret_key` | `SECRET_KEY` | yes |
-| `UNIFI_API` | `UNIFI_HOST`, the controller address the unpoller role reads | yes |
-| `unifi_insights_unifi_api_key` | `UNIFI_API_KEY`, omitted when empty | no |
+| `UNIFI_API` | `UNIFI_HOST`, the controller address the unpoller role reads | no |
+| `unifi_insights_unifi_api_key` | `UNIFI_API_KEY` | no |
+
+The controller variables (`UNIFI_HOST`, `UNIFI_SITE`, `UNIFI_VERIFY_SSL`,
+`UNIFI_API_KEY`) are rendered only when `unifi_insights_unifi_api_key` is
+set. Without it the container runs syslog-only.
 
 Changing `unifi_insights_postgres_password` after first start breaks the
 existing database volume.
