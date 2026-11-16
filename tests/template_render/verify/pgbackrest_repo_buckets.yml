@@ -1,0 +1,83 @@
+---
+# =============================================================================
+# pgbackrest.conf repo bucket names (roles/postgres/defaults/main/02-pgbackrest.yml)
+# =============================================================================
+# The defaults are the single source of what each repo writes to, and repo2
+# used to derive its bucket name from repo1's variable — so a rename of
+# postgres_backup_s3_bucket would silently move the offsite repo with it.
+# This loads the role's real defaults, asserts the two bucket names, and
+# renders pgbackrest.conf.j2 with repo2 enabled to prove the config file
+# carries both names. A copy of the values mirrored here would pass whatever
+# this file happened to say and prove nothing about what the role deploys.
+- name: Verify the pgBackRest repo1 and repo2 bucket names in pgbackrest.conf
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _template_dir: "../../../roles/postgres/templates"
+
+  tasks:
+    # Loaded from the role rather than mirrored here on purpose: the thing
+    # under test IS the role's own default expressions.
+    - name: Load the real postgres role defaults
+      ansible.builtin.include_vars:
+        dir: "../../../roles/postgres/defaults/main"
+
+    # Both set_fact, not task vars: the include_vars above outranks task vars,
+    # so a vars: block on the render task would lose to the loaded default.
+    - name: Pin the render inputs the real defaults leave unset or off
+      ansible.builtin.set_fact:
+        # postgres_data_dir resolves from the pinned cluster version offline.
+        postgres_cluster_version: 18
+        # repo2 is off by default, so enable it locally for the render: the
+        # assertion below is on the lines the template emits, and those only
+        # exist while repo2 is configured.
+        postgres_pgbackrest_repo2_enabled: true
+
+    - name: Assert the defaults name the two repos' buckets separately
+      ansible.builtin.assert:
+        that:
+          - postgres_backup_s3_bucket == 'dryvist-homelab-pgbackrest'
+          - postgres_backup_repo2_s3_bucket == 'dryvist-homelab-backups'
+          - postgres_backup_repo2_s3_bucket != postgres_backup_s3_bucket
+        fail_msg: >-
+          The pgBackRest bucket defaults moved: repo1={{ postgres_backup_s3_bucket }},
+          repo2={{ postgres_backup_repo2_s3_bucket }}. repo1 must be
+          dryvist-homelab-pgbackrest, and repo2 must keep dryvist-homelab-backups
+          as a value of its own instead of following repo1.
+
+    - name: Render pgbackrest.conf with the offsite repo2 enabled
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/pgbackrest.conf.j2"
+        dest: "{{ _fixture_dir }}/pgbackrest_repo_buckets.conf"
+        mode: "0644"
+
+    - name: Read the rendered configuration
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/pgbackrest_repo_buckets.conf"
+      register: _pgbr_buckets_raw
+
+    - name: Decode the rendered configuration
+      ansible.builtin.set_fact:
+        _pgbr_buckets: "{{ _pgbr_buckets_raw.content | b64decode }}"
+
+    - name: Assert the rendered config names both repos' buckets
+      ansible.builtin.assert:
+        that:
+          - "'repo1-s3-bucket=dryvist-homelab-pgbackrest' in _pgbr_buckets"
+          - "'repo2-s3-bucket=dryvist-homelab-backups' in _pgbr_buckets"
+        fail_msg: >-
+          pgbackrest.conf.j2 no longer renders repo1-s3-bucket=dryvist-homelab-pgbackrest
+          or repo2-s3-bucket=dryvist-homelab-backups; a renamed repo1 would leave
+          the offsite repo pointing at a bucket it is not written to.
+
+    - name: PgBackRest repo bucket-name verification PASSED
+      ansible.builtin.debug:
+        msg: |
+          repo bucket-name assertions passed against the real defaults:
+          - repo1 (RustFS) bucket is dryvist-homelab-pgbackrest
+          - repo2 (Backblaze B2) bucket keeps dryvist-homelab-backups
+          - both names render into pgbackrest.conf with repo2 enabled
