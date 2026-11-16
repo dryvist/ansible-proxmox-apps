@@ -1,0 +1,53 @@
+---
+# Validate the parsed CI-fix config and build the two automation request
+# bodies as a fact. No API calls are made here.
+
+- name: Assert the CI-fix config has the expected shape
+  vars:
+    _uuid: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  ansible.builtin.assert:
+    that:
+      - _openhands_ci_fix.owners is sequence and _openhands_ci_fix.owners is not string
+      - _openhands_ci_fix.owners | length > 0
+      - _openhands_ci_fix.owners | reject('string') | list | length == 0
+      - _openhands_ci_fix.profile_public is string
+      - _openhands_ci_fix.profile_public is match(_uuid)
+      - _openhands_ci_fix.profile_private is string
+      - _openhands_ci_fix.profile_private is match(_uuid)
+    fail_msg: >-
+      The CI-fix config must have a non-empty owners list of strings and UUID
+      profile_public and profile_private values.
+    quiet: true
+
+- name: Render the CI-fix trigger filter for each visibility
+  ansible.builtin.set_fact:
+    _openhands_ci_fix_filter: >-
+      workflow_run.conclusion == 'failure'
+      && contains({{ openhands_ci_fix_gate_workflows | to_json | replace('"', "'") }}, workflow_run.name)
+      && length(workflow_run.pull_requests) > `0`
+      && workflow_run.head_repository.full_name == workflow_run.repository.full_name
+      && repository.private == `PRIVATE`
+      && contains({{ _openhands_ci_fix.owners | to_json | replace('"', "'") }}, repository.owner.login)
+
+- name: Build the CI-fix automation request bodies
+  vars:
+    _trigger:
+      type: event
+      source: "{{ openhands_ci_fix_event_source }}"
+      "on": workflow_run.completed
+      destination: continue_conversation
+      subject_key_expr: >-
+        join('#', [repository.full_name, to_string(workflow_run.pull_requests[0].number), workflow_run.name])
+    _common:
+      enabled: false
+      timeout: 3600
+      tags: [ci-fix]
+      prompt: "{{ openhands_ci_fix_prompt }}"
+  ansible.builtin.set_fact:
+    _openhands_ci_fix_bodies:
+      - >-
+        {{ _common | combine({'name': 'ci-fix-public', 'agent_profile_id': _openhands_ci_fix.profile_public,
+           'trigger': _trigger | combine({'filter': _openhands_ci_fix_filter | replace('PRIVATE', 'false')})}) }}
+      - >-
+        {{ _common | combine({'name': 'ci-fix-private', 'agent_profile_id': _openhands_ci_fix.profile_private,
+           'trigger': _trigger | combine({'filter': _openhands_ci_fix_filter | replace('PRIVATE', 'true')})}) }}

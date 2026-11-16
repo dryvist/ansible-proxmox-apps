@@ -94,6 +94,21 @@ enabled. No unit reads that file.
   and model alias the LLM profile uses.
 - `openhands_secrets_dir`: the root-only directory of the generated secrets.
 
+## CI-fix automations
+
+With `openhands_ci_fix_enabled: true` and the service enabled, the role creates
+or updates two event automations, `ci-fix-public` and `ci-fix-private`, through
+the automation service API. They react to failed `CI Gate` runs on pull
+requests (`openhands_ci_fix_gate_workflows`) from event source
+`openhands_ci_fix_event_source`, and they are created disabled.
+
+The converge environment supplies `OPENHANDS_CI_FIX_CONFIG`, a JSON object with
+`owners` (repository owners), `profile_public` and `profile_private` (agent
+profile UUIDs). When the variable is empty or not a JSON object, the role skips
+this part and says why. Matching is by name. Only the prompt, profile, timeout,
+tags and trigger are managed, so switching an automation on by hand survives
+later converges. Check mode prints the plan and writes nothing.
+
 ## State
 
 `openhands_state_dir` is both the state directory and the home of the
