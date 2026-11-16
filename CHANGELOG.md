@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.53.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.52.0...v5.53.0) (2026-11-16)
+
+
+### Features
+
+* **openhands:** resolve CI-fix agent profiles by name ([#3712](https://github.com/dryvist/ansible-proxmox-apps/issues/3712)) ([7ceb2da](https://github.com/dryvist/ansible-proxmox-apps/commit/7ceb2da5a56dbaa4e9d977f4b0014b1cf6a08ddb))
+* **vikunja:** let the clerk add labels, relations and comments ([#3713](https://github.com/dryvist/ansible-proxmox-apps/issues/3713)) ([0a2d496](https://github.com/dryvist/ansible-proxmox-apps/commit/0a2d496167da1fa30d8a91ca41d6fc96bfa23f56))
+
+
+### Bug Fixes
+
+* **deps:** update prometheus-homelab-rules digest to 5dea2df ([#3715](https://github.com/dryvist/ansible-proxmox-apps/issues/3715)) ([dc978c0](https://github.com/dryvist/ansible-proxmox-apps/commit/dc978c019fe82764b7f02a5bec3f51c7330f6fc6))
+
 ## [5.52.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.51.0...v5.52.0) (2026-11-16)
 
 
