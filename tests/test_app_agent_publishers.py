@@ -110,6 +110,7 @@ def test_app_agent_fields_are_read_only_from_their_exact_agent_tier_leaves():
     )
     assert zammad_uri["ansible.builtin.uri"]["url"].endswith("/v1/agent-tier/data/zammad-write")
     assert zammad_uri["ansible.builtin.uri"]["status_code"] == [200, 403, 404]
+    assert zammad_uri["check_mode"] is False
     assert zammad_uri["no_log"] is True
     assert zammad_assert["no_log"] is True
     for field in (

@@ -10,7 +10,7 @@ ROLE = ROOT / "roles" / "object_storage"
 DEFAULTS = ROLE / "defaults" / "main" / "00-core.yml"
 IAM = ROLE / "tasks" / "iam.yml"
 BUCKET_IAM = ROLE / "tasks" / "iam_bucket.yml"
-BUCKET_TASKS = ROLE / "tasks" / "main.yml"
+BUCKET_TASKS = ROLE / "tasks" / "buckets.yml"
 
 
 def _task(tasks, name):
@@ -34,6 +34,13 @@ class BucketRoleSelection(unittest.TestCase):
     def test_terrakube_is_reader_only_without_bucket_settings(self):
         bucket = next(bucket for bucket in _buckets() if bucket["name"] == "terrakube")
         self.assertEqual(bucket["iam_roles"], ["ro"])
+        self.assertFalse({"policy", "versioning"} & bucket.keys())
+
+    def test_pgbackrest_repository_bucket_is_unversioned_and_offsite_owner_managed(self):
+        bucket = next(
+            bucket for bucket in _buckets() if bucket["name"] == "dryvist-homelab-pgbackrest"
+        )
+        self.assertEqual(bucket["offsite_owner"], "pgbackrest")
         self.assertFalse({"policy", "versioning"} & bucket.keys())
 
     def test_bucket_ensure_does_not_recreate_or_configure_terrakube(self):

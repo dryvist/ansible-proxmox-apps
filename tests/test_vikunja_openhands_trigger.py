@@ -34,6 +34,7 @@ LABELS_CREATE = "Create the openhands status labels that are absent"
 READBACK = "Read the trigger project as the openhands bot"
 MCP_LOOP = "Mint and publish MCP and app-agent tokens per identity"
 RESOLVE = "Resolve token title, permissions, and OpenBao target for {{ vikunja_mcp_user.username }}"
+STATIC = "Resolve the static OpenBao fields for {{ vikunja_mcp_user.username }}"
 LOGIN = "Log in to Vikunja as {{ vikunja_mcp_user.username }}"
 
 
@@ -170,11 +171,12 @@ def test_the_row_resolves_to_its_own_title_permissions_and_bucket():
     # Nested template strings only render when trusted, like Ansible's own
     # trust model — mark the row before handing it to the Templar.
     variables["vikunja_mcp_user"] = _trusted(_row())
-    # A set_fact map's later keys see the earlier keys' results — thread them
-    # the same way Ansible's lazy templating does.
-    resolved = {}
-    for key, expression in find(RESOLVE, MCP_TOKEN_ONE)["ansible.builtin.set_fact"].items():
-        resolved[key] = _render(expression, {**variables, **resolved})
+    # set_fact renders every key before it sets any, so each key renders with
+    # only the variables in scope before the task.
+    resolved = {
+        key: _render(expression, variables)
+        for key, expression in find(RESOLVE, MCP_TOKEN_ONE)["ansible.builtin.set_fact"].items()
+    }
     assert resolved["vikunja_mcp_token_title"] == "openhands-trigger"
     assert resolved["vikunja_mcp_token_mount"] == "secret"
     assert resolved["vikunja_mcp_token_path"] == "apps/openhands-vikunja"
@@ -183,7 +185,7 @@ def test_the_row_resolves_to_its_own_title_permissions_and_bucket():
 
 
 def test_the_app_bucket_never_receives_the_shared_url_or_allowlist_fields():
-    static = find(RESOLVE, MCP_TOKEN_ONE)["ansible.builtin.set_fact"]["vikunja_mcp_token_static_fields"]
+    static = find(STATIC, MCP_TOKEN_ONE)["ansible.builtin.set_fact"]["vikunja_mcp_token_static_fields"]
     variables = {
         "vikunja_mcp_user": _row(),
         "vikunja_mcp_token_mount": "secret",

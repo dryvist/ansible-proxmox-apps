@@ -107,7 +107,7 @@ def test_tier_readbacks_cover_effective_permission_and_admin_refusal():
     reconcile = _yaml(ROOT / "roles/vikunja/tasks/agent_tier_reconcile.yml")
     reads = [t for t in reconcile if "/api/v1/projects/{{ item }}" in str(t.get("ansible.builtin.uri", ""))]
     assert reads and reads[0].get("no_log") is True
-    checks = [t for t in reconcile if "max_permission" in str(t.get("ansible.builtin.assert", ""))]
+    checks = [t for t in reconcile if "attribute='x_max_permission'" in str(t.get("ansible.builtin.assert", ""))]
     assert checks and "vikunja_agent_tier.share_permission" in str(checks[0])
 
     verify = _yaml(ROOT / "roles/zammad/tasks/verify_agent_write_rights.yml")

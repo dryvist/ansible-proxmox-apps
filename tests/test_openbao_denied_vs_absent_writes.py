@@ -332,7 +332,7 @@ class KvRetentionProbe(unittest.TestCase):
 class ObjectStorageProbes(unittest.TestCase):
     """head-bucket returns 403 and 404 with no rc-level distinction."""
 
-    REL = ROOT / "roles/object_storage/tasks/main.yml"
+    REL = ROOT / "roles/object_storage/tasks/buckets.yml"
     CASES = [
         ("Check which default buckets already exist", "object_storage_bucket_check"),
         ("Read current versioning status", "object_storage_versioning_current"),
@@ -383,7 +383,7 @@ class TechnitiumZoneList(unittest.TestCase):
         return _all(task["when"], variables)
 
     def test_an_invalid_token_fails_rather_than_using_the_heuristic(self):
-        # HTTP 200 with an error body -- the shape that caused Zammad #17246.
+        # HTTP 200 with an error body -- the shape that caused an earlier failure.
         self.assertTrue(
             self._fails({"status": 200, "json": {"status": "invalid-token"}})
         )

@@ -41,7 +41,7 @@ STATIC_CHECKSUM_RE = re.compile(
 KNOWN_OFFENDERS = frozenset(
     {
         "roles/glance/defaults/main.yml",
-        "roles/object_storage/defaults/main/00-core.yml",
+        "roles/object_storage/defaults/main/15-offsite.yml",
         "roles/vikunja/defaults/main/00-base.yml",
     }
 )

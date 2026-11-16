@@ -13,10 +13,15 @@
                 or vikunja_mcp_user.readonly | default(false)) else vikunja_rw_permissions) }}
     vikunja_mcp_token_mount: "{{ vikunja_mcp_user.openbao_mount | default(vikunja_token_openbao_mount) }}"
     vikunja_mcp_token_path: "{{ vikunja_mcp_user.openbao_path | default(vikunja_token_openbao_path) }}"
-    vikunja_mcp_token_field: "{{ vikunja_mcp_user.token_field | default(vikunja_mcp_user.kv_field | default('')) }}"
     vikunja_mcp_token_fields: >-
       {{ vikunja_mcp_user.kv_fields if vikunja_mcp_user.kv_fields is defined
-         else [vikunja_mcp_token_field] }}
+         else [vikunja_mcp_user.token_field | default(vikunja_mcp_user.kv_field | default(''))] }}
+  no_log: true
+
+# A separate task: set_fact renders every key before it sets any, so these
+# fields can read the mount and path resolved above only from a later task.
+- name: "Resolve the static OpenBao fields for {{ vikunja_mcp_user.username }}"
+  ansible.builtin.set_fact:
     vikunja_mcp_token_static_fields: >-
       {{ ({vikunja_url_openbao_key: vikunja_mcp_url}
           if (vikunja_mcp_token_mount == vikunja_token_openbao_mount
@@ -82,6 +87,11 @@
       {%- endif -%}
       {%- endfor -%}
       {{ _ns.ids }}
+  no_log: true
+
+# A separate task, so the decision reads this identity's comparison above.
+- name: "Decide whether a token with exactly its scopes exists for {{ vikunja_mcp_user.username }}"
+  ansible.builtin.set_fact:
     vikunja_mcp_token_exists: >-
       {{ vikunja_mcp_token_matching_existing | length > 0
          and vikunja_mcp_token_stale_ids | length == 0 }}
