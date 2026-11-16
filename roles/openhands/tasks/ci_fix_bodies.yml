@@ -1,23 +1,6 @@
 ---
-# Validate the parsed CI-fix config and build the two automation request
-# bodies as a fact. No API calls are made here.
-
-- name: Assert the CI-fix config has the expected shape
-  vars:
-    _uuid: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-  ansible.builtin.assert:
-    that:
-      - _openhands_ci_fix.owners is sequence and _openhands_ci_fix.owners is not string
-      - _openhands_ci_fix.owners | length > 0
-      - _openhands_ci_fix.owners | reject('string') | list | length == 0
-      - _openhands_ci_fix.profile_public is string
-      - _openhands_ci_fix.profile_public is match(_uuid)
-      - _openhands_ci_fix.profile_private is string
-      - _openhands_ci_fix.profile_private is match(_uuid)
-    fail_msg: >-
-      The CI-fix config must have a non-empty owners list of strings and UUID
-      profile_public and profile_private values.
-    quiet: true
+# Build the two automation request bodies as a fact from the validated config
+# and the resolved profile ids (_openhands_ci_fix_profile_ids). No API calls.
 
 - name: Render the CI-fix trigger filter for each visibility
   ansible.builtin.set_fact:
@@ -31,6 +14,7 @@
 
 - name: Build the CI-fix automation request bodies
   vars:
+    _ids: "{{ _openhands_ci_fix_profile_ids }}"
     _trigger:
       type: event
       source: "{{ openhands_ci_fix_event_source }}"
@@ -46,8 +30,8 @@
   ansible.builtin.set_fact:
     _openhands_ci_fix_bodies:
       - >-
-        {{ _common | combine({'name': 'ci-fix-public', 'agent_profile_id': _openhands_ci_fix.profile_public,
+        {{ _common | combine({'name': 'ci-fix-public', 'agent_profile_id': _ids[_openhands_ci_fix.profile_public],
            'trigger': _trigger | combine({'filter': _openhands_ci_fix_filter | replace('PRIVATE', 'false')})}) }}
       - >-
-        {{ _common | combine({'name': 'ci-fix-private', 'agent_profile_id': _openhands_ci_fix.profile_private,
+        {{ _common | combine({'name': 'ci-fix-private', 'agent_profile_id': _ids[_openhands_ci_fix.profile_private],
            'trigger': _trigger | combine({'filter': _openhands_ci_fix_filter | replace('PRIVATE', 'true')})}) }}

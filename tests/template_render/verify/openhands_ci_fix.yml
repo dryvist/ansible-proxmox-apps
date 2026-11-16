@@ -56,9 +56,8 @@
         file: "{{ playbook_dir }}/../../../roles/openhands/tasks/ci_fix_config.yml"
       vars:
         openhands_ci_fix_enabled: true
-        openhands_ci_fix_config: '{"owners":["example-org"],
-          "profile_public":"00000000-0000-0000-0000-000000000001",
-          "profile_private":"00000000-0000-0000-0000-000000000002"}'
+        openhands_ci_fix_config: >-
+          {"owners":["example-org"],"profile_public":"ci-public","profile_private":"ci-private"}
 
     - name: Assert the CI-fix loader is ready with the parsed config
       ansible.builtin.assert:
@@ -71,17 +70,66 @@
     - name: Verify the CI-fix shape assert rejects each malformed config
       ansible.builtin.include_tasks: openhands_ci_fix_shape_case.yml
       loop:
-        - owners: []
-          profile_public: "00000000-0000-0000-0000-000000000001"
-          profile_private: "00000000-0000-0000-0000-000000000002"
-        - owners: "example-org"
-          profile_public: "00000000-0000-0000-0000-000000000001"
-          profile_private: "00000000-0000-0000-0000-000000000002"
-        - owners: [example-org]
-          profile_public: "not-a-uuid"
-          profile_private: "00000000-0000-0000-0000-000000000002"
+        - {owners: [], profile_public: ci-public, profile_private: ci-private}
+        - {owners: example-org, profile_public: ci-public, profile_private: ci-private}
+        - {owners: [example-org], profile_public: "bad name", profile_private: ci-private}
+        - {owners: [example-org], profile_public: ci-same, profile_private: ci-same}
+        - {owners: [example-org], profile_public: ci-public, profile_private: ci-private, create: true}
       loop_control:
         loop_var: _ci_fix_case
+
+    - name: Resolve the CI-fix profiles when both exist
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../roles/openhands/tasks/ci_fix_profile_resolve.yml"
+      vars:
+        _openhands_ci_fix: {profile_public: ci-public, profile_private: ci-private}
+        _openhands_ci_fix_require: true
+        _openhands_ci_fix_profiles:
+          - {name: default, id: "00000000-0000-0000-0000-000000000009"}
+          - {name: ci-public, id: "00000000-0000-0000-0000-000000000001"}
+          - {name: ci-private, id: "00000000-0000-0000-0000-000000000002"}
+
+    - name: Assert both CI-fix profiles resolve to their ids
+      ansible.builtin.assert:
+        that:
+          - _openhands_ci_fix_profile_missing == []
+          - _openhands_ci_fix_profile_ids['ci-private'] == '00000000-0000-0000-0000-000000000002'
+        quiet: true
+
+    - name: Verify a missing CI-fix profile stops the run with its name
+      block:
+        - name: Resolve the CI-fix profiles with one missing
+          ansible.builtin.include_tasks:
+            file: "{{ playbook_dir }}/../../../roles/openhands/tasks/ci_fix_profile_resolve.yml"
+          vars:
+            _openhands_ci_fix: {profile_public: ci-public, profile_private: ci-private}
+            _openhands_ci_fix_require: true
+            _openhands_ci_fix_profiles: [{name: ci-public, id: "00000000-0000-0000-0000-000000000001"}]
+
+        - name: Fail if the missing profile was accepted
+          ansible.builtin.fail:
+            msg: "a missing CI-fix profile did not stop the run"
+      rescue:
+        - name: Confirm the stop names the missing profile
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Stop when a CI-fix profile is missing'
+              - "'ci-private' in ansible_failed_result.msg"
+            quiet: true
+
+    - name: Resolve the CI-fix profiles with one missing while creation is allowed
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../roles/openhands/tasks/ci_fix_profile_resolve.yml"
+      vars:
+        _openhands_ci_fix: {profile_public: ci-public, profile_private: ci-private}
+        _openhands_ci_fix_require: false
+        _openhands_ci_fix_profiles: [{name: ci-public, id: "00000000-0000-0000-0000-000000000001"}]
+
+    - name: Assert the missing CI-fix profile is listed for creation
+      ansible.builtin.assert:
+        that:
+          - _openhands_ci_fix_profile_missing == ['ci-private']
+        quiet: true
 
     - name: Build the CI-fix bodies from a well-formed config
       ansible.builtin.include_tasks:
@@ -89,8 +137,11 @@
       vars:
         _openhands_ci_fix:
           owners: [example-org, example-org-2]
-          profile_public: "00000000-0000-0000-0000-000000000001"
-          profile_private: "00000000-0000-0000-0000-000000000002"
+          profile_public: ci-public
+          profile_private: ci-private
+        _openhands_ci_fix_profile_ids:
+          ci-public: "00000000-0000-0000-0000-000000000001"
+          ci-private: "00000000-0000-0000-0000-000000000002"
 
     - name: Assert the CI-fix bodies carry the visibility, owners and profile
       ansible.builtin.assert:
