@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.53.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.53.0...v5.53.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* **vikunja:** pin the v2.8.0 release zip to its published digest ([#3719](https://github.com/dryvist/ansible-proxmox-apps/issues/3719)) ([5af9e09](https://github.com/dryvist/ansible-proxmox-apps/commit/5af9e09b8b8ef94d41aab861539ab384eb0b204f))
+
 ## [5.53.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.52.0...v5.53.0) (2026-11-16)
 
 
