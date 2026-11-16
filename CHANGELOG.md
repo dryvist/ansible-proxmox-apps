@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.52.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.51.0...v5.52.0) (2026-11-16)
+
+
+### Features
+
+* **openhands:** load the CI-fix event automations through the automation API ([#3708](https://github.com/dryvist/ansible-proxmox-apps/issues/3708)) ([c76595e](https://github.com/dryvist/ansible-proxmox-apps/commit/c76595e5990dae5f51aaa1b0a61e69aa0fe05985))
+
 ## [5.51.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.50.1...v5.51.0) (2026-11-16)
 
 
