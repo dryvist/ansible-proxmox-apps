@@ -1,5 +1,6 @@
 """App-agent tokens use bounded scopes and shared idempotent publication."""
 
+import re
 import subprocess
 
 from app_agent_helpers import ROOT, _render, _task, _vikunja_defaults, _yaml
@@ -25,8 +26,8 @@ def _token_include_runs(include_task, user, clerk_password=_MISSING, only_users=
 def test_vikunja_interactive_and_agent_tokens_publish_to_separate_leaves():
     defaults = _vikunja_defaults()
     tasks = _yaml("roles/vikunja/tasks/mcp_token_one.yml")
-    resolve = _task(tasks, "Resolve token title, permissions, and OpenBao target for {{ vikunja_mcp_user.username }}")
-    static_fields = resolve["ansible.builtin.set_fact"]["vikunja_mcp_token_static_fields"]
+    static = _task(tasks, "Resolve the static OpenBao fields for {{ vikunja_mcp_user.username }}")
+    static_fields = static["ansible.builtin.set_fact"]["vikunja_mcp_token_static_fields"]
     shared = defaults["vikunja_mcp_token_users"][0]
     base_variables = {
         "vikunja_url_openbao_key": "VIKUNJA_MCP_URL",
@@ -175,12 +176,9 @@ def test_vikunja_clerk_tokens_use_the_shared_idempotent_publisher():
         "VIKUNJA_MCP_TOKEN_VIKUNJA_CLERK",
         "VIKUNJA_MCP_HTTP_TOKEN_VIKUNJA_CLERK",
     ), strict=True):
-        resolved_field = _render(resolve["vikunja_mcp_token_field"], {"vikunja_mcp_user": row})
-        resolved_fields = _render(
-            resolve["vikunja_mcp_token_fields"],
-            {"vikunja_mcp_user": row, "vikunja_mcp_token_field": resolved_field},
-        )
-        assert resolved_field == expected_field
+        # set_fact renders every key before it sets any, so each key renders
+        # with only the identity row in scope.
+        resolved_fields = _render(resolve["vikunja_mcp_token_fields"], {"vikunja_mcp_user": row})
         assert resolved_fields == [expected_field]
 
     flow = _yaml("roles/vikunja/tasks/mcp_tokens.yml")
@@ -281,3 +279,13 @@ def test_vikunja_token_scope_validation_runs_without_publication():
 def test_vikunja_clerk_scope_adds_but_never_deletes():
     permissions = _vikunja_defaults()["vikunja_clerk_task_permissions"]
     assert not any("delete" in actions for actions in permissions.values())
+
+
+def test_vikunja_token_set_facts_never_read_a_key_they_set():
+    # set_fact renders every key before it sets any: a sibling reference is
+    # undefined for the first identity and the previous identity's value after.
+    for task in _yaml("roles/vikunja/tasks/mcp_token_one.yml"):
+        facts = task.get("ansible.builtin.set_fact") or {}
+        for key, expression in facts.items():
+            siblings = [other for other in facts if other != key and re.search(rf"\b{other}\b", str(expression))]
+            assert not siblings, f"{task['name']}: {key} reads {siblings}"
