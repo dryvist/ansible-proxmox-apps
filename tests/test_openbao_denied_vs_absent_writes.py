@@ -383,7 +383,7 @@ class TechnitiumZoneList(unittest.TestCase):
         return _all(task["when"], variables)
 
     def test_an_invalid_token_fails_rather_than_using_the_heuristic(self):
-        # HTTP 200 with an error body -- the shape that caused Zammad #17246.
+        # HTTP 200 with an error body -- the shape that caused an earlier failure.
         self.assertTrue(
             self._fails({"status": 200, "json": {"status": "invalid-token"}})
         )
