@@ -78,6 +78,59 @@
     quiet: true
   no_log: true
 
+# =========================================================================
+# Phase 8b: declared webhooks + triggers (off by default). Validated BEFORE
+# anything is staged or written, so a bad entry fails the play with the
+# entry's name and changes nothing.
+# =========================================================================
+- name: Validate each declared Zammad webhook entry
+  vars:
+    # Whitelist projection: the loop items land in task output on a failure,
+    # so secret-bearing keys are never part of what this task can print.
+    webhooks_inspectable: >-
+      {{ zammad_webhooks | map('dict2items')
+         | map('selectattr', 'key', 'in', ['name', 'endpoint', 'ssl_verify', 'active', 'note', 'custom_payload'])
+         | map('items2dict') | list }}
+  ansible.builtin.assert:
+    that:
+      - item.name is defined and item.name | string | length > 0
+      - item.endpoint is defined and item.endpoint is match('^https://')
+      - item.custom_payload is not defined or item.custom_payload is none
+        or ((item.custom_payload | regex_replace('#\{[^}]*\}', 'PLACEHOLDER')) | from_json) is mapping
+    fail_msg: >-
+      zammad_webhooks entry '{{ item.name | default('<unnamed>', true) }}' is
+      invalid: every entry needs a name, an endpoint starting with https://,
+      and a custom_payload that is valid JSON once its ticket placeholders are
+      replaced.
+  loop: "{{ webhooks_inspectable }}"
+
+- name: Validate each declared Zammad trigger entry
+  vars:
+    webhook_names: "{{ zammad_webhooks | selectattr('name', 'defined') | map(attribute='name') | list }}"
+  ansible.builtin.assert:
+    that:
+      - item.name is defined and item.name | string | length > 0
+      - item.condition is defined and item.condition is mapping and item.condition | length > 0
+      - item.webhook is defined and item.webhook in webhook_names
+    fail_msg: >-
+      zammad_triggers entry '{{ item.name | default('<unnamed>', true) }}' is
+      invalid: every entry needs a name, a non-empty condition hash, and a
+      webhook that names an entry in zammad_webhooks.
+  loop: "{{ zammad_triggers }}"
+
+- name: Require unique Zammad webhook and trigger names
+  vars:
+    webhook_names: "{{ zammad_webhooks | selectattr('name', 'defined') | map(attribute='name') | list }}"
+    trigger_names: "{{ zammad_triggers | selectattr('name', 'defined') | map(attribute='name') | list }}"
+  ansible.builtin.assert:
+    that:
+      - webhook_names | unique | length == webhook_names | length
+      - trigger_names | unique | length == trigger_names | length
+    fail_msg: >-
+      Duplicate names are not allowed. zammad_webhooks names:
+      {{ webhook_names | join(', ') | default('(none)', true) }};
+      zammad_triggers names: {{ trigger_names | join(', ') | default('(none)', true) }}.
+
 - name: Stage the bootstrap script on the target
   ansible.builtin.copy:
     src: zammad_bootstrap.rb
@@ -94,6 +147,34 @@
     group: "{{ zammad_group }}"
     mode: "0640"
     directory_mode: "0750"
+
+# A fragment the role no longer ships (renamed or reverted) must not stay
+# staged on the guest: the entrypoint evals every *.rb in the directory, so a
+# stale file would keep running after the role moved on. copy alone never
+# deletes, hence this sweep — driven by the role's CURRENT fragment list, so
+# objects the variables stop naming are never touched, only unshipped files.
+- name: Record the bootstrap fragments the role ships
+  vars:
+    role_fragments_glob: zammad_bootstrap/*.rb
+  ansible.builtin.set_fact:
+    zammad_bootstrap_shipped_fragments: >-
+      {{ query('ansible.builtin.fileglob', role_fragments_glob) | map('basename') | sort | list }}
+
+- name: List the staged Zammad bootstrap fragments on the target
+  ansible.builtin.find:
+    paths: "{{ zammad_root }}/ansible_bootstrap"
+    patterns: '*.rb'
+    file_type: file
+  register: zammad_bootstrap_staged_fragments
+
+- name: Remove staged bootstrap fragments the role no longer ships
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ zammad_bootstrap_staged_fragments.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  when: item.path | basename not in zammad_bootstrap_shipped_fragments
 
 - name: Run the idempotent Zammad bootstrap
   ansible.builtin.command:
@@ -134,6 +215,11 @@
     ZAMMAD_JOBS: "{{ zammad_jobs | to_json }}"
     ZAMMAD_SLAS: "{{ zammad_slas | to_json }}"
     ZAMMAD_SLA_CALENDAR_NAME: "{{ zammad_sla_calendar_name }}"
+    # Outbound webhooks + triggers: declarative data as JSON, empty lists by
+    # default (the seed then does nothing). Bearer values travel ONLY here —
+    # environment on a no_log task — never on a command line, file or diff.
+    ZAMMAD_WEBHOOKS: "{{ zammad_webhooks | to_json }}"
+    ZAMMAD_TRIGGERS: "{{ zammad_triggers | to_json }}"
     # Declared Settings + the history-deleting Scheduler rows to deactivate.
     # JSON so the YAML keeps Zammad's own value types (Integer, Array, String).
     ZAMMAD_SETTINGS: "{{ zammad_settings | to_json }}"
