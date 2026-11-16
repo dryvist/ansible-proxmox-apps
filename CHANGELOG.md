@@ -1,5 +1,20 @@
 # Changelog
 
+## [5.51.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.50.1...v5.51.0) (2026-11-16)
+
+
+### Features
+
+* **agent-sandbox:** supply the dispatcher repository owner allowlist ([#3702](https://github.com/dryvist/ansible-proxmox-apps/issues/3702)) ([792faad](https://github.com/dryvist/ansible-proxmox-apps/commit/792faad952e974ba12e5ac9885b9bd0f83fd7c46))
+* **agent:** zcode run j-f8051577f4575bf2 ([e819779](https://github.com/dryvist/ansible-proxmox-apps/commit/e819779657a3261684a8c99fbad2138dfa203b2f))
+* **zammad:** seed the webhooks and triggers through the bootstrap ([#3687](https://github.com/dryvist/ansible-proxmox-apps/issues/3687)) ([e819779](https://github.com/dryvist/ansible-proxmox-apps/commit/e819779657a3261684a8c99fbad2138dfa203b2f))
+
+
+### Bug Fixes
+
+* **devpi_server:** install sudo for the service-user init step ([#3701](https://github.com/dryvist/ansible-proxmox-apps/issues/3701)) ([ba75e1d](https://github.com/dryvist/ansible-proxmox-apps/commit/ba75e1d4608dfef31f16faef4d4d62615310bdce))
+* **pr-status-post:** name each accelerator lane and print whole percents ([#3704](https://github.com/dryvist/ansible-proxmox-apps/issues/3704)) ([9f80512](https://github.com/dryvist/ansible-proxmox-apps/commit/9f805123ec14f9874bc227e97b1fb0094b9d452b))
+
 ## [5.50.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.50.0...v5.50.1) (2026-11-15)
 
 
