@@ -1,0 +1,37 @@
+---
+# UniFi gateway syslog fan-out to the UniFi Insights VM. The connection sits on
+# the same forwarded stream as unifi_syslog_to_metrics, its pipeline keeps only
+# ubiquiti sourcetypes, and the output is a UDP syslog destination.
+
+- name: Render the unifi_insights_syslog_feed pipeline
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/pipelines/unifi_insights_syslog_feed/conf.yml.j2"
+    dest: "{{ _fixture_dir }}/unifi_insights_syslog_feed.yml"
+    mode: "0644"
+
+- name: Assert the UniFi Insights syslog fan-out is wired end to end
+  vars:
+    _unifi_insights_feed_text: >-
+      {{ lookup('file', _fixture_dir ~ '/unifi_insights_syslog_feed.yml') }}
+    _unifi_insights_feed: "{{ _unifi_insights_feed_text | from_yaml }}"
+    _s2s_connections: >-
+      {{ (_cribl_stream_inputs | from_yaml).inputs['tcpjson:in_cribl_s2s'].connections }}
+    _unifi_insights_connections: >-
+      {{ _s2s_connections | selectattr('output', 'equalto', 'unifi_insights_syslog') | list }}
+  ansible.builtin.assert:
+    that:
+      - _unifi_insights_connections | length == 1
+      - _unifi_insights_connections[0].pipeline == 'unifi_insights_syslog_feed'
+      - "'unifi_insights_syslog_feed' in _cribl_stream_defaults.cribl_stream_base_pipelines"
+      - _unifi_insights_feed.output == 'unifi_insights_syslog'
+      - _unifi_insights_feed.functions | map(attribute='id') | list == ['drop']
+      - _unifi_insights_feed.functions[0].filter == "!/^ubiquiti:/.test(sourcetype || '')"
+      - "'unifi_insights_syslog:' in _cribl_stream_outputs_pi"
+      - "'type: syslog' in _cribl_stream_outputs_pi"
+      - "'protocol: udp' in _cribl_stream_outputs_pi"
+      - "'host: \"unifi-insights.example.invalid\"' in _cribl_stream_outputs_pi"
+      - "'port: 514' in _cribl_stream_outputs_pi"
+    fail_msg: >-
+      The UniFi gateway syslog must reach the UniFi Insights VM: a connection on
+      tcpjson:in_cribl_s2s to unifi_insights_syslog_feed, a pipeline whose only
+      function drops non-ubiquiti sourcetypes, and a UDP syslog output on 514.
