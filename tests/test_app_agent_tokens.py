@@ -138,7 +138,11 @@ def test_vikunja_clerk_tokens_use_the_shared_idempotent_publisher():
     assert all("openbao_path" not in row for row in rows)
     assert defaults["vikunja_token_openbao_path"] == "ai/mcp/vikunja"
     assert defaults["vikunja_clerk_task_permissions"] == {
-        "tasks": ["create", "read_all", "read_one", "update"]
+        "labels": ["read_all"],
+        "tasks": ["create", "read_all", "read_one", "update"],
+        "tasks_comments": ["create"],
+        "tasks_labels": ["create"],
+        "tasks_relations": ["create"],
     }
 
     resolve = _task(
@@ -250,3 +254,8 @@ def test_vikunja_token_scope_validation_runs_without_publication():
         "Publish the token to OpenBao for {{ vikunja_mcp_user.username }}",
     ):
         assert "vikunja_token_publish_openbao | bool" in str(_task(identity_tasks, name)["when"])
+
+
+def test_vikunja_clerk_scope_adds_but_never_deletes():
+    permissions = _vikunja_defaults()["vikunja_clerk_task_permissions"]
+    assert not any("delete" in actions for actions in permissions.values())
