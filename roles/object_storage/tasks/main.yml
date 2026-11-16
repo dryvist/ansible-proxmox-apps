@@ -340,6 +340,24 @@
     'NoSuchLifecycleConfiguration' not in (object_storage_lifecycle_current.stderr | default(''))
   no_log: true
 
+# A malformed prefix rule would render a lifecycle document the S3 API
+# rejects at put time, pages away from the declaration that caused it —
+# fail at the declaration instead.
+- name: Validate prefix-scoped lifecycle rules
+  ansible.builtin.assert:
+    that:
+      - item.1.prefix is string and item.1.prefix | length > 0 and item.1.prefix.endswith('/')
+      - item.1.noncurrent_expiration_days is number and item.1.noncurrent_expiration_days is not boolean
+      - item.1.noncurrent_expiration_days | int == item.1.noncurrent_expiration_days
+      - item.1.noncurrent_expiration_days is number and item.1.noncurrent_expiration_days > 0
+    fail_msg: >-
+      Bucket {{ item.0.name }}: invalid prefix_lifecycle_rules entry ({{ item.1 }}) —
+      prefix must be a non-empty string ending in '/', and noncurrent_expiration_days
+      must be a positive integer.
+  loop: "{{ object_storage_default_buckets | subelements('prefix_lifecycle_rules', skip_missing=true) }}"
+  loop_control:
+    label: "{{ item.0.name }}"
+
 - name: Render lifecycle configuration documents
   ansible.builtin.template:
     src: lifecycle.json.j2
@@ -351,6 +369,11 @@
   loop_control:
     label: "{{ item.name }}"
 
+# Prefix rules (prefix_lifecycle_rules) are explicit declarations like
+# noncurrent_expiration_days above, so they are reconciled the same way: the
+# bucket-wide rule is matched by its fixed ID rather than list position, and
+# each prefix rule is compared against the live rules with a non-empty
+# Filter.Prefix by days and delete-marker flag.
 - name: Apply the noncurrent-version expiration rule
   ansible.builtin.command:
     cmd: >-
@@ -368,7 +391,8 @@
       item.item.noncurrent_expiration_days is defined and
       (
         (item.stdout | from_json).Rules
-        | selectattr('NoncurrentVersionExpiration', 'defined')
+        | selectattr('ID', 'defined')
+        | selectattr('ID', 'equalto', 'expire-noncurrent')
         | map(attribute='NoncurrentVersionExpiration.NoncurrentDays')
         | first | default(-1)
       ) != item.item.noncurrent_expiration_days
@@ -376,6 +400,35 @@
     (
       (item.item.expire_delete_markers | default(false)) and
       (item.stdout | default('')) is not search('ExpiredObjectDeleteMarker')
+    ) or
+    (
+      (item.item.prefix_lifecycle_rules | default([])) | length > 0 and
+      (
+        (
+          (item.stdout | from_json).Rules
+          | selectattr('Filter.Prefix', 'defined')
+          | rejectattr('Filter.Prefix', 'equalto', '')
+          | selectattr('NoncurrentVersionExpiration', 'defined')
+          | map(attribute='NoncurrentVersionExpiration.NoncurrentDays')
+          | list
+        ) != (
+          item.item.prefix_lifecycle_rules
+          | map(attribute='noncurrent_expiration_days')
+          | list
+        ) or
+        (
+          (item.stdout | from_json).Rules
+          | selectattr('Filter.Prefix', 'defined')
+          | rejectattr('Filter.Prefix', 'equalto', '')
+          | selectattr('Expiration.ExpiredObjectDeleteMarker', 'defined')
+          | length
+        ) != (
+          item.item.prefix_lifecycle_rules
+          | selectattr('expire_delete_markers', 'defined')
+          | selectattr('expire_delete_markers')
+          | length
+        )
+      )
     )
   changed_when: true
   no_log: true

@@ -15,6 +15,38 @@
       {"Rules":[{"ID":"expire-noncurrent","Status":"Enabled",
       "NoncurrentVersionExpiration":{"NoncurrentDays":30},
       "Expiration":{"ExpiredObjectDeleteMarker":true}}]}
+    live_30_markers_prefix: >-
+      {"Rules":[{"ID":"expire-noncurrent","Status":"Enabled",
+      "Filter":{"Prefix":""},
+      "NoncurrentVersionExpiration":{"NoncurrentDays":30},
+      "Expiration":{"ExpiredObjectDeleteMarker":true}},
+      {"ID":"expire-noncurrent-postgres","Status":"Enabled",
+      "Filter":{"Prefix":"postgres/"},
+      "NoncurrentVersionExpiration":{"NoncurrentDays":1},
+      "Expiration":{"ExpiredObjectDeleteMarker":true}}]}
+    live_30_markers_prefix_7: >-
+      {"Rules":[{"ID":"expire-noncurrent","Status":"Enabled",
+      "Filter":{"Prefix":""},
+      "NoncurrentVersionExpiration":{"NoncurrentDays":30},
+      "Expiration":{"ExpiredObjectDeleteMarker":true}},
+      {"ID":"expire-noncurrent-postgres","Status":"Enabled",
+      "Filter":{"Prefix":"postgres/"},
+      "NoncurrentVersionExpiration":{"NoncurrentDays":7},
+      "Expiration":{"ExpiredObjectDeleteMarker":true}}]}
+    live_30_markers_prefix_no_marker: >-
+      {"Rules":[{"ID":"expire-noncurrent","Status":"Enabled",
+      "Filter":{"Prefix":""},
+      "NoncurrentVersionExpiration":{"NoncurrentDays":30},
+      "Expiration":{"ExpiredObjectDeleteMarker":true}},
+      {"ID":"expire-noncurrent-postgres","Status":"Enabled",
+      "Filter":{"Prefix":"postgres/"},
+      "NoncurrentVersionExpiration":{"NoncurrentDays":1}}]}
+    live_extra_scoped_rule: >-
+      {"Rules":[{"ID":"expire-noncurrent","Status":"Enabled",
+      "NoncurrentVersionExpiration":{"NoncurrentDays":30}},
+      {"ID":"expire-noncurrent-cribl","Status":"Enabled",
+      "Filter":{"Prefix":"cribl/"},
+      "NoncurrentVersionExpiration":{"NoncurrentDays":14}}]}
     cases:
       # backups bucket declares 30 but live is 3650 -> MUST fire
       - name: declared-30-live-3650
@@ -53,7 +85,66 @@
         expect: false
       # delete-marker expiry not declared -> a live marker rule is left alone
       - name: markers-undeclared-live-with
-        item: {rc: 0, stdout: "{{ live_30_markers }}", item: {name: b, noncurrent_expiration_days: 30}}
+        item:
+          rc: 0
+          stdout: "{{ live_30_markers }}"
+          item: {name: b, noncurrent_expiration_days: 30}
+        expect: false
+      # prefix rule declared but missing from the live config -> MUST fire
+      - name: prefix-declared-live-missing
+        item:
+          rc: 0
+          stdout: "{{ live_30_markers }}"
+          item:
+            name: b
+            noncurrent_expiration_days: 30
+            expire_delete_markers: true
+            prefix_lifecycle_rules:
+              - {prefix: postgres/, noncurrent_expiration_days: 1, expire_delete_markers: true}
+        expect: true
+      # prefix rule live with different noncurrent days -> MUST fire
+      - name: prefix-declared-live-days-differ
+        item:
+          rc: 0
+          stdout: "{{ live_30_markers_prefix_7 }}"
+          item:
+            name: b
+            noncurrent_expiration_days: 30
+            expire_delete_markers: true
+            prefix_lifecycle_rules:
+              - {prefix: postgres/, noncurrent_expiration_days: 1, expire_delete_markers: true}
+        expect: true
+      # prefix rule live and fully reconciled -> must NOT fire (idempotent)
+      - name: prefix-declared-live-match
+        item:
+          rc: 0
+          stdout: "{{ live_30_markers_prefix }}"
+          item:
+            name: b
+            noncurrent_expiration_days: 30
+            expire_delete_markers: true
+            prefix_lifecycle_rules:
+              - {prefix: postgres/, noncurrent_expiration_days: 1, expire_delete_markers: true}
+        expect: false
+      # prefix rule live but missing its delete-marker expiry -> MUST fire
+      - name: prefix-declared-live-scoped-marker-missing
+        item:
+          rc: 0
+          stdout: "{{ live_30_markers_prefix_no_marker }}"
+          item:
+            name: b
+            noncurrent_expiration_days: 30
+            expire_delete_markers: true
+            prefix_lifecycle_rules:
+              - {prefix: postgres/, noncurrent_expiration_days: 1, expire_delete_markers: true}
+        expect: true
+      # no prefix rules declared -> a live scoped rule is left alone
+      # (add-if-missing, same as hand-tightened retention above)
+      - name: prefix-undeclared-live-extra-scoped-rule
+        item:
+          rc: 0
+          stdout: "{{ live_extra_scoped_rule }}"
+          item: {name: a, noncurrent_expiration_days: 30}
         expect: false
   tasks:
     - name: Evaluate the condition for each case
@@ -67,7 +158,8 @@
                 item.item.item.noncurrent_expiration_days is defined and
                 (
                   (item.item.stdout | from_json).Rules
-                  | selectattr('NoncurrentVersionExpiration', 'defined')
+                  | selectattr('ID', 'defined')
+                  | selectattr('ID', 'equalto', 'expire-noncurrent')
                   | map(attribute='NoncurrentVersionExpiration.NoncurrentDays')
                   | first | default(-1)
                 ) != item.item.item.noncurrent_expiration_days
@@ -75,6 +167,35 @@
               (
                 (item.item.item.expire_delete_markers | default(false)) and
                 (item.item.stdout | default('')) is not search('ExpiredObjectDeleteMarker')
+              ) or
+              (
+                (item.item.item.prefix_lifecycle_rules | default([])) | length > 0 and
+                (
+                  (
+                    (item.item.stdout | from_json).Rules
+                    | selectattr('Filter.Prefix', 'defined')
+                    | rejectattr('Filter.Prefix', 'equalto', '')
+                    | selectattr('NoncurrentVersionExpiration', 'defined')
+                    | map(attribute='NoncurrentVersionExpiration.NoncurrentDays')
+                    | list
+                  ) != (
+                    item.item.item.prefix_lifecycle_rules
+                    | map(attribute='noncurrent_expiration_days')
+                    | list
+                  ) or
+                  (
+                    (item.item.stdout | from_json).Rules
+                    | selectattr('Filter.Prefix', 'defined')
+                    | rejectattr('Filter.Prefix', 'equalto', '')
+                    | selectattr('Expiration.ExpiredObjectDeleteMarker', 'defined')
+                    | length
+                  ) != (
+                    item.item.item.prefix_lifecycle_rules
+                    | selectattr('expire_delete_markers', 'defined')
+                    | selectattr('expire_delete_markers')
+                    | length
+                  )
+                )
               )
             ) == item.expect
         fail_msg: "case {{ item.name }}: expected fires={{ item.expect }}"
