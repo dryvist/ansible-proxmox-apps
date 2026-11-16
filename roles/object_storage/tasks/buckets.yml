@@ -1,0 +1,255 @@
+---
+# Phase 8: Create + configure buckets via the aws CLI (loopback, root creds).
+- name: Check which default buckets already exist
+  ansible.builtin.command:
+    cmd: "aws --endpoint-url {{ object_storage_endpoint }} s3api head-bucket --bucket {{ item.name }}"
+  loop: "{{ object_storage_default_buckets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  register: object_storage_bucket_check
+  check_mode: false
+  changed_when: false
+  # A DENIED read is not an ABSENT one: `head-bucket` and the `get-*` calls
+  # return 403 and 404 with no rc-level distinction, so tolerate ONLY the
+  # not-found answers -- the same way the head-object probe below does.
+  failed_when: >-
+    object_storage_bucket_check.rc is defined and
+    object_storage_bucket_check.rc != 0 and
+    '404' not in (object_storage_bucket_check.stderr | default('')) and
+    'Not Found' not in (object_storage_bucket_check.stderr | default('')) and
+    'NoSuchBucket' not in (object_storage_bucket_check.stderr | default('')) and
+    'NoSuchLifecycleConfiguration' not in (object_storage_bucket_check.stderr | default(''))
+  no_log: true
+
+- name: Report create missing default buckets (check mode)
+  ansible.builtin.debug:
+    msg: "Check mode: would create default bucket {{ item.item.name }}"
+  loop: "{{ object_storage_bucket_check.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - ansible_check_mode
+    - item.rc != 0
+  changed_when: true
+
+- name: Create missing default buckets
+  ansible.builtin.command:
+    cmd: "aws --endpoint-url {{ object_storage_endpoint }} s3api create-bucket --bucket {{ item.item.name }}"
+  loop: "{{ object_storage_bucket_check.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  when: item.rc != 0
+  changed_when: true
+  no_log: true
+
+- name: Read current versioning status
+  ansible.builtin.command:
+    cmd: "aws --endpoint-url {{ object_storage_endpoint }} s3api get-bucket-versioning --bucket {{ item.name }}"
+  loop: "{{ object_storage_default_buckets | selectattr('versioning', 'defined') | selectattr('versioning') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  register: object_storage_versioning_current
+  check_mode: false
+  changed_when: false
+  # Denied vs absent: see the note on the bucket-existence probe above.
+  failed_when: >-
+    object_storage_versioning_current.rc is defined and
+    object_storage_versioning_current.rc != 0 and
+    '404' not in (object_storage_versioning_current.stderr | default('')) and
+    'Not Found' not in (object_storage_versioning_current.stderr | default('')) and
+    'NoSuchBucket' not in (object_storage_versioning_current.stderr | default('')) and
+    'NoSuchLifecycleConfiguration' not in (object_storage_versioning_current.stderr | default(''))
+  no_log: true
+
+- name: Report enable versioning where not already enabled (check mode)
+  ansible.builtin.debug:
+    msg: "Check mode: would enable versioning on bucket {{ item.item.name }}"
+  loop: "{{ object_storage_versioning_current.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - ansible_check_mode
+    - "'Enabled' not in (item.stdout | default(''))"
+  changed_when: true
+
+- name: Enable versioning where not already enabled
+  ansible.builtin.command:
+    cmd: >-
+      aws --endpoint-url {{ object_storage_endpoint }} s3api put-bucket-versioning
+      --bucket {{ item.item.name }} --versioning-configuration Status=Enabled
+  loop: "{{ object_storage_versioning_current.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  when: "'Enabled' not in (item.stdout | default(''))"
+  changed_when: true
+  no_log: true
+
+# Anonymous (public-read) download policy — Splunk and other internal consumers
+# pull artifacts with no credentials on the internal network. Read the current
+# policy first so re-runs only report changed when the document actually differs.
+- name: Read current bucket policy
+  ansible.builtin.command:
+    cmd: "aws --endpoint-url {{ object_storage_endpoint }} s3api get-bucket-policy --bucket {{ item.name }}"
+  loop: >-
+    {{ object_storage_default_buckets
+       | selectattr('policy', 'defined')
+       | selectattr('policy', 'equalto', 'download')
+       | list }}
+  loop_control:
+    label: "{{ item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  register: object_storage_policy_current
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Render anonymous download policy documents
+  ansible.builtin.template:
+    src: bucket-policy.json.j2
+    dest: "{{ object_storage_config_dir }}/policy-{{ item.name }}.json"
+    owner: root
+    group: root
+    mode: "0640"
+  loop: >-
+    {{ object_storage_default_buckets
+       | selectattr('policy', 'defined')
+       | selectattr('policy', 'equalto', 'download')
+       | list }}
+  loop_control:
+    label: "{{ item.name }}"
+  vars:
+    bucket: "{{ item.name }}"
+
+- name: Report set anonymous download policy where missing (check mode)
+  ansible.builtin.debug:
+    msg: "Check mode: would set the anonymous download policy on bucket {{ item.item.name }}"
+  loop: "{{ object_storage_policy_current.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - ansible_check_mode
+    - >-
+        item.rc != 0 or
+        's3:GetObject' not in (item.stdout | default(''))
+  changed_when: true
+
+- name: Set anonymous download policy where missing
+  ansible.builtin.command:
+    cmd: >-
+      aws --endpoint-url {{ object_storage_endpoint }} s3api put-bucket-policy
+      --bucket {{ item.item.name }}
+      --policy file://{{ object_storage_config_dir }}/policy-{{ item.item.name }}.json
+  loop: "{{ object_storage_policy_current.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  when: >-
+    item.rc != 0 or
+    's3:GetObject' not in (item.stdout | default(''))
+  changed_when: true
+  no_log: true
+
+# Phase 9: Lifecycle — expire noncurrent versions to bound the data volume.
+# Add-if-missing for buckets that take the default, so an operator can tighten
+# retention by hand without Ansible reverting it (deliberate).
+#
+# BUT a bucket that declares `noncurrent_expiration_days` explicitly is
+# reconciled to the declared value. Add-if-missing alone is not enough there:
+# the rule is applied on first converge, after which the guard skips it
+# forever, so correcting a wrong value in code would silently never take
+# effect on the live bucket. That is exactly how the backups bucket ended up
+# holding a 10-year noncurrent retention while pgBackRest expected its deletes
+# to reclaim space. An explicit declaration is an assertion about the bucket,
+# not a default, so it wins over a hand edit.
+- name: Read current lifecycle configuration on versioned buckets
+  ansible.builtin.command:
+    cmd: >-
+      aws --endpoint-url {{ object_storage_endpoint }} s3api
+      get-bucket-lifecycle-configuration --bucket {{ item.name }}
+  loop: "{{ object_storage_default_buckets | selectattr('versioning', 'defined') | selectattr('versioning') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  register: object_storage_lifecycle_current
+  check_mode: false
+  changed_when: false
+  # Denied vs absent: see the note on the bucket-existence probe above.
+  failed_when: >-
+    object_storage_lifecycle_current.rc is defined and
+    object_storage_lifecycle_current.rc != 0 and
+    '404' not in (object_storage_lifecycle_current.stderr | default('')) and
+    'Not Found' not in (object_storage_lifecycle_current.stderr | default('')) and
+    'NoSuchBucket' not in (object_storage_lifecycle_current.stderr | default('')) and
+    'NoSuchLifecycleConfiguration' not in (object_storage_lifecycle_current.stderr | default(''))
+  no_log: true
+
+- name: Render lifecycle configuration documents
+  ansible.builtin.template:
+    src: lifecycle.json.j2
+    dest: "{{ object_storage_config_dir }}/lifecycle-{{ item.name }}.json"
+    owner: root
+    group: root
+    mode: "0640"
+  loop: "{{ object_storage_default_buckets | selectattr('versioning', 'defined') | selectattr('versioning') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Report apply the noncurrent-version expiration rule (check mode)
+  ansible.builtin.debug:
+    msg: "Check mode: would apply the noncurrent-version expiration rule to bucket {{ item.item.name }}"
+  loop: "{{ object_storage_lifecycle_current.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - ansible_check_mode
+    - >-
+        item.rc != 0 or
+        (item.stdout | default('')) is not search('NoncurrentVersionExpiration') or
+        (
+          item.item.noncurrent_expiration_days is defined and
+          (
+            (item.stdout | from_json).Rules
+            | selectattr('NoncurrentVersionExpiration', 'defined')
+            | map(attribute='NoncurrentVersionExpiration.NoncurrentDays')
+            | first | default(-1)
+          ) != item.item.noncurrent_expiration_days
+        ) or
+        (
+          (item.item.expire_delete_markers | default(false)) and
+          (item.stdout | default('')) is not search('ExpiredObjectDeleteMarker')
+        )
+  changed_when: true
+
+- name: Apply the noncurrent-version expiration rule
+  ansible.builtin.command:
+    cmd: >-
+      aws --endpoint-url {{ object_storage_endpoint }} s3api put-bucket-lifecycle-configuration
+      --bucket {{ item.item.name }}
+      --lifecycle-configuration file://{{ object_storage_config_dir }}/lifecycle-{{ item.item.name }}.json
+  loop: "{{ object_storage_lifecycle_current.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  when: >-
+    item.rc != 0 or
+    (item.stdout | default('')) is not search('NoncurrentVersionExpiration') or
+    (
+      item.item.noncurrent_expiration_days is defined and
+      (
+        (item.stdout | from_json).Rules
+        | selectattr('NoncurrentVersionExpiration', 'defined')
+        | map(attribute='NoncurrentVersionExpiration.NoncurrentDays')
+        | first | default(-1)
+      ) != item.item.noncurrent_expiration_days
+    ) or
+    (
+      (item.item.expire_delete_markers | default(false)) and
+      (item.stdout | default('')) is not search('ExpiredObjectDeleteMarker')
+    )
+  changed_when: true
+  no_log: true
