@@ -17,6 +17,11 @@ ansible-playbook playbooks/site.yml --tags vikunja --diff
 Role defaults live under `defaults/main/`; override them in inventory group
 variables. The rendered configuration comes from `templates/config.yml.j2`.
 
+Narrow a run with `--skip-tags` on `vikunja_operator_access`,
+`vikunja_agent_access` or `vikunja_openhands_trigger`, and limit the token
+loop to named identities with
+`-e '{"vikunja_mcp_token_only_users": ["svc-mcp-clerk"]}'` (empty means all).
+
 ## OpenHands trigger
 
 The role provisions the `openhands` bot for the hand-created trigger project:

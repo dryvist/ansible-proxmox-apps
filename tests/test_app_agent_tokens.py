@@ -8,7 +8,7 @@ from app_agent_helpers import ROOT, _render, _task, _vikunja_defaults, _yaml
 _MISSING = object()
 
 
-def _token_include_runs(include_task, user, clerk_password=_MISSING):
+def _token_include_runs(include_task, user, clerk_password=_MISSING, only_users=()):
     clerk_user = {"username": "svc-mcp-clerk"}
     if clerk_password is not _MISSING:
         clerk_user["password"] = clerk_password
@@ -17,6 +17,7 @@ def _token_include_runs(include_task, user, clerk_password=_MISSING):
         {
             "vikunja_mcp_user": user,
             "vikunja_service_users": [clerk_user],
+            "vikunja_mcp_token_only_users": list(only_users),
         },
     )
 
@@ -106,6 +107,27 @@ def test_vikunja_other_token_users_run_when_clerk_password_is_empty():
 
     for user in other_users:
         assert _token_include_runs(token_loop, user, "") in (True, "True")
+
+
+def test_vikunja_token_selector_empty_runs_all_and_named_runs_only_those():
+    defaults = _vikunja_defaults()
+    token_loop = _task(
+        _yaml("roles/vikunja/tasks/mcp_tokens.yml"),
+        "Mint and publish MCP and app-agent tokens per identity",
+    )
+    every_user = (
+        defaults["vikunja_mcp_token_users"]
+        + defaults["vikunja_clerk_token_users"]
+        + defaults["vikunja_openhands_token_users"]
+        + defaults["vikunja_agent_tiers"]
+    )
+    assert defaults["vikunja_mcp_token_only_users"] == []
+
+    for user in every_user:
+        assert _token_include_runs(token_loop, user, "fixture-password") in (True, "True")
+        expected = user["username"] == "svc-mcp-clerk"
+        ran = _token_include_runs(token_loop, user, "fixture-password", ["svc-mcp-clerk"])
+        assert ran in ((True, "True") if expected else (False, "False"))
 
 
 def test_vikunja_clerk_tokens_use_the_shared_idempotent_publisher():
