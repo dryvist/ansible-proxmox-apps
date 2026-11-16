@@ -36,6 +36,13 @@ class BucketRoleSelection(unittest.TestCase):
         self.assertEqual(bucket["iam_roles"], ["ro"])
         self.assertFalse({"policy", "versioning"} & bucket.keys())
 
+    def test_pgbackrest_repository_bucket_is_unversioned_and_offsite_owner_managed(self):
+        bucket = next(
+            bucket for bucket in _buckets() if bucket["name"] == "dryvist-homelab-pgbackrest"
+        )
+        self.assertEqual(bucket["offsite_owner"], "pgbackrest")
+        self.assertFalse({"policy", "versioning"} & bucket.keys())
+
     def test_bucket_ensure_does_not_recreate_or_configure_terrakube(self):
         tasks = yaml.safe_load(BUCKET_TASKS.read_text(encoding="utf-8"))
         create = _task(tasks, "Create missing default buckets")
