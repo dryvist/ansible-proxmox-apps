@@ -1,0 +1,213 @@
+---
+- name: Verify the openhands CI-fix automation loader
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../../../roles/openhands/defaults/main.yml"
+  vars:
+    ansible_become: false
+    ingress_domain: "{{ lookup('ansible.builtin.env', 'PROXMOX_SUBDOMAIN') }}"
+  tasks:
+    - name: Verify the CI-fix loader is skipped while disabled
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../roles/openhands/tasks/ci_fix_config.yml"
+      vars:
+        openhands_ci_fix_enabled: false
+        openhands_ci_fix_config: ""
+
+    - name: Assert the CI-fix loader is not ready while disabled
+      ansible.builtin.assert:
+        that:
+          - not _openhands_ci_fix_ready
+        fail_msg: "the CI-fix loader must not be ready while openhands_ci_fix_enabled is false"
+        quiet: true
+
+    - name: Verify the CI-fix loader is skipped on an empty config
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../roles/openhands/tasks/ci_fix_config.yml"
+      vars:
+        openhands_ci_fix_enabled: true
+        openhands_ci_fix_config: ""
+
+    - name: Assert the CI-fix loader is not ready on an empty config
+      ansible.builtin.assert:
+        that:
+          - not _openhands_ci_fix_ready
+        fail_msg: "the CI-fix loader must not be ready when OPENHANDS_CI_FIX_CONFIG is empty"
+        quiet: true
+
+    - name: Verify the CI-fix loader is skipped on unparseable config
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../roles/openhands/tasks/ci_fix_config.yml"
+      vars:
+        openhands_ci_fix_enabled: true
+        openhands_ci_fix_config: not json
+
+    - name: Assert the CI-fix loader is not ready on unparseable config
+      ansible.builtin.assert:
+        that:
+          - not _openhands_ci_fix_ready
+        fail_msg: "the CI-fix loader must not be ready when OPENHANDS_CI_FIX_CONFIG is not a JSON object"
+        quiet: true
+
+    - name: Verify the CI-fix loader is ready on a valid config
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../roles/openhands/tasks/ci_fix_config.yml"
+      vars:
+        openhands_ci_fix_enabled: true
+        openhands_ci_fix_config: >-
+          {"owners":["example-org"],"profile_public":"ci-public","profile_private":"ci-private"}
+
+    - name: Assert the CI-fix loader is ready with the parsed config
+      ansible.builtin.assert:
+        that:
+          - _openhands_ci_fix_ready
+          - _openhands_ci_fix.owners == ['example-org']
+        fail_msg: "the CI-fix loader must be ready with the parsed owners when given a valid config"
+        quiet: true
+
+    - name: Verify the CI-fix shape assert rejects each malformed config
+      ansible.builtin.include_tasks: openhands_ci_fix_shape_case.yml
+      loop:
+        - {owners: [], profile_public: ci-public, profile_private: ci-private}
+        - {owners: example-org, profile_public: ci-public, profile_private: ci-private}
+        - {owners: [example-org], profile_public: "bad name", profile_private: ci-private}
+        - {owners: [example-org], profile_public: ci-same, profile_private: ci-same}
+        - {owners: [example-org], profile_public: ci-public, profile_private: ci-private, create: true}
+      loop_control:
+        loop_var: _ci_fix_case
+
+    - name: Resolve the CI-fix profiles when both exist
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../roles/openhands/tasks/ci_fix_profile_resolve.yml"
+      vars:
+        _openhands_ci_fix: {profile_public: ci-public, profile_private: ci-private}
+        _openhands_ci_fix_require: true
+        _openhands_ci_fix_profiles:
+          - {name: default, id: "00000000-0000-0000-0000-000000000009"}
+          - {name: ci-public, id: "00000000-0000-0000-0000-000000000001"}
+          - {name: ci-private, id: "00000000-0000-0000-0000-000000000002"}
+
+    - name: Assert both CI-fix profiles resolve to their ids
+      ansible.builtin.assert:
+        that:
+          - _openhands_ci_fix_profile_missing == []
+          - _openhands_ci_fix_profile_ids['ci-private'] == '00000000-0000-0000-0000-000000000002'
+        quiet: true
+
+    - name: Verify a missing CI-fix profile stops the run with its name
+      block:
+        - name: Resolve the CI-fix profiles with one missing
+          ansible.builtin.include_tasks:
+            file: "{{ playbook_dir }}/../../../roles/openhands/tasks/ci_fix_profile_resolve.yml"
+          vars:
+            _openhands_ci_fix: {profile_public: ci-public, profile_private: ci-private}
+            _openhands_ci_fix_require: true
+            _openhands_ci_fix_profiles: [{name: ci-public, id: "00000000-0000-0000-0000-000000000001"}]
+
+        - name: Fail if the missing profile was accepted
+          ansible.builtin.fail:
+            msg: "a missing CI-fix profile did not stop the run"
+      rescue:
+        - name: Confirm the stop names the missing profile
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Stop when a CI-fix profile is missing'
+              - "'ci-private' in ansible_failed_result.msg"
+            quiet: true
+
+    - name: Resolve the CI-fix profiles with one missing while creation is allowed
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../roles/openhands/tasks/ci_fix_profile_resolve.yml"
+      vars:
+        _openhands_ci_fix: {profile_public: ci-public, profile_private: ci-private}
+        _openhands_ci_fix_require: false
+        _openhands_ci_fix_profiles: [{name: ci-public, id: "00000000-0000-0000-0000-000000000001"}]
+
+    - name: Assert the missing CI-fix profile is listed for creation
+      ansible.builtin.assert:
+        that:
+          - _openhands_ci_fix_profile_missing == ['ci-private']
+        quiet: true
+
+    - name: Build the CI-fix bodies from a well-formed config
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../roles/openhands/tasks/ci_fix_bodies.yml"
+      vars:
+        _openhands_ci_fix:
+          owners: [example-org, example-org-2]
+          profile_public: ci-public
+          profile_private: ci-private
+        _openhands_ci_fix_profile_ids:
+          ci-public: "00000000-0000-0000-0000-000000000001"
+          ci-private: "00000000-0000-0000-0000-000000000002"
+
+    - name: Assert the CI-fix bodies carry the visibility, owners and profile
+      ansible.builtin.assert:
+        that:
+          - _openhands_ci_fix_bodies | length == 2
+          - _openhands_ci_fix_bodies[0].name == 'ci-fix-public'
+          - _openhands_ci_fix_bodies[1].name == 'ci-fix-private'
+          - "'repository.private == `false`' in _openhands_ci_fix_bodies[0].trigger.filter"
+          - "'repository.private == `true`' in _openhands_ci_fix_bodies[1].trigger.filter"
+          - >-
+            "contains(['example-org', 'example-org-2'], repository.owner.login)"
+            in _openhands_ci_fix_bodies[0].trigger.filter
+          - >-
+            "contains(['CI Gate'], workflow_run.name)"
+            in _openhands_ci_fix_bodies[0].trigger.filter
+          - _openhands_ci_fix_bodies[1].agent_profile_id == '00000000-0000-0000-0000-000000000002'
+          - not _openhands_ci_fix_bodies[0].enabled
+          - _openhands_ci_fix_bodies[0].prompt == openhands_ci_fix_prompt
+        fail_msg: "the CI-fix bodies did not render as expected"
+        quiet: true
+
+    - name: Plan the CI-fix writes with no existing automations
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../roles/openhands/tasks/ci_fix_plan.yml"
+      vars:
+        _openhands_ci_fix_existing: []
+
+    - name: Assert both CI-fix automations are created
+      ansible.builtin.assert:
+        that:
+          - _openhands_ci_fix_plan | map(attribute='action') | list == ['create', 'create']
+          - _openhands_ci_fix_plan[0].changes == _openhands_ci_fix_bodies[0]
+        quiet: true
+
+    - name: Plan the CI-fix writes when both already match
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../roles/openhands/tasks/ci_fix_plan.yml"
+      vars:
+        _openhands_ci_fix_existing: >-
+          {{ _openhands_ci_fix_bodies
+             | map('combine', {'id': '11111111-1111-1111-1111-111111111111'}) | list }}
+
+    - name: Assert nothing changes when both already match
+      ansible.builtin.assert:
+        that:
+          - _openhands_ci_fix_plan | map(attribute='action') | list == ['none', 'none']
+        quiet: true
+
+    - name: Plan the CI-fix writes with one drifted prompt and one enabled automation
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../roles/openhands/tasks/ci_fix_plan.yml"
+      vars:
+        _openhands_ci_fix_existing:
+          - >-
+            {{ _openhands_ci_fix_bodies[0]
+               | combine({'id': '11111111-1111-1111-1111-111111111111', 'prompt': 'old'}) }}
+          - >-
+            {{ _openhands_ci_fix_bodies[1]
+               | combine({'id': '22222222-2222-2222-2222-222222222222', 'enabled': true,
+                          'trigger': _openhands_ci_fix_bodies[1].trigger | combine({'extra': 'kept'})}) }}
+
+    - name: Assert only the drifted prompt is updated
+      ansible.builtin.assert:
+        that:
+          - _openhands_ci_fix_plan[0].action == 'update'
+          - _openhands_ci_fix_plan[0].id == '11111111-1111-1111-1111-111111111111'
+          - _openhands_ci_fix_plan[0].changes.keys() | list == ['prompt']
+          - _openhands_ci_fix_plan[1].action == 'none'
+        quiet: true

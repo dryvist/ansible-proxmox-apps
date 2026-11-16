@@ -1,0 +1,37 @@
+---
+# Build the two automation request bodies as a fact from the validated config
+# and the resolved profile ids (_openhands_ci_fix_profile_ids). No API calls.
+
+- name: Render the CI-fix trigger filter for each visibility
+  ansible.builtin.set_fact:
+    _openhands_ci_fix_filter: >-
+      workflow_run.conclusion == 'failure'
+      && contains({{ openhands_ci_fix_gate_workflows | to_json | replace('"', "'") }}, workflow_run.name)
+      && length(workflow_run.pull_requests) > `0`
+      && workflow_run.head_repository.full_name == workflow_run.repository.full_name
+      && repository.private == `PRIVATE`
+      && contains({{ _openhands_ci_fix.owners | to_json | replace('"', "'") }}, repository.owner.login)
+
+- name: Build the CI-fix automation request bodies
+  vars:
+    _ids: "{{ _openhands_ci_fix_profile_ids }}"
+    _trigger:
+      type: event
+      source: "{{ openhands_ci_fix_event_source }}"
+      "on": workflow_run.completed
+      destination: continue_conversation
+      subject_key_expr: >-
+        join('#', [repository.full_name, to_string(workflow_run.pull_requests[0].number), workflow_run.name])
+    _common:
+      enabled: false
+      timeout: 3600
+      tags: [ci-fix]
+      prompt: "{{ openhands_ci_fix_prompt }}"
+  ansible.builtin.set_fact:
+    _openhands_ci_fix_bodies:
+      - >-
+        {{ _common | combine({'name': 'ci-fix-public', 'agent_profile_id': _ids[_openhands_ci_fix.profile_public],
+           'trigger': _trigger | combine({'filter': _openhands_ci_fix_filter | replace('PRIVATE', 'false')})}) }}
+      - >-
+        {{ _common | combine({'name': 'ci-fix-private', 'agent_profile_id': _ids[_openhands_ci_fix.profile_private],
+           'trigger': _trigger | combine({'filter': _openhands_ci_fix_filter | replace('PRIVATE', 'true')})}) }}
