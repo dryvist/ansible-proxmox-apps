@@ -21,14 +21,15 @@ INGRESS_ROUTE_TASK = "Find the machine-S3 ingress route"
 INGRESS_ASSERT_TASK = "Assert the machine-S3 ingress route exists and is not SSO-gated"
 PUBLIC_ENDPOINT_TASK = "Set the public S3 endpoint from the live ingress route"
 
-# The ratified secret-path convention's S3 row (private docs
-# d/conventions/secret-paths, "consumed by...") lists these four fields for
-# every S3-speaking credential -- not only the access/secret key pair.
+# The S3 credential record's fields (private docs
+# d/secrets/platform/object-storage) are these five for every bucket record --
+# not only the access/secret key pair.
 EXPECTED_S3_CREDENTIAL_FIELDS = {
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_ENDPOINT_URL",
     "AWS_REGION",
+    "BUCKET",
 }
 
 
@@ -132,6 +133,7 @@ def _seed_fields():
     templar.available_variables = {
         **_defaults(),
         "object_storage_iam_public_endpoint": "https://s3.pve.example.test",
+        "object_storage_iam_bucket": "fixture-bucket",
     }
     templar._loader.set_basedir(str(ROLE))
     return [
@@ -233,6 +235,7 @@ class SecretFieldCompleteness(unittest.TestCase):
         self.assertEqual(defaults["object_storage_iam_secret_key_field"], "AWS_SECRET_ACCESS_KEY")
         self.assertEqual(defaults["object_storage_iam_endpoint_field"], "AWS_ENDPOINT_URL")
         self.assertEqual(defaults["object_storage_iam_region_field"], "AWS_REGION")
+        self.assertEqual(defaults["object_storage_iam_bucket_field"], "BUCKET")
 
     def test_public_endpoint_is_derived_from_the_live_s3_ingress_route(self):
         # tasks/iam.yml derives the endpoint from the tofu-owned ingress table
@@ -276,13 +279,13 @@ class SecretFieldCompleteness(unittest.TestCase):
         self.assertFalse(assert_holds)
         self.assertIsNone(endpoint)
 
-    def test_a_fresh_secret_plans_all_four_fields_with_the_derived_endpoint_and_region(self):
+    def test_a_fresh_secret_plans_all_five_fields_with_the_derived_endpoint_region_and_bucket(self):
         fields = _seed_fields()
         by_name = {field["name"]: field for field in fields}
         self.assertEqual(set(by_name), EXPECTED_S3_CREDENTIAL_FIELDS)
         self.assertEqual(
             _planned_fields(fields, {}),
-            ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_ENDPOINT_URL", "AWS_REGION"],
+            ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_ENDPOINT_URL", "AWS_REGION", "BUCKET"],
         )
         defaults = _defaults()
         self.assertEqual(by_name["AWS_ACCESS_KEY_ID"]["charset"], "upper_numeric")
@@ -291,6 +294,7 @@ class SecretFieldCompleteness(unittest.TestCase):
         self.assertEqual(by_name["AWS_SECRET_ACCESS_KEY"]["length"], defaults["object_storage_iam_secret_key_length"])
         self.assertEqual(by_name["AWS_ENDPOINT_URL"]["value"], "https://s3.pve.example.test")
         self.assertEqual(by_name["AWS_REGION"]["value"], "us-east-1")
+        self.assertEqual(by_name["BUCKET"]["value"], "fixture-bucket")
 
     def test_an_existing_key_pair_missing_endpoint_and_region_gets_backfilled(self):
         # A secret stored before this change carries only the key pair. Only the
@@ -300,7 +304,7 @@ class SecretFieldCompleteness(unittest.TestCase):
                 _seed_fields(),
                 {"AWS_ACCESS_KEY_ID": "EXISTINGAK", "AWS_SECRET_ACCESS_KEY": "EXISTINGSK"},
             ),
-            ["AWS_ENDPOINT_URL", "AWS_REGION"],
+            ["AWS_ENDPOINT_URL", "AWS_REGION", "BUCKET"],
         )
 
     def test_a_stale_endpoint_is_reconciled_and_a_stored_key_is_never_planned(self):
@@ -314,6 +318,7 @@ class SecretFieldCompleteness(unittest.TestCase):
                     "AWS_SECRET_ACCESS_KEY": "not-the-generator-alphabet!",
                     "AWS_ENDPOINT_URL": "https://old.example.test",
                     "AWS_REGION": "us-east-1",
+                    "BUCKET": "fixture-bucket",
                 },
             ),
             ["AWS_ENDPOINT_URL"],
@@ -327,6 +332,7 @@ class SecretFieldCompleteness(unittest.TestCase):
             "AWS_SECRET_ACCESS_KEY": "SK",
             "AWS_ENDPOINT_URL": "https://s3.pve.example.test",
             "AWS_REGION": "us-east-1",
+            "BUCKET": "fixture-bucket",
         }
         self.assertEqual(_planned_fields(_seed_fields(), after_first_run), [])
 
