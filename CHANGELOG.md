@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.55.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.54.0...v5.55.0) (2026-11-17)
+
+
+### Features
+
+* **postgres:** read the pgBackRest bucket name from the credential store ([#3759](https://github.com/dryvist/ansible-proxmox-apps/issues/3759)) ([18b60b3](https://github.com/dryvist/ansible-proxmox-apps/commit/18b60b3625c14a5ad25ee256de31804c0c177ac0))
+
 ## [5.54.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.53.1...v5.54.0) (2026-11-16)
 
 
