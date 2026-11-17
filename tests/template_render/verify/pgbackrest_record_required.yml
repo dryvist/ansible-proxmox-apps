@@ -1,16 +1,18 @@
 ---
+# Inputs are include params (vars on include_tasks): they outrank facts that earlier plays in the same run set, and
+# they do not persist into later plays.
 - name: Reject an unreadable pgBackRest credential when the feature is enabled
   hosts: localhost
   connection: local
   gather_facts: false
-  vars:
-    postgres_pgbackrest_enabled: true
-    bao_postgres_backup_s3_secrets: {}
   tasks:
     - name: Expect the credential assertion to fail with missing field names
       block:
         - name: Run the role credential assertion
           ansible.builtin.include_tasks: ../../../roles/postgres/tasks/assert_pgbackrest_record.yml
+          vars:
+            postgres_pgbackrest_enabled: true
+            bao_postgres_backup_s3_secrets: {}
       rescue:
         - name: Save the expected assertion message
           ansible.builtin.set_fact:
@@ -44,16 +46,20 @@
   hosts: localhost
   connection: local
   gather_facts: false
-  vars:
-    postgres_pgbackrest_enabled: false
-    bao_postgres_backup_s3_secrets: {}
   tasks:
     - name: Run the role credential assertion with pgBackRest disabled
       ansible.builtin.include_tasks: ../../../roles/postgres/tasks/assert_pgbackrest_record.yml
+      vars:
+        postgres_pgbackrest_enabled: false
+        bao_postgres_backup_s3_secrets: {}
+
+    - name: Record that the disabled case converged
+      ansible.builtin.set_fact:
+        _pgbackrest_disabled_case_converged: true
 
     - name: Assert the disabled credential case converges
       ansible.builtin.assert:
         that:
-          - not (postgres_pgbackrest_enabled | bool)
+          - _pgbackrest_disabled_case_converged | bool
         fail_msg: "The disabled pgBackRest credential case did not converge."
         quiet: true
