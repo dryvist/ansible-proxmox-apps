@@ -224,7 +224,7 @@ class SystemOneBucketContract(unittest.TestCase):
 
 
 class SecretFieldCompleteness(unittest.TestCase):
-    """Every stored bucket/role secret must carry all four ratified S3
+    """Every stored bucket/role secret must carry all five ratified S3
     credential fields, on both roles -- not only the access/secret key pair.
     A consumer on another host must never have to invent the endpoint or
     region itself (Vikunja follow-up on PR #2195: L4x had to)."""
