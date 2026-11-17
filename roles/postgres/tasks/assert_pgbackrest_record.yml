@@ -1,0 +1,34 @@
+---
+- name: Check the pgBackRest credential record fields
+  ansible.builtin.set_fact:
+    postgres_pgbackrest_credential_read_succeeded: >-
+      {{ bao_postgres_backup_s3_secrets is defined
+         and bao_postgres_backup_s3_secrets is mapping
+         and (bao_postgres_backup_s3_secrets | length > 0) }}
+    postgres_pgbackrest_missing_credential_fields: >-
+      {{ ['AWS_ENDPOINT_URL', 'AWS_REGION', 'AWS_ACCESS_KEY_ID',
+          'AWS_SECRET_ACCESS_KEY', 'BUCKET']
+         | reject(
+             'in',
+             ((bao_postgres_backup_s3_secrets
+               if bao_postgres_backup_s3_secrets is mapping else {})
+              | dict2items
+              | selectattr('value', 'string')
+              | selectattr('value', 'match', '\\S')
+              | map(attribute='key')
+              | list))
+         | list }}
+  no_log: true
+  when: postgres_pgbackrest_enabled | bool
+
+- name: Assert the enabled pgBackRest credential record is readable and complete
+  ansible.builtin.assert:
+    that:
+      - postgres_pgbackrest_credential_read_succeeded | bool
+      - postgres_pgbackrest_missing_credential_fields | length == 0
+    fail_msg: >-
+      Host {{ inventory_hostname }} requires a readable pgBackRest credential
+      in bao_postgres_backup_s3_secrets. Missing or invalid fields:
+      {{ postgres_pgbackrest_missing_credential_fields | join(', ') }}.
+    quiet: true
+  when: postgres_pgbackrest_enabled | bool
