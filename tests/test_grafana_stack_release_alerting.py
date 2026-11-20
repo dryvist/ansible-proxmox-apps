@@ -18,6 +18,7 @@ EXPECTED = {
     "critical-slack-contact-point.yml",
     "hermes-cron-jobs.yml",
     "runner-guest-blocked.yml",
+    "tracker-exporter-health.yml",
 }
 
 
