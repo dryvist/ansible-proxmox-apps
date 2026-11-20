@@ -104,58 +104,6 @@ groups:
         annotations:
           summary: "Hermes key {{ '{{' }} $labels.api_key_alias {{ '}}' }} had {{ '{{' }} $values.A.Value {{ '}}' }} server errors in 15m."
 
-      - uid: hermes-cron-no-success
-        title: Hermes cron job failing without success
-        condition: B
-        data:
-          - refId: A
-            relativeTimeRange: {from: 21600, to: 0}
-            datasourceUid: victoriametrics
-            model:
-              expr: >-
-                (
-                  sum by (agent, job) (
-                    increase(hermes_cron_runs_total{outcome="failed"}[6h])
-                  ) > 0
-                )
-                unless on (agent, job)
-                (
-                  sum by (agent, job) (
-                    label_replace(
-                      increase(hermes_cron_runs_total{outcome=~"delivered|silent",job=~"[0-9a-f]{12}"}[6h])
-                      * on (agent, job) group_left (job_name)
-                        label_replace(
-                          (max_over_time(hermes_cron_job_info[30d]) > bool 0),
-                          "job", "$1", "job_id", "(.+)"
-                        ),
-                      "job", "$1", "job_name", "(.+)"
-                    )
-                    or increase(hermes_cron_runs_total{outcome=~"delivered|silent",job!~"[0-9a-f]{12}"}[6h])
-                  ) > 0
-                )
-              instant: true
-              refId: A
-          - refId: B
-            relativeTimeRange: {from: 0, to: 0}
-            datasourceUid: __expr__
-            model:
-              type: threshold
-              expression: A
-              conditions:
-                - evaluator: {type: gt, params: [0.5]}
-              refId: B
-        for: 0s
-        noDataState: OK
-        execErrState: Error
-        labels: {severity: warning}
-        annotations:
-          summary: >-
-            Hermes cron job {{ '{{' }} $labels.job {{ '}}' }} on {{ '{{' }} $labels.agent {{ '}}' }}
-            has failed without a delivered or silent run in 6 hours.
-          description: >-
-            {{ '{{' }} $values.A.Value {{ '}}' }} failed run(s) occurred for this agent/job pair,
-            with no delivered or silent run during the same 6-hour window.
-
       - uid: zdr-key-non-zdr-model
         title: ZDR-only key reached a non-ZDR model
         condition: B
