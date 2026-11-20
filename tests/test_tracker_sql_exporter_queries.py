@@ -13,6 +13,7 @@ EXPECTED = {
     "vikunja": {
         "vikunja_open_tasks": ["project"],
         "vikunja_open_tasks_by_label": ["label"],
+        "vikunja_open_tasks_by_epic": ["epic_id", "epic"],
         "vikunja_open_tasks_by_priority": ["priority"],
         "vikunja_open_tasks_by_age": ["age"],
         "vikunja_tasks_created_24h": [],
