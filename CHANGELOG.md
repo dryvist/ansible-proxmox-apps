@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.64.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.64.0...v5.64.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **grafana_stack:** pin grafana-dashboards v1.47.1 ([#3854](https://github.com/dryvist/ansible-proxmox-apps/issues/3854)) ([d7144f7](https://github.com/dryvist/ansible-proxmox-apps/commit/d7144f77a23c32a858e029cae1b594bd50b0d9ab))
+
 ## [5.64.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.63.0...v5.64.0) (2026-11-20)
 
 
