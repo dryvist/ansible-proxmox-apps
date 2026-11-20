@@ -205,3 +205,38 @@ def test_the_gpu_spec_has_no_generation_rate_row():
     spec = yaml.safe_load((ROOT / "playbooks/vars/status-posts/gpu.yml").read_text(encoding="utf-8"))
     assert not [row for row in spec["status_post_rows"] if "tok/s" in row["label"]]
     assert all(row.get("green") is not None and row.get("yellow") is not None for row in spec["status_post_rows"])
+
+
+def test_a_row_with_a_dashboard_uid_links_it_after_the_arrow():
+    macro = ENV.get_template("status-lines.j2").module.status_line
+    row = {"component": "lane", "label": "tokens:", "unit": "%", "decimals": 0, "sparkline": True, "dashboard": "abc"}
+    line = str(macro(row, 100, [0, 50, 100], "https://grafana.example.test"))
+    assert line.endswith(" ▁▅█ ↑50 <https://grafana.example.test/d/abc|dashboard>")
+
+
+def test_no_link_without_a_dashboard_uid_or_a_base():
+    macro = ENV.get_template("status-lines.j2").module.status_line
+    row = {"component": "Vikunja", "label": "open tasks:"}
+    assert str(macro(row, 8, [], "https://grafana.example.test")) == f"{GREEN} Vikunja open tasks: 8"
+    assert str(macro(dict(row, dashboard="abc"), 8, [], "")) == f"{GREEN} Vikunja open tasks: 8"
+
+
+def test_the_message_passes_the_dashboard_base_to_every_row():
+    text = ENV.get_template("status-post-message.j2").render(
+        status_post_rows=[{"component": "lane", "label": "busy:", "dashboard": "abc"}],
+        status_post_title="t",
+        status_post_generated_utc="u",
+        status_post_instant_reads={"results": [_ok(5)]},
+        status_post_history_reads={"results": []},
+        status_post_dashboard_base="https://grafana.example.test",
+    )
+    assert "<https://grafana.example.test/d/abc|dashboard>" in text
+
+
+def test_the_gpu_rows_link_the_local_llm_scoreboard():
+    spec = yaml.safe_load((ROOT / "playbooks/vars/status-posts/gpu.yml").read_text(encoding="utf-8"))
+    assert all(row.get("dashboard") == "local-llm-scoreboard" for row in spec["status_post_rows"])
+
+
+def test_the_dashboard_base_is_the_grafana_vhost_from_the_environment():
+    assert _play()["vars"]["status_post_dashboard_base"] == "https://grafana.{{ status_post_ingress_domain }}"
