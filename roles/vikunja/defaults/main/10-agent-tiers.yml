@@ -14,6 +14,17 @@ vikunja_agent_read_allowlist:
 vikunja_agent_write_allowlist:
   - 64
 
+# The write tier's token holds every read-write action on the scoped route
+# groups except the delete actions. vikunja_rw_permissions is set from the
+# route catalogue in tasks/mcp_tokens.yml; before that this resolves to {}.
+vikunja_agent_write_permissions: >-
+  {%- set _pairs = [] -%}
+  {%- for _group, _actions in (vikunja_rw_permissions | default({})).items() -%}
+  {%- set _kept = _actions | reject('search', '^delete') | list -%}
+  {%- if _kept -%}{%- set _discard = _pairs.append([_group, _kept]) -%}{%- endif -%}
+  {%- endfor -%}
+  {{ dict(_pairs) }}
+
 # One row owns every app-agent identity choice. Add a tier here to provision its
 # service user, mint its scoped API token, reconcile its exact shares, publish
 # its own OpenBao leaf, and verify effective API visibility.
@@ -37,5 +48,6 @@ vikunja_agent_tiers:
     openbao_path: vikunja-write
     openbao_login_path: vikunja-write-login
     token_field: VIKUNJA_AGENT_WRITE_TOKEN
+    permissions: "{{ vikunja_agent_write_permissions }}"
     share_permission: 1
     project_allowlist: "{{ vikunja_agent_write_allowlist }}"

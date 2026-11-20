@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.56.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.55.0...v5.56.0) (2026-11-17)
+
+
+### Features
+
+* **vikunja:** drop delete actions from the write tier token ([#3762](https://github.com/dryvist/ansible-proxmox-apps/issues/3762)) ([9e23abc](https://github.com/dryvist/ansible-proxmox-apps/commit/9e23abc97b78bcb4e84d2399ff2353d301a3d357))
+
 ## [5.55.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.54.0...v5.55.0) (2026-11-17)
 
 

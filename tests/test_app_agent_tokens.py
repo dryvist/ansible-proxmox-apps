@@ -281,6 +281,23 @@ def test_vikunja_clerk_scope_adds_but_never_deletes():
     assert not any("delete" in actions for actions in permissions.values())
 
 
+def test_vikunja_write_tier_token_keeps_every_action_but_delete():
+    defaults = _vikunja_defaults()
+    write_row = next(row for row in defaults["vikunja_agent_tiers"] if row["id"] == "vikunja-write")
+    assert write_row["permissions"] == "{{ vikunja_agent_write_permissions }}"
+    rw = {
+        "tasks": ["read_all", "read_one", "create", "update", "delete", "delete_bulk"],
+        "tasks_comments": ["create", "read_all", "delete"],
+        "tasks_assignees": ["delete"],
+    }
+    permissions = _render(defaults["vikunja_agent_write_permissions"], {"vikunja_rw_permissions": rw})
+    assert permissions == {
+        "tasks": ["read_all", "read_one", "create", "update"],
+        "tasks_comments": ["create", "read_all"],
+    }
+    assert _render(defaults["vikunja_agent_write_permissions"], {}) == {}
+
+
 def test_vikunja_token_set_facts_never_read_a_key_they_set():
     # set_fact renders every key before it sets any: a sibling reference is
     # undefined for the first identity and the previous identity's value after.

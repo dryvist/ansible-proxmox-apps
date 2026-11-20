@@ -1,0 +1,65 @@
+---
+# Inputs are include params (vars on include_tasks): they outrank facts that earlier plays in the same run set, and
+# they do not persist into later plays.
+- name: Reject an unreadable pgBackRest credential when the feature is enabled
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Expect the credential assertion to fail with missing field names
+      block:
+        - name: Run the role credential assertion
+          ansible.builtin.include_tasks: ../../../roles/postgres/tasks/assert_pgbackrest_record.yml
+          vars:
+            postgres_pgbackrest_enabled: true
+            bao_postgres_backup_s3_secrets: {}
+      rescue:
+        - name: Save the expected assertion message
+          ansible.builtin.set_fact:
+            _pgbackrest_credential_failure_message: "{{ ansible_failed_result.msg }}"
+
+        - name: Verify the error identifies the host, secret variable, and fields
+          ansible.builtin.assert:
+            that:
+              - "'localhost' in _pgbackrest_credential_failure_message"
+              - "'bao_postgres_backup_s3_secrets' in _pgbackrest_credential_failure_message"
+              - "'AWS_ENDPOINT_URL' in _pgbackrest_credential_failure_message"
+              - "'AWS_REGION' in _pgbackrest_credential_failure_message"
+              - "'AWS_ACCESS_KEY_ID' in _pgbackrest_credential_failure_message"
+              - "'AWS_SECRET_ACCESS_KEY' in _pgbackrest_credential_failure_message"
+              - "'BUCKET' in _pgbackrest_credential_failure_message"
+            fail_msg: "The enabled pgBackRest credential error omitted required context."
+            quiet: true
+
+        - name: Record that the expected credential failure occurred
+          ansible.builtin.set_fact:
+            _pgbackrest_credential_failure_seen: true
+
+    - name: Assert the enabled credential case failed as expected
+      ansible.builtin.assert:
+        that:
+          - _pgbackrest_credential_failure_seen | default(false) | bool
+        fail_msg: "An unreadable pgBackRest credential did not fail the enabled case."
+        quiet: true
+
+- name: Allow an unreadable pgBackRest credential when the feature is disabled
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Run the role credential assertion with pgBackRest disabled
+      ansible.builtin.include_tasks: ../../../roles/postgres/tasks/assert_pgbackrest_record.yml
+      vars:
+        postgres_pgbackrest_enabled: false
+        bao_postgres_backup_s3_secrets: {}
+
+    - name: Record that the disabled case converged
+      ansible.builtin.set_fact:
+        _pgbackrest_disabled_case_converged: true
+
+    - name: Assert the disabled credential case converges
+      ansible.builtin.assert:
+        that:
+          - _pgbackrest_disabled_case_converged | bool
+        fail_msg: "The disabled pgBackRest credential case did not converge."
+        quiet: true
