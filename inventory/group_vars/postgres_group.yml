@@ -70,6 +70,31 @@ postgres_managed_databases:
          | mandatory('HATCHET_DB_PASSWORD missing: OpenBao fetch did not supply it') }}
     client_cidr: "{{ lookup('env', 'NETWORK_CIDR_AI') | default('', true) }}"
 
+# Read-only logins for the tracker metrics exporter (prometheus_stack
+# sql_exporter). SELECT only on the tables its queries read; admitted from the
+# Prometheus container's single address.
+postgres_readonly_logins:
+  - name: tracker_metrics_vikunja
+    database: vikunja
+    tables: [tasks, projects, labels, label_tasks]
+    password: >-
+      {{ bao_apps_secrets.tracker_metrics_vikunja_password
+         | default(undef(), true)
+         | mandatory('tracker_metrics_vikunja_password missing: OpenBao fetch did not supply it') }}
+    client_cidr: >-
+      {{ hostvars['localhost']['tofu_data']['containers']['prometheus']['ip']
+         | mandatory('tofu_data prometheus container address required') }}/32
+  - name: tracker_metrics_zammad
+    database: zammad
+    tables: [tickets, groups, ticket_states, ticket_state_types, ticket_priorities]
+    password: >-
+      {{ bao_apps_secrets.tracker_metrics_zammad_password
+         | default(undef(), true)
+         | mandatory('tracker_metrics_zammad_password missing: OpenBao fetch did not supply it') }}
+    client_cidr: >-
+      {{ hostvars['localhost']['tofu_data']['containers']['prometheus']['ip']
+         | mandatory('tofu_data prometheus container address required') }}/32
+
 # Applied to the primary and its streaming standby alike: a hot standby refuses
 # to replay when its max_connections is below the primary's.
 postgres_max_connections: 200
