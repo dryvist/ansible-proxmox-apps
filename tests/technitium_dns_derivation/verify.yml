@@ -78,3 +78,91 @@
       loop: "{{ cases }}"
       loop_control:
         label: "{{ item.name }}"
+
+- name: Verify inventory aliases through the DNS record builder
+  hosts: localhost
+  gather_facts: false
+  vars:
+    technitium_dns_apply: false
+    technitium_dns_zone: example.test
+    technitium_dns_host: 192.0.2.53
+    technitium_dns_proxmox_endpoint_ips: []
+    technitium_dns_ingress_aliases: [ingress-owned, INGRESS-CASE]
+    technitium_dns_explicit_ingress_names: [explicit-ingress.example.test]
+    technitium_dns_cname_records:
+      - {name: service-owned, target: service-target}
+      - {name: SERVICE-CASE, target: service-target}
+    technitium_dns_extra_cname_records:
+      - {name: extra-owned, target: extra-target.other.test}
+      - {name: EXTRA-CASE, target: extra-target.other.test}
+    technitium_dns_extra_a_records:
+      - {name: extra-a-owned, ip: 192.0.2.54, zone: example.test}
+    fixture_hosts:
+      - {name: leased-name, hostname: leased-node, container_ip: leased-node.guest.test}
+      - {name: ADDRESSED-NAME, hostname: addressed-node, container_ip: 192.0.2.10}
+      - {name: same-name, hostname: same-name, container_ip: same-name.guest.test}
+      - {name: SAME-CASE, hostname: same-case, container_ip: same-case.guest.test}
+      - {name: no-hostname, container_ip: unnamed.guest.test}
+      - {name: addressed-node, hostname: canonical-target, container_ip: canonical-target.guest.test}
+      - {name: ingress-owned, hostname: ingress-target, container_ip: ingress-target.guest.test}
+      - {name: ingress-case, hostname: ingress-case-target, container_ip: ingress-case-target.guest.test}
+      - {name: explicit-ingress, hostname: explicit-target, container_ip: explicit-target.guest.test}
+      - {name: service-owned, hostname: service-target, container_ip: service-target.guest.test}
+      - {name: service-case, hostname: service-case-target, container_ip: service-case-target.guest.test}
+      - {name: extra-owned, hostname: extra-target, container_ip: extra-target.guest.test}
+      - {name: extra-case, hostname: extra-case-target, container_ip: extra-case-target.guest.test}
+      - {name: extra-a-owned, hostname: extra-a-target, container_ip: extra-a-target.guest.test}
+      - {name: invalid_label, hostname: invalid-target, container_ip: invalid-target.guest.test}
+      - {name: invalid.label, hostname: dotted-target, container_ip: dotted-target.guest.test}
+      - {name: "-leading", hostname: leading-target, container_ip: leading-target.guest.test}
+      - {name: "trailing-", hostname: trailing-target, container_ip: trailing-target.guest.test}
+      - name: "{{ 'a' * 64 }}"
+        hostname: long-target
+        container_ip: long-target.guest.test
+    expected_inventory_cnames:
+      - {name: leased-name, target: leased-node.guest.test}
+      - {name: addressed-name, target: addressed-node.example.test}
+  tasks:
+    - name: Add synthetic hostvars without contacting guests
+      ansible.builtin.add_host:
+        name: "{{ item.name }}"
+        container_ip: "{{ item.container_ip }}"
+      loop: "{{ fixture_hosts }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Store canonical hostnames as synthetic guest facts
+      ansible.builtin.set_fact:
+        hostname: "{{ item.hostname }}"
+      delegate_to: "{{ item.name }}"
+      delegate_facts: true
+      loop: "{{ fixture_hosts | selectattr('hostname', 'defined') | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Build records with inventory aliases enabled by default
+      ansible.builtin.include_role:
+        name: technitium_dns
+        tasks_from: main/build_records.yml
+
+    - name: Assert leased and addressed targets and exclude occupied or invalid names
+      ansible.builtin.assert:
+        that:
+          - >-
+            technitium_dns_inventory_cname_records | sort(attribute='name')
+            == expected_inventory_cnames | sort(attribute='name')
+          - "{'name': 'addressed-node', 'ip': '192.0.2.10'} in technitium_dns_a_records"
+          - "'leased-node' not in (technitium_dns_a_records | map(attribute='name') | list)"
+        success_msg: Inventory aliases use canonical targets and preserve existing record owners
+
+    - name: Rebuild records with inventory aliases disabled
+      ansible.builtin.include_role:
+        name: technitium_dns
+        tasks_from: main/build_records.yml
+      vars:
+        technitium_dns_inventory_name_cnames: false
+
+    - name: Assert disabling aliases clears the generated list
+      ansible.builtin.assert:
+        that:
+          - technitium_dns_inventory_cname_records == []

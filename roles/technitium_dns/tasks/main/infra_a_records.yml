@@ -1,4 +1,5 @@
 ---
+# Include child owners when inventory aliases need a collision check.
 - name: Get existing A records for zone
   delegate_to: localhost
   ansible.builtin.uri:
@@ -6,7 +7,8 @@
       {{ technitium_dns_api_url }}/api/zones/records/get?token={{
       technitium_dns_api_token }}&domain={{
       technitium_dns_zone | urlencode }}&zone={{
-      technitium_dns_zone | urlencode }}
+      technitium_dns_zone | urlencode }}&listZone={{
+      (technitium_dns_inventory_cname_records | length > 0) | ternary('true', 'false') }}
     method: GET
     return_content: true
     timeout: "{{ technitium_dns_api_timeout }}"
@@ -188,6 +190,16 @@
   no_log: true
 
 - name: Create extra CNAME records (verbatim FQDN target)
+  vars:
+    _zone_suffix: "{{ '[.]' ~ (technitium_dns_zone | lower | regex_escape) ~ '[.]?$' }}"
+    _published_labels: >-
+      {{ technitium_dns_existing_records.json.response.records
+         | map(attribute='name') | map('lower') | select('search', _zone_suffix)
+         | map('regex_replace', _zone_suffix, '') | list }}
+    _inventory_cnames: >-
+      {{ technitium_dns_inventory_cname_records | rejectattr('name', 'in', _published_labels) | list
+         if (technitium_dns_inventory_cname_records | length > 0 and technitium_dns_role == 'primary'
+             and technitium_dns_apply | bool) else [] }}
   delegate_to: localhost
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
@@ -202,7 +214,7 @@
       overwrite: "true"
     return_content: true
     timeout: "{{ technitium_dns_api_timeout }}"
-  loop: "{{ technitium_dns_extra_cname_records | selectattr('target', 'truthy') | list }}"
+  loop: "{{ (technitium_dns_extra_cname_records | selectattr('target', 'truthy') | list) + _inventory_cnames }}"
   loop_control:
     label: "{{ item.name }} -> {{ item.target }}"
   register: technitium_dns_extra_cname_result

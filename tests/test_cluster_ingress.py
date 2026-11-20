@@ -115,6 +115,39 @@ class ClusterIngress(unittest.TestCase):
         variables = dict(self.variables, technitium_dns_existing_records={"json": {"response": {"records": records}}})
         self.assertEqual(_render(task["loop"], variables, wrap=False), records[:1])
 
+    def test_inventory_cnames_share_the_extra_writer_and_preserve_live_names(self):
+        tasks = "roles/technitium_dns/tasks/main/infra_a_records.yml"
+        writer = _find(tasks, "Create extra CNAME records (verbatim FQDN target)")
+        reader = _find(tasks, "Get existing A records for zone")
+        explicit = {"name": "explicit", "target": "external.example.invalid"}
+        available = {"name": "available", "target": "leased.example.invalid"}
+        zone = self.variables["technitium_dns_zone"]
+        records = [
+            {"type": "A", "name": f"OCCUPIED.{zone}"},
+            {"type": "CNAME", "name": f"existing.{zone}"},
+            {"type": "CNAME", "name": f"explicit.{zone}"},
+        ]
+        variables = dict(
+            self.variables,
+            technitium_dns_api_url="http://localhost:5380",
+            technitium_dns_api_token="fixture",
+            technitium_dns_existing_records={"json": {"response": {"records": records}}},
+            technitium_dns_extra_cname_records=[explicit, {"name": "empty", "target": ""}],
+            technitium_dns_inventory_cname_records=[
+                available,
+                {"name": "occupied", "target": available["target"]},
+                {"name": "existing", "target": available["target"]},
+            ],
+        )
+        variables.update({key: trust_as_template(value) for key, value in writer["vars"].items()})
+        self.assertIn("&listZone=true", _render(reader["ansible.builtin.uri"]["url"], variables, wrap=False))
+        self.assertEqual(_render(writer["loop"], variables, wrap=False), [explicit, available])
+        body = writer["ansible.builtin.uri"]["body"]
+        for record in [explicit, available]:
+            row = dict(variables, item=record)
+            self.assertEqual(_render(body["domain"], row, wrap=False), f"{record['name']}.{zone}")
+            self.assertEqual(_render(body["cname"], row, wrap=False), record["target"])
+
     def test_failed_probes_preserve_dns_and_existing_writer(self):
         task = _find(DNS, "Require a reachable ingress before changing cluster DNS ownership")
         variables = dict(self.variables, technitium_dns_ingress_target_ip="",
