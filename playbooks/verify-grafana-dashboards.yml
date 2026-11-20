@@ -21,6 +21,16 @@
   # The password path is a role default, and this play does not run the role.
   vars_files:
     - ../roles/grafana_stack/defaults/main.yml
+  vars:
+    # Keep this list in sync with the pinned-release files unpacked in
+    # roles/grafana_stack/tasks/provisioning.yml. The contact-point file has no rules.
+    grafana_stack_release_alert_rule_files:
+      - accelerator-underutilized.yml
+      - pay-per-token-spend.yml
+      - hermes-cron-jobs.yml
+      - runner-guest-blocked.yml
+      - tracker-exporter-health.yml
+    _release_rule_missing: {health: missing, state: unknown, lastEvaluation: ''}
   tasks:
     - name: Read the persisted admin password
       ansible.builtin.slurp:
@@ -80,6 +90,54 @@
       no_log: true
       failed_when: _provisioned_rules.status != 200
 
+    - name: Read pinned-release alert rule files
+      ansible.builtin.slurp:
+        src: "{{ grafana_stack_data_dir }}/provisioning/alerting/{{ item }}"
+      loop: "{{ grafana_stack_release_alert_rule_files }}"
+      loop_control:
+        label: "{{ item }}"
+      # Read-only file reads must still run during check-mode verification.
+      check_mode: false
+      register: _release_alert_rule_file_reads
+      no_log: true
+
+    - name: Derive alert rules from the pinned release files
+      ansible.builtin.set_fact:
+        _release_alert_rules: >-
+          {%- set ns = namespace(rules=[]) -%}
+          {%- for file in _release_alert_rule_file_reads.results -%}
+            {%- set parsed_file = file.content | b64decode | from_yaml -%}
+            {%- for group in parsed_file.groups | default([]) -%}
+              {%- for rule in group.rules | default([]) -%}
+                {%- set query = namespace(expr='') -%}
+                {%- for datum in rule.data | default([]) -%}
+                  {%- if (datum.refId | default('')) == 'A' -%}
+                    {%- set query.expr = (datum.model | default({})).expr | default('') -%}
+                  {%- endif -%}
+                {%- endfor -%}
+                {%- set _ = ns.rules.append({
+                  'uid': rule.uid | default(''),
+                  'group': group.name | default(''),
+                  'title': rule.title | default(''),
+                  'for': rule['for'] | default(''),
+                  'expr': query.expr
+                }) -%}
+              {%- endfor -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {{ ns.rules }}
+
+    - name: Assert every pinned-release alert rule is provisioned
+      ansible.builtin.assert:
+        that: >-
+          (_release_alert_rules | map(attribute='uid') | list
+           | difference(_provisioned_rules.json | map(attribute='uid') | list) | length) == 0
+        fail_msg: >-
+          Missing pinned-release alert rule uid(s):
+          {{ (_release_alert_rules | map(attribute='uid') | list)
+             | difference(_provisioned_rules.json | map(attribute='uid') | list) }}
+        success_msg: "All {{ _release_alert_rules | length }} pinned-release alert rule(s) are provisioned."
+
     - name: Assert every rendered alert rule is provisioned
       ansible.builtin.assert:
         that: >-
@@ -131,6 +189,86 @@
       ansible.builtin.set_fact:
         _evaluated_rules: "{{ _rule_health.json.data.groups | map(attribute='rules') | flatten }}"
 
+    - name: Flatten ruler rules with group and alert rule uid context
+      ansible.builtin.set_fact:
+        _release_evaluated_rules: >-
+          {%- set ns = namespace(rules=[]) -%}
+          {%- for ruler_group in _rule_health.json.data.groups | default([]) -%}
+            {%- for ruler_rule in ruler_group.rules | default([]) -%}
+              {%- set alert_uids = namespace(values=[]) -%}
+              {%- for alert in ruler_rule.alerts | default([]) -%}
+                {%- set _ = alert_uids.values.append(
+                  (alert.labels | default({})).get('__alert_rule_uid__', '')
+                ) -%}
+              {%- endfor -%}
+              {%- set _ = ns.rules.append({
+                'group': ruler_group.name | default('unknown'),
+                'name': ruler_rule.name | default('unknown'),
+                'health': ruler_rule.health | default('unknown'),
+                'state': ruler_rule.state | default('unknown'),
+                'lastEvaluation': ruler_rule.lastEvaluation | default(''),
+                'alert_rule_uids': alert_uids.values
+              }) -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {{ ns.rules }}
+
+    - name: Match pinned-release alert rules to ruler results
+      ansible.builtin.set_fact:
+        _release_rule_checks: >-
+          {%- set ns = namespace(rules=[]) -%}
+          {%- for expected in _release_alert_rules -%}
+            {%- set title_matches = namespace(rules=[]) -%}
+            {%- set uid_matches = namespace(rules=[]) -%}
+            {%- for evaluated in _release_evaluated_rules -%}
+              {%- if evaluated.group == expected.group and evaluated.name == expected.title -%}
+                {%- set _ = title_matches.rules.append(evaluated) -%}
+              {%- endif -%}
+              {%- if expected.uid in evaluated.alert_rule_uids -%}
+                {%- set _ = uid_matches.rules.append(evaluated) -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {%- set _ = ns.rules.append(expected | combine({
+              'matches': title_matches.rules if title_matches.rules | length > 0 else uid_matches.rules
+            })) -%}
+          {%- endfor -%}
+          {{ ns.rules }}
+
+    - name: Assert every pinned-release alert rule is loaded without evaluation errors
+      ansible.builtin.assert:
+        that:
+          - item.matches | length == 1
+          - (_release_rule_match.health | lower) != 'error'
+        fail_msg: >-
+          Pinned-release rule uid "{{ item.uid }}" in group "{{ item.group }}"
+          is missing from ruler results or reports health
+          "{{ _release_rule_match.health | default('unknown') }}".
+      vars:
+        _release_rule_match: "{{ item.matches | first | default(_release_rule_missing) }}"
+      loop: "{{ _release_rule_checks }}"
+      loop_control:
+        label: "{{ item.uid }}"
+
+    - name: Assert non-nodata pinned-release rules evaluated within the last 10 minutes
+      ansible.builtin.assert:
+        that: >-
+          (now(utc=true) -
+            (_release_rule_match.lastEvaluation
+             | regex_replace('\\.\\d+Z$', 'Z')
+             | to_datetime('%Y-%m-%dT%H:%M:%SZ'))
+          ).total_seconds() < 600
+        fail_msg: >-
+          Pinned-release rule uid "{{ item.uid }}" last evaluated more than 10 minutes ago
+          ({{ _release_rule_match.lastEvaluation | default('MISSING') }}).
+      vars:
+        _release_rule_match: "{{ item.matches | first | default(_release_rule_missing) }}"
+      loop: "{{ _release_rule_checks }}"
+      loop_control:
+        label: "{{ item.uid }}"
+      when: >-
+        item.matches | length == 1 and
+        (_release_rule_match.health | lower) != 'nodata'
+
     - name: Assert every expected rule is evaluating without error
       ansible.builtin.assert:
         that:
@@ -180,6 +318,46 @@
       loop: "{{ _expected_rules }}"
       loop_control:
         label: "{{ item.title }}"
+
+    - name: Report pinned-release rule evaluation state
+      ansible.builtin.debug:
+        msg: >-
+          uid={{ item.uid }} group={{ item.group }} for={{ item['for'] }}
+          expr={{ item.expr }} state={{ _release_rule_match.state | default('unknown') }}
+          health={{ _release_rule_match.health | default('unknown') }}
+      vars:
+        _release_rule_match: "{{ item.matches | first | default(_release_rule_missing) }}"
+      loop: "{{ _release_rule_checks }}"
+      loop_control:
+        label: "{{ item.uid }}"
+
+    - name: Count firing alert instances per ruler group
+      ansible.builtin.set_fact:
+        _release_alert_firing_summary: >-
+          {%- set ns = namespace(groups=[]) -%}
+          {%- for ruler_group in _rule_health.json.data.groups | default([]) -%}
+            {%- set firing = namespace(count=0) -%}
+            {%- for ruler_rule in ruler_group.rules | default([]) -%}
+              {%- for alert in ruler_rule.alerts | default([]) -%}
+                {%- set alert_state = alert.state | default('unknown', true) | lower -%}
+                {%- if alert_state in ['alerting', 'firing'] -%}
+                  {%- set firing.count = firing.count + 1 -%}
+                {%- endif -%}
+              {%- endfor -%}
+            {%- endfor -%}
+            {%- set _ = ns.groups.append({
+              'group': ruler_group.name | default('unknown'),
+              'firing': firing.count
+            }) -%}
+          {%- endfor -%}
+          {{ (ns.groups | sort(attribute='firing', reverse=true) | list)[:10] }}
+
+    - name: Report top rule groups by firing alert instances
+      ansible.builtin.debug:
+        msg: "group={{ item.group }} firing={{ item.firing }}"
+      loop: "{{ _release_alert_firing_summary }}"
+      loop_control:
+        label: "{{ item.group }}"
 
 - name: Verify Prometheus scrape targets are up
   hosts: prometheus_group
