@@ -1,5 +1,24 @@
 # Changelog
 
+## [5.63.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.62.1...v5.63.0) (2026-11-20)
+
+
+### Features
+
+* **grafana_stack:** deploy the runner guest blocked-process alert from grafana-dashboards v1.45.1 ([#3836](https://github.com/dryvist/ansible-proxmox-apps/issues/3836)) ([f77f04b](https://github.com/dryvist/ansible-proxmox-apps/commit/f77f04b3f8798a8a475995b7fb891c6cb6bd786b))
+* **object_storage:** prefix-scoped lifecycle rules; expire postgres/ noncurrent versions after 1 day ([#3829](https://github.com/dryvist/ansible-proxmox-apps/issues/3829)) ([5373934](https://github.com/dryvist/ansible-proxmox-apps/commit/5373934496affbfb6ac921e0dbd9cf803ac0b827))
+* **prometheus:** keep guest blocked and running process counts ([#3833](https://github.com/dryvist/ansible-proxmox-apps/issues/3833)) ([771aaff](https://github.com/dryvist/ansible-proxmox-apps/commit/771aaff8280656c6c06804f4cf75e8154bd8044f))
+
+
+### Bug Fixes
+
+* **github_runner:** judge only installed runner units in check mode ([#3838](https://github.com/dryvist/ansible-proxmox-apps/issues/3838)) ([77f05a0](https://github.com/dryvist/ansible-proxmox-apps/commit/77f05a09c4e2607f64691afdb7ad5a051d01af46))
+* **github_runner:** size docker-host pools to fit the pool-limit gate ([#3837](https://github.com/dryvist/ansible-proxmox-apps/issues/3837)) ([457be93](https://github.com/dryvist/ansible-proxmox-apps/commit/457be93eb33147af79dda887f1211c5a0774b6e7))
+* **github-runner:** fit the second CI guest pools inside the capacity gate ([#3835](https://github.com/dryvist/ansible-proxmox-apps/issues/3835)) ([349a0de](https://github.com/dryvist/ansible-proxmox-apps/commit/349a0de07f99889630458e3b3d84791d692f3f79))
+* **github-runner:** fit the second CI guest's pools inside the capacity gate ([349a0de](https://github.com/dryvist/ansible-proxmox-apps/commit/349a0de07f99889630458e3b3d84791d692f3f79))
+* **status-post:** drop the GPU generation-rate row and scale percent sparklines from 0 to 100 ([#3840](https://github.com/dryvist/ansible-proxmox-apps/issues/3840)) ([541347c](https://github.com/dryvist/ansible-proxmox-apps/commit/541347cabb2cde1e8a6eb9462818b8265cd2b19a))
+* **zammad:** verify agent-write rights through rails runner ([#3841](https://github.com/dryvist/ansible-proxmox-apps/issues/3841)) ([4796472](https://github.com/dryvist/ansible-proxmox-apps/commit/4796472ee4af2c478f39f28d1ba8fe601ea63b30))
+
 ## [5.62.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.62.0...v5.62.1) (2026-11-20)
 
 
