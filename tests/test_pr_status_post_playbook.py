@@ -296,3 +296,12 @@ def test_the_message_reports_unmeasured_when_the_metrics_query_fails():
         f"{RED} busy percent: unmeasured\n"
         f"{RED} Hermes cron runs, last hour: unmeasured"
     )
+
+
+def test_open_pull_requests_are_green_at_30_and_yellow_from_31():
+    def mark(total):
+        text = _render({"pr_status_generated_utc": "t", "pr_status_open_total": total, "pr_status_merged_total": 0,
+                        "pr_status_busy_series": [], "pr_status_jobs_measured": False})
+        return next(line for line in text.splitlines() if "open pull requests:" in line)[0]
+
+    assert [mark(total) for total in (30, 31, 40, 41)] == [GREEN, YELLOW, YELLOW, RED]
