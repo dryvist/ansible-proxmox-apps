@@ -1,22 +1,13 @@
 ---
 - name: Build A records from inventory
-  # Iterate over groups['all'] explicitly. Iterating `hostvars | dict2items`
-  # in Ansible 2.19 returns HostVarsVars proxy objects whose attribute
-  # `is defined` checks behave differently from plain dicts and silently
-  # skip every host. Using groups + hostvars[host] is the supported pattern.
+  # Iterate over groups['all'] explicitly: in Ansible 2.19, iterating
+  # `hostvars | dict2items` yields HostVarsVars proxy objects whose `is defined`
+  # checks differ from plain dicts and silently skip every host.
   #
-  # Only guests that HAVE a declared address get a record here, and that is
-  # exactly the network/critical tier (resolvers, ingress, secrets) — their
-  # `container_ip` is a real address because they are the one exception to the
-  # pool-lease default.
-  #
-  # Leased guests are skipped deliberately, not by oversight. Their address is
-  # held solely by the DHCP lease, and the gateway already answers for its own
-  # lease-table clients, so `{hostname}.{apex}` resolves without anything here.
-  # Publishing a record for them would mean writing the same address down a
-  # second time, in a second system, with no way to notice when the two
-  # disagreed — which is the failure this addressing model exists to remove. A
-  # leased guest's `container_ip` is its FQDN, and the filter below drops it.
+  # Only guests with a declared address (network/critical tier) get a record.
+  # Leased guests are skipped: their address is held by the DHCP lease and the
+  # gateway answers for it, so publishing would duplicate the address. Their
+  # `container_ip` is an FQDN; the filter below drops it.
   ansible.builtin.set_fact:
     technitium_dns_a_records: >-
       {{
@@ -55,10 +46,52 @@
   loop_control:
     label: DHCP guest
 
+- name: Reset inventory-name CNAME records
+  ansible.builtin.set_fact:
+    technitium_dns_inventory_cname_records: []
+
+- name: Build CNAME records for inventory names
+  vars:
+    _alias_name: "{{ item | lower }}"
+    _alias_domain: "{{ _alias_name }}.{{ technitium_dns_zone | lower }}"
+    _container_ip: "{{ hostvars[item].container_ip | default('') }}"
+    _claimed_labels: >-
+      {{ ((technitium_dns_a_records | map(attribute='name') | list)
+          + technitium_dns_ingress_aliases
+          + (technitium_dns_cname_records | map(attribute='name') | list)
+          + (technitium_dns_extra_cname_records | map(attribute='name') | list)
+          + (technitium_dns_inventory_cname_records | map(attribute='name') | list))
+         | map('lower') | list }}
+    _claimed_domains: >-
+      {{ (technitium_dns_explicit_ingress_names + technitium_dns_dhcp_guest_fqdns)
+         | map('lower') | map('regex_replace', '[.]$', '') | list }}
+    _extra_a_zones: >-
+      {{ technitium_dns_extra_a_records | selectattr('ip', 'truthy')
+         | selectattr('name', 'regex', _alias_name, ignorecase=true, match_type='fullmatch')
+         | map(attribute='zone', default=technitium_dns_zone) | map('lower') | list }}
+  ansible.builtin.set_fact:
+    technitium_dns_inventory_cname_records: >-
+      {{ technitium_dns_inventory_cname_records + [{
+          'name': _alias_name,
+          'target': (_container_ip if _container_ip in technitium_dns_dhcp_guest_fqdns
+                     else hostvars[item].hostname ~ '.' ~ technitium_dns_zone)
+        }] }}
+  loop: "{{ groups['all'] | default([]) | reject('equalto', 'localhost') | list }}"
+  when:
+    - technitium_dns_inventory_name_cnames | bool
+    - hostvars[item].hostname is defined
+    - _alias_name != hostvars[item].hostname | lower
+    - _alias_name is regex('[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', match_type='fullmatch')
+    - _alias_name not in _claimed_labels
+    - _alias_domain not in _claimed_domains
+    - technitium_dns_zone | lower not in _extra_a_zones
+  loop_control:
+    label: "{{ item }}"
+
 # Fail loud, not silent: a builder that skips every host (e.g. the hostname
 # fact missing from the dynamic inventory) yields an empty list and the role
-# would "succeed" while creating nothing. There is always at least one guest
-# (this DNS host itself), so zero records is always a bug.
+# would "succeed" while creating nothing. There is always at least one guest,
+# so zero records is always a bug.
 - name: Assert the A-record builder produced records
   ansible.builtin.assert:
     that:
@@ -72,7 +105,7 @@
 # Belt-and-braces: the builder's filter should already have dropped every
 # name-valued target, so this can only fire if that filter is weakened. An A
 # record pointing at a hostname is stored happily by Technitium and fails at
-# resolution time, far from the cause — so reject it before any API call.
+# resolution time, far from the cause — reject it before any API call.
 - name: Assert every A-record target is an IPv4 address
   ansible.builtin.assert:
     that:
@@ -84,9 +117,8 @@
       Guest(s) [{{ technitium_dns_a_records | default([])
       | rejectattr('ip', 'match', '^\d{1,3}(\.\d{1,3}){3}$')
       | map(attribute='name') | join(', ') }}] reached the writer with a name,
-      not an address. A leased guest must be skipped by the builder above (the
-      lease table answers for it); only network/critical guests, which declare a
-      static address, belong in this zone.
+      not an address. Only network/critical guests declaring a static address
+      belong in this zone.
     quiet: true
 
 - name: Build Proxmox endpoint apex A records
@@ -143,11 +175,9 @@
                 | map(attribute='ip') | list | first) | default(technitium_dns_host)) }}
 
 # The LIVE zone type is the only honest answer to "is this node the primary?".
-# The vmid heuristic below is a BOOTSTRAP rule, not a source of truth: it picks
-# the lowest-vmid member, which on this estate designated the SECONDARY as
-# primary and the PRIMARY as secondary. Every record write then failed on one
-# host and was skipped on the other, and the run still exited green. Ask the
-# server what it actually holds.
+# The vmid heuristic above is a BOOTSTRAP rule, not a source of truth: it once
+# designated the SECONDARY as primary, so every record write failed on one host
+# and was skipped on the other while the run still exited green. Ask the server.
 - name: Read this node's live zone type (authoritative over any heuristic)
   delegate_to: localhost
   ansible.builtin.uri:
@@ -164,11 +194,11 @@
   no_log: true
 
 # Technitium answers a bad token with HTTP 200 and status "invalid-token", so
-# `failed_when: false` is not even required for the collapse -- the `default([])`
-# below turns ANY unusable answer into "no zones", which is indistinguishable
-# from "the zone does not exist yet" and drops straight through to the very
-# heuristic the comment above documents as having caused a past outage.
-# An unusable answer must stop the run, not silently pick a role.
+# `failed_when: false` is not even required for the collapse — the `default([])`
+# below turns ANY unusable answer into "no zones", indistinguishable from "the
+# zone does not exist yet", and drops straight through to the very heuristic
+# documented above as having caused a past outage. An unusable answer must stop
+# the run, not silently pick a role.
 - name: FAIL -- the zone list was not usable, so the live zone type is unknown
   vars:
     _status: "{{ technitium_dns_zone_list.json.status | default('') }}"
@@ -177,9 +207,8 @@
       The Technitium zone list did not return status "ok"
       (status={{ _status | default('<none>', true) }},
       http={{ technitium_dns_zone_list.status | default('<none>') }}).
-      That says NOTHING about which zones exist, so this run must not fall back
-      to the lowest-vmid heuristic -- doing so is what designated the SECONDARY
-      as primary while the run still exited green.
+      That says nothing about which zones exist, so this run must not fall back
+      to the lowest-vmid heuristic.
   when:
     - technitium_dns_apply | bool
     - _status != 'ok'
@@ -193,8 +222,8 @@
 
 - name: Resolve Technitium role and secondary IPs
   ansible.builtin.set_fact:
-    # Precedence: an explicit override, then the LIVE zone type, then the
-    # bootstrap heuristic for a zone that does not exist yet.
+    # Precedence: explicit override, then LIVE zone type, then the bootstrap
+    # heuristic for a zone that does not exist yet.
     technitium_dns_role: >-
       {{ technitium_dns_role if (technitium_dns_role | length > 0)
          else ('primary' if technitium_dns_live_zone_type == 'Primary'
@@ -206,31 +235,27 @@
          else (technitium_dns_members | default([]) | map(attribute='ip')
                | reject('equalto', technitium_dns_primary_ip) | list) }}
 
-# Re-derive the ADDRESSES from the live roles, now that every member has
-# published its own.
+# Re-derive the ADDRESSES from the live roles.
 #
 # THE BUG THIS EXISTS FOR. Correcting technitium_dns_role from the live zone
 # type was not enough: technitium_dns_primary_ip above is still the lowest-vmid
 # guess, and technitium_dns_secondary_ips is "every member except that guess".
 # When the guess names the real SECONDARY, the "secondaries" list comes out
 # holding the PRIMARY'S OWN address — and the AXFR authorisation task in
-# ingress_and_apex.yml then writes a transfer ACL permitting the primary to
-# transfer from itself while refusing the actual secondary. Every transfer is
-# denied, the secondary keeps serving its last successful copy for the whole
-# expiry window (a week here), and NOTHING reports an error: the primary sees a
-# healthy zone, the converge exits 0, and only the secondary's `syncFailed` flag
-# says otherwise. That is the same silent-divergence failure the SOA guard in
-# health_check.yml exists to catch, arriving by a different route.
+# ingress_and_apex.yml writes a transfer ACL permitting the primary to transfer
+# from itself while refusing the actual secondary. Every transfer is denied,
+# the secondary serves its last copy for the whole expiry window, and NOTHING
+# reports an error: the run exits 0 and only the secondary's `syncFailed` flag
+# says otherwise.
 #
-# Ansible completes a task across every host in the play before starting the
-# next, so by this point each member's technitium_dns_role is readable from
-# hostvars. Fall back to the values above when nothing is resolvable — a
-# single-host run (--limit) cannot see its peers, and must not blank the ACL.
-# Addresses come from `container_ip`/`ansible_host` — the same source the member
-# list above uses — NOT from technitium_dns_host. technitium_dns_host is a
-# PLAY-level var, and play vars are not reliably readable out of hostvars for
-# OTHER hosts, so filtering on it silently yielded an empty peer list and this
-# whole task fell through to the broken heuristic values it exists to replace.
+# Ansible completes a task across every host before the next, so each member's
+# technitium_dns_role is readable from hostvars by this point. Fall back to the
+# values above when nothing is resolvable — a single-host run (--limit) cannot
+# see its peers and must not blank the ACL.
+#
+# Addresses come from `container_ip`/`ansible_host` — the same source the
+# member list above uses — NOT from technitium_dns_host, a play-level var not
+# reliably readable out of hostvars for OTHER hosts.
 - name: Map each member's live role to its address
   ansible.builtin.set_fact:
     technitium_dns_role_map: >-
@@ -258,19 +283,13 @@
   ansible.builtin.set_fact:
     technitium_dns_primary_ip: >-
       {{ _live_primaries | first | default(technitium_dns_primary_ip, true) }}
-    # The primary can never be its own secondary. Correcting the primary from
-    # the live roles was not enough on its own: when NO member reports the
+    # The primary can never be its own secondary. When NO member reports the
     # secondary role, `_live_secondaries` is empty and the fallback keeps the
-    # bootstrap list, which was derived by rejecting the lowest-vmid GUESS.
-    # If that guess named a member which is not the live primary, the list
-    # still holds the real primary's own address, and the AXFR authorisation
-    # guard downstream correctly refuses to write a transfer ACL naming it.
-    #
-    # Rejecting the resolved primary here makes the pair self-consistent in
-    # every case, so the guard is left to catch genuine faults rather than
-    # this derivation contradicting itself. The guard is deliberately NOT
-    # relaxed: an empty list after the rejection simply skips the ACL task,
-    # which is the correct behaviour when no secondary exists yet.
+    # bootstrap list, derived by rejecting the lowest-vmid GUESS — which may
+    # still hold the real primary's own address. Rejecting the resolved primary
+    # here makes the pair self-consistent in every case; the AXFR guard
+    # downstream is deliberately NOT relaxed — an empty list after the rejection
+    # simply skips the ACL task, the correct behaviour when no secondary exists.
     technitium_dns_secondary_ips: >-
       {{ (_live_secondaries if (_live_secondaries | length > 0)
           else technitium_dns_secondary_ips)

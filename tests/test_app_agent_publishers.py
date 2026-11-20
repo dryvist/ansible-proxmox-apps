@@ -174,3 +174,14 @@ def test_hermes_bridge_share_requests_hide_bearer_tokens():
     ]
     assert len(token_requests) == 3
     assert all(task.get("no_log") is True for task in token_requests)
+
+
+def test_zammad_agent_write_verification_skips_check_mode():
+    # It reads the bootstrap's stdout and live rights; check mode runs neither.
+    bootstrap_tasks = _yaml("roles/zammad/tasks/main/nginx_and_bootstrap.yml")
+    verify = _task(bootstrap_tasks, "Verify svc-agent-write effective roles and group access")
+    assert verify["ansible.builtin.include_tasks"] == "../verify_agent_write_rights.yml"
+    assert verify["when"] == "not ansible_check_mode"
+    assert "zammad_bootstrap.stdout" in (ROOT / "roles/zammad/tasks/verify_agent_write_rights.yml").read_text(
+        encoding="utf-8"
+    )

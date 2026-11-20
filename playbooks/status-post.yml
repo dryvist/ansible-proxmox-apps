@@ -1,0 +1,116 @@
+---
+# Hourly status post from a spec file, posted to the chat channel through the
+# alert hub. The post is chosen by the extra var status_post (or STATUS_POST
+# when it is unset) and read from playbooks/vars/status-posts/<post>.yml: a
+# title plus rows of {component, label, query, unit, green, yellow,
+# higher_is_better, decimals, sparkline}. Each row is one instant query
+# against a Prometheus-compatible endpoint; a sparkline row adds one 12 h
+# range read at a 1 h step. Every line renders through the status_line macro
+# in templates/status-lines.j2.
+#
+# All on localhost, no privilege escalation. The metrics reads are masked,
+# because a metrics endpoint can carry a token in its URL; a failed or empty
+# read renders as "unmeasured" instead of failing the run. The publish is the
+# same ntfy shape as playbooks/pr-status-post.yml.
+#
+# Fails before any request unless the post name, STATUS_METRICS_URL,
+# STATUS_CHANNEL and PROXMOX_SUBDOMAIN are set.
+#
+# Inputs:
+#   status_post         extra var naming the spec file (or env STATUS_POST)
+#   STATUS_METRICS_URL  base URL of the Prometheus-compatible read API (required)
+#   STATUS_CHANNEL      chat channel topic to post to (required)
+#   PROXMOX_SUBDOMAIN   estate subdomain that fronts the alert hub (required)
+#
+# Run directly:
+#   ansible-playbook -i localhost, playbooks/status-post.yml -e status_post=tracker
+
+- name: Read the status post spec and post its status
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    ansible_become: false
+    ansible_python_interpreter: auto_silent
+    status_post_name: "{{ status_post | default(lookup('env', 'STATUS_POST'), true) }}"
+    status_post_metrics_url: "{{ lookup('env', 'STATUS_METRICS_URL') }}"
+    status_post_channel: "{{ lookup('env', 'STATUS_CHANNEL') }}"
+    status_post_ingress_domain: "{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
+  tasks:
+    - name: Require the post name, the metrics endpoint and the chat channel
+      ansible.builtin.assert:
+        that:
+          - status_post_name is match('^[a-z0-9-]+$')
+          - status_post_metrics_url | length > 0
+          - status_post_channel is match('^[A-Za-z0-9_-]+$')
+          - status_post_ingress_domain | length > 0
+        fail_msg: >-
+          Pass -e status_post=<name> (or STATUS_POST) of lowercase letters,
+          digits and dashes, and set STATUS_METRICS_URL, STATUS_CHANNEL as a
+          bare topic name, and PROXMOX_SUBDOMAIN for the alert-hub host.
+        quiet: true
+
+    - name: Load the status post spec
+      ansible.builtin.include_vars:
+        file: "vars/status-posts/{{ status_post_name }}.yml"
+
+    - name: Require a title and at least one row with a query
+      ansible.builtin.assert:
+        that:
+          - status_post_title | default('') | length > 0
+          - status_post_rows | default([]) | length > 0
+          - status_post_rows | rejectattr('query', 'defined') | list | length == 0
+        fail_msg: The spec needs status_post_title and status_post_rows, each row with a query.
+        quiet: true
+
+    - name: Record the run time and the 12 h range
+      ansible.builtin.set_fact:
+        status_post_generated_utc: "{{ now(utc=True).strftime('%Y-%m-%d %H:%M UTC') }}"
+        status_post_range_end: "{{ now(utc=True).timestamp() | int }}"
+        status_post_range_start: "{{ (now(utc=True).timestamp() - 43200) | int }}"
+      changed_when: false
+
+    - name: Read each row's instant query
+      ansible.builtin.uri:
+        url: "{{ status_post_metrics_url }}/api/v1/query?query={{ status_post_row.query | urlencode }}"
+        method: GET
+      register: status_post_instant_reads
+      loop: "{{ status_post_rows }}"
+      loop_control:
+        loop_var: status_post_row
+        label: "{{ status_post_row.component }} {{ status_post_row.label | default('') }}"
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Read 12 h of history for each sparkline row
+      ansible.builtin.uri:
+        url: >-
+          {{ status_post_metrics_url }}/api/v1/query_range?query={{ status_post_row.query | urlencode
+          }}&start={{ status_post_range_start }}&end={{ status_post_range_end }}&step=3600
+        method: GET
+      register: status_post_history_reads
+      loop: "{{ status_post_rows | selectattr('sparkline', 'defined') | selectattr('sparkline') | list }}"
+      loop_control:
+        loop_var: status_post_row
+        label: "{{ status_post_row.component }} {{ status_post_row.label | default('') }}"
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Build the status message from the rendered template
+      ansible.builtin.set_fact:
+        status_post_message: "{{ lookup('ansible.builtin.template', 'templates/status-post-message.j2') }}"
+      changed_when: false
+
+    - name: Post the status to the chat channel
+      ansible.builtin.uri:
+        url: "https://ntfy.{{ status_post_ingress_domain }}/{{ status_post_channel }}"
+        method: POST
+        headers:
+          Title: "{{ status_post_title }}"
+          Priority: low
+          Tags: bar_chart
+        body: "{{ status_post_message }}"
+        timeout: 10

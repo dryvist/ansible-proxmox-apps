@@ -86,32 +86,31 @@ def test_pipeline_is_native_and_exports_only_the_contract_labels():
         "eval",
         "drop",
         "suppress",
-        "aggregation",
         "publish_metrics",
         "publish_metrics",
         "publish_metrics",
     ]
 
     suppress = functions[4]["conf"]
-    assert suppress["keyExpr"] == "${hermes_host}:${hermes_timestamp}:${hermes_message}"
+    assert suppress["keyExpr"] == "`${hermes_host}:${hermes_timestamp}:${hermes_message}`"
     assert suppress["numAllowed"] == 1
     assert suppress["dropEvents"] is True
-    assert functions[5]["conf"]["groupByFields"] == ["agent", "job", "outcome", "hermes_metric_event"]
-    assert functions[5]["filter"] == "hermes_metric_event === 'outcome'"
-    counter = functions[6]["conf"]
-    assert counter["metrics"] == [
-        {"field": "value", "metricName": "'hermes_cron_runs_total'", "type": "counter"}
+    outcome = functions[5]
+    assert outcome["filter"] == "hermes_metric_event === 'outcome'"
+    assert outcome["conf"]["fields"] == [
+        {"inFieldName": "hermes_info_value", "outFieldExpr": "'hermes_cron_run_outcome'", "metricType": "gauge"}
     ]
-    assert counter["dimensions"] == ["agent", "job", "outcome"]
-    info = functions[7]["conf"]
-    assert info["metrics"] == [
-        {"field": "hermes_info_value", "metricName": "'hermes_cron_job_info'", "type": "gauge"}
+    assert outcome["conf"]["dimensions"] == ["agent", "job", "outcome"]
+    assert "hermes_cron_runs_total" not in PIPELINE_TEMPLATE.read_text(encoding="utf-8")
+    info = functions[6]["conf"]
+    assert info["fields"] == [
+        {"inFieldName": "hermes_info_value", "outFieldExpr": "'hermes_cron_job_info'", "metricType": "gauge"}
     ]
     assert info["dimensions"] == ["agent", "job_id", "job_name"]
-    profile = functions[8]
+    profile = functions[7]
     assert profile["filter"] == "hermes_metric_event === 'profile'"
-    assert profile["conf"]["metrics"] == [
-        {"field": "hermes_info_value", "metricName": "'hermes_cron_job_profile'", "type": "gauge"}
+    assert profile["conf"]["fields"] == [
+        {"inFieldName": "hermes_info_value", "outFieldExpr": "'hermes_cron_job_profile'", "metricType": "gauge"}
     ]
     assert profile["conf"]["dimensions"] == ["agent", "job_id", "profile"]
 
@@ -190,3 +189,17 @@ def test_sanitized_hermes_lines_produce_contract_events_after_native_suppress():
     ]
     assert all(event["hermes_metric_event"] == "" for event in ignored)
     assert len(ignored) == 5
+
+
+def test_every_template_key_expression_is_a_javascript_template_literal():
+    """Cribl evaluates keyExpr as JavaScript, so a ${field} key needs backticks or the function fails to load."""
+    pipelines = ROOT / "roles/cribl_stream/templates/pipelines"
+    keys = [
+        (path.parent.name, line.split("keyExpr:", 1)[1].strip().strip("\"'"))
+        for path in pipelines.glob("*/conf.yml.j2")
+        for line in path.read_text().splitlines()
+        if "keyExpr:" in line and "${" in line
+    ]
+    assert keys
+    for pipeline, key in keys:
+        assert key.startswith("`") and key.endswith("`"), (pipeline, key)
