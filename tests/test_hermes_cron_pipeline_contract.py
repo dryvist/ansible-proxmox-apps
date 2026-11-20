@@ -30,6 +30,8 @@ SAMPLES = [
     "<133>Nov 20 00:22:42 hermes-example hermes-file 2026-11-20 00:22:42,053 INFO cron.scheduler: Job 'cdef01234567': delivered to slack:C0EXAMPLE via live adapter thread=- message_id=1234567890.000001",
     "<133>Nov 20 00:30:42 hermes-example hermes-file 2026-11-20 00:30:42,695 INFO __main__: Job 'def012345678': agent returned [SILENT] — skipping delivery",
     "<133>Nov 20 00:30:39 hermes-example hermes-profile 2026-11-20 00:30:39,787 INFO __main__: Job 'ef0123456789' (no_agent): empty stdout — silent run",
+    "<133>Nov 20 00:30:39 hermes-example hermes-profile 2026-11-20 00:30:39,820 INFO __main__: Job 'ef0123456789': agent returned [SILENT] — skipping delivery",
+    "<133>Nov 20 00:40:00 hermes-example hermes-profile-profile-example 2026-11-20 00:40:00,100 INFO cron.scheduler: Job '0123456789ab': delivered to slack:C0EXAMPLE via live adapter thread=- message_id=1234567890.000002",
     "<30>Nov 20 00:13:40 hermes-example hermes[123456]: 2026-11-20 00:13:40,222 WARNING cron.scheduler: Job 'f0123456789a': platform 'slack' not configured/enabled",
     "<133>Nov 20 00:13:40 hermes-example hermes-profile 2026-11-20 00:13:40,222 WARNING cron.scheduler: Job 'f0123456789a': platform 'slack' not configured/enabled",
     "<133>Nov 20 00:13:40 hermes-example hermes-profile 2026-11-20 00:13:40,222 WARNING cron.scheduler: Job 'f0123456789a': platform 'slack' not configured/enabled",
@@ -61,9 +63,18 @@ for (const event of accepted) {
   seen.add(key);
   unique.push(event);
 }
+// Second suppress: one outcome per host, job and outcome inside its window.
+const seenOutcomes = new Set();
+const perRun = unique.filter(event => {
+  if (event.hermes_metric_event !== 'outcome') return true;
+  const key = `${event.hermes_host}:${event.job}:${event.outcome}`;
+  if (seenOutcomes.has(key)) return false;
+  seenOutcomes.add(key);
+  return true;
+});
 console.log(JSON.stringify({
   events,
-  unique: unique.map(({agent, job, job_id, job_name, outcome, profile, hermes_metric_event}) =>
+  unique: perRun.map(({agent, job, job_id, job_name, outcome, profile, hermes_metric_event}) =>
     ({agent, job, job_id, job_name, outcome, profile, hermes_metric_event}))
 }));
 """
@@ -71,7 +82,10 @@ console.log(JSON.stringify({
 
 def _pipeline() -> dict:
     templar = Templar(loader=DataLoader())
-    templar.available_variables = {"cribl_stream_hermes_cron_suppress_seconds": 600}
+    templar.available_variables = {
+        "cribl_stream_hermes_cron_suppress_seconds": 600,
+        "cribl_stream_hermes_cron_outcome_suppress_seconds": 30,
+    }
     rendered = templar.template(trust_as_template(PIPELINE_TEMPLATE.read_text(encoding="utf-8")))
     return yaml.safe_load(rendered)
 
@@ -86,6 +100,7 @@ def test_pipeline_is_native_and_exports_only_the_contract_labels():
         "eval",
         "drop",
         "suppress",
+        "suppress",
         "publish_metrics",
         "publish_metrics",
         "publish_metrics",
@@ -95,19 +110,25 @@ def test_pipeline_is_native_and_exports_only_the_contract_labels():
     assert suppress["keyExpr"] == "`${hermes_host}:${hermes_timestamp}:${hermes_message}`"
     assert suppress["numAllowed"] == 1
     assert suppress["dropEvents"] is True
-    outcome = functions[5]
+    per_run = functions[5]
+    assert per_run["filter"] == "hermes_metric_event === 'outcome'"
+    assert per_run["conf"]["keyExpr"] == "`${hermes_host}:${job}:${outcome}`"
+    assert per_run["conf"]["numAllowed"] == 1
+    assert per_run["conf"]["suppressPeriodSec"] == 30
+    assert per_run["conf"]["dropEvents"] is True
+    outcome = functions[6]
     assert outcome["filter"] == "hermes_metric_event === 'outcome'"
     assert outcome["conf"]["fields"] == [
         {"inFieldName": "hermes_info_value", "outFieldExpr": "'hermes_cron_run_outcome'", "metricType": "gauge"}
     ]
     assert outcome["conf"]["dimensions"] == ["agent", "job", "outcome"]
     assert "hermes_cron_runs_total" not in PIPELINE_TEMPLATE.read_text(encoding="utf-8")
-    info = functions[6]["conf"]
+    info = functions[7]["conf"]
     assert info["fields"] == [
         {"inFieldName": "hermes_info_value", "outFieldExpr": "'hermes_cron_job_info'", "metricType": "gauge"}
     ]
     assert info["dimensions"] == ["agent", "job_id", "job_name"]
-    profile = functions[7]
+    profile = functions[8]
     assert profile["filter"] == "hermes_metric_event === 'profile'"
     assert profile["conf"]["fields"] == [
         {"inFieldName": "hermes_info_value", "outFieldExpr": "'hermes_cron_job_profile'", "metricType": "gauge"}
@@ -150,9 +171,10 @@ def test_sanitized_hermes_lines_produce_contract_events_after_native_suppress():
         ("hermes-example/root", "def012345678", "silent"): 1,
         ("hermes-example/unknown", "ef0123456789", "silent"): 1,
         ("hermes-example/unknown", "f0123456789a", "undeliverable"): 1,
+        ("hermes-example/profile-example", "0123456789ab", "delivered"): 1,
         ("hermes-example/root", "job-example", "failed"): 1,
     }
-    assert len(outcomes) == 5
+    assert len(outcomes) == 6
     assert len(starts) == 2
     assert {
         (event["agent"], event["job_id"], event["job_name"])
