@@ -93,7 +93,7 @@ def test_pipeline_is_native_and_exports_only_the_contract_labels():
     ]
 
     suppress = functions[4]["conf"]
-    assert suppress["keyExpr"] == "${hermes_host}:${hermes_timestamp}:${hermes_message}"
+    assert suppress["keyExpr"] == "`${hermes_host}:${hermes_timestamp}:${hermes_message}`"
     assert suppress["numAllowed"] == 1
     assert suppress["dropEvents"] is True
     assert functions[5]["conf"]["groupByFields"] == ["agent", "job", "outcome", "hermes_metric_event"]
@@ -190,3 +190,17 @@ def test_sanitized_hermes_lines_produce_contract_events_after_native_suppress():
     ]
     assert all(event["hermes_metric_event"] == "" for event in ignored)
     assert len(ignored) == 5
+
+
+def test_every_template_key_expression_is_a_javascript_template_literal():
+    """Cribl evaluates keyExpr as JavaScript, so a ${field} key needs backticks or the function fails to load."""
+    pipelines = ROOT / "roles/cribl_stream/templates/pipelines"
+    keys = [
+        (path.parent.name, line.split("keyExpr:", 1)[1].strip().strip("\"'"))
+        for path in pipelines.glob("*/conf.yml.j2")
+        for line in path.read_text().splitlines()
+        if "keyExpr:" in line and "${" in line
+    ]
+    assert keys
+    for pipeline, key in keys:
+        assert key.startswith("`") and key.endswith("`"), (pipeline, key)
