@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.67.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.67.1...v5.67.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **service_deadman:** auto-create off-site healthchecks checks on first ping ([cd1416a](https://github.com/dryvist/ansible-proxmox-apps/commit/cd1416a899cb643cf871f9baca05b69c3537fb9f))
+* **service_deadman:** create the off-site check on its first ping ([#3800](https://github.com/dryvist/ansible-proxmox-apps/issues/3800)) ([cd1416a](https://github.com/dryvist/ansible-proxmox-apps/commit/cd1416a899cb643cf871f9baca05b69c3537fb9f))
+
 ## [5.67.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.67.0...v5.67.1) (2026-11-20)
 
 
