@@ -191,27 +191,6 @@
       changed_when: false
       check_mode: false
 
-    # Only ever on an empty stanza, so this is a one-time cost at bring-up, not
-    # something every converge pays. Expect it to take as long as a full base
-    # backup of the cluster.
-    - name: Take the initial full backup so PITR has a base to replay onto
-      become: true
-      become_user: postgres
-      ansible.builtin.command:
-        argv:
-          - pgbackrest
-          - --stanza={{ postgres_pgbackrest_stanza }}
-          - --type=full
-          - backup
-      # No `first`: info returns a bare [] for a stanza it cannot see, and
-      # indexing that raises instead of taking the branch. The default('[]')
-      # keeps check mode (where the command above is skipped and registers no
-      # stdout) from erroring here too.
-      when: >-
-        ((postgres_pgbackrest_info.stdout | default('[]', true) | from_json
-          | map(attribute='backup') | flatten | length) == 0)
-      changed_when: true
-
     - name: Deploy the instanced pgBackRest backup service
       ansible.builtin.template:
         src: pgbackrest-backup@.service.j2
@@ -219,6 +198,32 @@
         owner: root
         group: root
         mode: "0644"
+
+    - name: Check for the pgBackRest backup service unit file
+      ansible.builtin.stat:
+        path: /etc/systemd/system/pgbackrest-backup@.service
+      register: postgres_pgbackrest_backup_service_unit_file
+      when: ansible_check_mode
+
+    # Run detached under systemd because a full backup outlives the task timeout.
+    # First-backup failures surface in the unit journal and backup-age monitoring, not the converge result.
+    - name: Take the initial full backup so PITR has a base to replay onto
+      become: true
+      ansible.builtin.systemd:
+        name: pgbackrest-backup@full.service
+        state: started
+        no_block: true
+        daemon_reload: true
+      # No `first`: info returns a bare [] for a stanza it cannot see, and
+      # indexing that raises instead of taking the branch. The default('[]')
+      # also handles missing or empty stdout.
+      when:
+        - >-
+          not ansible_check_mode or
+          (postgres_pgbackrest_backup_service_unit_file.stat.exists | default(false))
+        - >-
+          ((postgres_pgbackrest_info.stdout | default('[]', true) | from_json
+            | map(attribute='backup') | flatten | length) == 0)
 
     - name: Check for pgBackRest backup timer unit files
       ansible.builtin.stat:
