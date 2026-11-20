@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.67.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.66.0...v5.67.0) (2026-11-20)
+
+
+### Features
+
+* **verify-grafana-dashboards:** assert release alert rules are loaded and summarise firing groups ([#3866](https://github.com/dryvist/ansible-proxmox-apps/issues/3866)) ([bf39ed6](https://github.com/dryvist/ansible-proxmox-apps/commit/bf39ed68ed9e301f90b143a9f4b5329f7cb8bf11))
+
 ## [5.66.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.65.0...v5.66.0) (2026-11-20)
 
 
