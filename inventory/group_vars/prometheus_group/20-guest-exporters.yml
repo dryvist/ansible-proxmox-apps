@@ -17,6 +17,27 @@ guest_node_exporter_static_configs: >-
   {%- endfor -%}
   {{ out }}
 
+# pgBackRest exporter targets come from the PostgreSQL inventory groups, each
+# reached by name (<inventory name>.<ingress_domain>). The enabled flag
+# defaults to the postgres role default, with per-host inventory overrides
+# controlling membership here as well.
+pgbackrest_exporter_scrape_port: >-
+  {{ hostvars.get('localhost', {}).get('tofu_data', {}).get('constants', {})
+     .get('service_ports', {}).get('pgbackrest_exporter', 9854) }}
+pgbackrest_exporter_static_configs: >-
+  {%- set out = [] -%}
+  {%- set postgres_hosts = ((groups['postgres_group'] | default([]))
+                             + (groups['postgres_ai_group'] | default([])))
+                            | unique | sort -%}
+  {%- for name in postgres_hosts -%}
+  {%- if hostvars[name].postgres_pgbackrest_enabled | default(true) | bool -%}
+  {%- set _ = out.append({'targets': [name ~ '.' ~ ingress_domain ~ ':'
+                                      ~ (pgbackrest_exporter_scrape_port | string)],
+                          'labels': {'guest': name}}) -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ out }}
+
 # Metric families the guest job keeps (regexes, joined with |).
 guest_node_exporter_keep_metrics:
   - node_load(1|5|15)
