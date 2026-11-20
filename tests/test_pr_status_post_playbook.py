@@ -212,7 +212,7 @@ def test_the_message_is_all_green_when_every_figure_is_on_target():
         f"{GREEN} open pull requests: 12\n"
         f"{GREEN} merged in the last hour: 3\n"
         f"{GREEN} lane-a busy, 4 h: 62%\n"
-        f"{GREEN} jobs: 5"
+        f"{GREEN} Hermes cron runs, last hour: 5"
     )
 
 
@@ -236,7 +236,7 @@ def test_the_accelerator_lines_name_each_lane_in_lane_order_with_whole_percents(
         f"{GREEN} merged in the last hour: 3\n"
         f"{RED} lane-a busy, 4 h: 16%\n"
         f"{GREEN} lane-b busy, 4 h: 83%\n"
-        f"{GREEN} jobs: 5"
+        f"{GREEN} Hermes cron runs, last hour: 5"
     )
     busy_lines = [line for line in text.splitlines() if "busy, 4 h:" in line]
     assert len(busy_lines) == 2
@@ -276,7 +276,7 @@ def test_the_message_turns_yellow_at_thirty_five_open_pull_requests():
         f"{YELLOW} open pull requests: 35\n"
         f"{GREEN} merged in the last hour: 1\n"
         f"{YELLOW} unknown lane busy, 4 h: 30%\n"  # series carries no accelerator label
-        f"{GREEN} jobs: 7"
+        f"{GREEN} Hermes cron runs, last hour: 7"
     )
 
 
@@ -294,5 +294,5 @@ def test_the_message_reports_unmeasured_when_the_metrics_query_fails():
         f"{GREEN} open pull requests: 12\n"
         f"{GREEN} merged in the last hour: 0\n"
         f"{RED} busy percent: unmeasured\n"
-        f"{RED} jobs: unmeasured"
+        f"{RED} Hermes cron runs, last hour: unmeasured"
     )
