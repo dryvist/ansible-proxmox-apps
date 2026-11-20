@@ -90,14 +90,13 @@ def test_pipeline_is_native_and_exports_only_the_contract_labels():
         "publish_metrics",
         "publish_metrics",
         "publish_metrics",
-        "drop",
     ]
 
     suppress = functions[4]["conf"]
     assert suppress["keyExpr"] == "${hermes_host}:${hermes_timestamp}:${hermes_message}"
     assert suppress["numAllowed"] == 1
     assert suppress["dropEvents"] is True
-    assert functions[5]["conf"]["groupByFields"] == ["agent", "job", "outcome"]
+    assert functions[5]["conf"]["groupByFields"] == ["agent", "job", "outcome", "hermes_metric_event"]
     assert functions[5]["filter"] == "hermes_metric_event === 'outcome'"
     counter = functions[6]["conf"]
     assert counter["metrics"] == [
