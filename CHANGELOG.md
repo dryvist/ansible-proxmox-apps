@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.65.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.64.1...v5.65.0) (2026-11-20)
+
+
+### Features
+
+* **status-post:** link status lines to their Grafana dashboard ([#3858](https://github.com/dryvist/ansible-proxmox-apps/issues/3858)) ([0b21562](https://github.com/dryvist/ansible-proxmox-apps/commit/0b21562e266ac41d9370aed3b4c5b9f28d4573f3))
+
 ## [5.64.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.64.0...v5.64.1) (2026-11-20)
 
 
