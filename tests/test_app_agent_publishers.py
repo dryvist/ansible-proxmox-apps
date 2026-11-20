@@ -70,6 +70,13 @@ def test_zammad_agent_write_identity_uses_its_generated_token_and_publisher():
     assert "10-admin-and-users.rb" in permission_readback["ansible.builtin.set_fact"]["zammad_agent_write_expected_role_permission_names"]
     assert "20-groups-and-tokens.rb" in permission_readback["ansible.builtin.set_fact"]["zammad_agent_write_expected_token_permission_names"]
     assert "ZAMMAD_AGENT_WRITE_TOKEN_PERMISSIONS=" in permission_readback["ansible.builtin.set_fact"]["zammad_agent_write_token_row_permission_names"]
+    expected_facts = permission_readback["ansible.builtin.set_fact"]
+    role_path = {"role_path": str(ROOT / "roles/zammad")}
+    assert _render(expected_facts["zammad_agent_write_expected_role_permission_names"], role_path) == [
+        "knowledge_base.editor",
+        "ticket.agent",
+    ]
+    assert _render(expected_facts["zammad_agent_write_expected_token_permission_names"], role_path) == ["ticket.agent"]
     assert "zammad_agent_write_effective_role_permission_names ==" in str(
         _task(verification, "Assert exact Agent role permissions and svc-agent-write token scope")
     )
