@@ -1,0 +1,20 @@
+{#-
+ Message for playbooks/status-post.yml: a header line with the UTC time and
+ the post title, then one status_line per spec row, in spec order. A row's
+ value is its instant query's first series; a failed or empty read is
+ unmeasured. Sparkline rows take their history from the 12 h range read.
+-#}
+{%- from 'status-lines.j2' import status_line -%}
+{%- set ns = namespace(lines=[]) -%}
+{%- for row in status_post_rows -%}
+{%- set instant = status_post_instant_reads.results[loop.index0] | default({}) -%}
+{%- set series = instant.json.data.result | default([]) if instant.status | default(0) | int == 200 else [] -%}
+{%- set ranged = (status_post_history_reads.results | default([]) | selectattr('status_post_row', 'defined')
+     | selectattr('status_post_row.query', 'equalto', row.query) | list | first) | default({}) -%}
+{%- set history = (ranged.json.data.result | default([]) | first | default({})).get('values', [])
+     if ranged.status | default(0) | int == 200 else [] -%}
+{%- set value = (series | first).value[1] if series | length > 0 else none -%}
+{%- set ns.lines = ns.lines + [status_line(row, value, history)] -%}
+{%- endfor -%}
+{{ status_post_generated_utc }} {{ status_post_title }}
+{{ ns.lines | join('\n') }}
