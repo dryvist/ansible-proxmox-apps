@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.61.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.60.0...v5.61.0) (2026-11-20)
+
+
+### Features
+
+* **nautobot:** enable the read-only MCP token publish in inventory ([#3815](https://github.com/dryvist/ansible-proxmox-apps/issues/3815)) ([eb48260](https://github.com/dryvist/ansible-proxmox-apps/commit/eb48260908759fc500ba7e09df6517396814d9e9))
+
+
+### Bug Fixes
+
+* **postgres:** start the initial full pgBackRest backup detached under its systemd unit ([#3807](https://github.com/dryvist/ansible-proxmox-apps/issues/3807)) ([55dbc44](https://github.com/dryvist/ansible-proxmox-apps/commit/55dbc44ab9c3256393e1b8b88ef37bccd0581694))
+
 ## [5.60.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.59.1...v5.60.0) (2026-11-20)
 
 
