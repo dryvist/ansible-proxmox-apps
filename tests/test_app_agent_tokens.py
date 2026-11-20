@@ -328,3 +328,17 @@ def test_zammad_agent_token_gate_covers_only_the_agent_tier_publish():
     }
     for name, when in gates.items():
         assert _task(tasks, name)["when"] == when
+
+
+def test_vikunja_token_tasks_run_after_user_creation_and_before_share_reconciles():
+    tasks = _yaml("roles/vikunja/tasks/main.yml")
+
+    def position(name):
+        return tasks.index(_task(tasks, name))
+
+    tokens = position("Validate MCP API token scopes and publish when enabled")
+    assert position("Create Vikunja service users (idempotent — skipped if already present)") < tokens
+    assert position("Create Vikunja app-agent users (idempotent — skipped if already present)") < tokens
+    assert tokens < position("Note MCP token minting is deferred")
+    assert tokens < position("Reconcile app-agent Vikunja project access")
+    assert tokens < position("Grant the operator access to the automation-owned projects")

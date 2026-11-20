@@ -372,11 +372,12 @@ def test_the_share_is_read_back_as_the_bot_on_the_trigger_project():
 # --- wiring in main.yml --------------------------------------------------------
 
 
-def test_the_trigger_include_sits_before_the_token_validation():
+def test_the_trigger_include_sits_after_the_operator_user():
+    # The trigger shares its project acting as the operator.
     names = [task.get("name") for task in _yaml(ROOT / MAIN)]
-    assert names.index("Provision the OpenHands trigger bot") < names.index(
-        "Validate MCP API token scopes and publish when enabled"
-    )
+    assert names.index(
+        "Create the Vikunja operator user (idempotent — skipped if already present)"
+    ) < names.index("Provision the OpenHands trigger bot")
 
 
 def test_the_trigger_include_points_at_the_trigger_task_file():
