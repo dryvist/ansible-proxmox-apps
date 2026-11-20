@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.59.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.59.0...v5.59.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **site:** keep the PR reconcile inputs from the env document ([#3793](https://github.com/dryvist/ansible-proxmox-apps/issues/3793)) ([482950a](https://github.com/dryvist/ansible-proxmox-apps/commit/482950ad3e00e2198a51b5d0d471f113a7e97393))
+
 ## [5.59.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.58.0...v5.59.0) (2026-11-20)
 
 
