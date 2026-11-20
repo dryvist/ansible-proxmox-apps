@@ -1,5 +1,26 @@
 # Changelog
 
+## [5.60.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.59.1...v5.60.0) (2026-11-20)
+
+
+### Features
+
+* **cribl:** publish Hermes run outcomes as a gauge sample per run ([#3804](https://github.com/dryvist/ansible-proxmox-apps/issues/3804)) ([fbed6f8](https://github.com/dryvist/ansible-proxmox-apps/commit/fbed6f86d71c4489f9d51b14ffd346ad8d915041))
+* **status-post:** add a spec-driven status post and the shared status-line renderer ([#3808](https://github.com/dryvist/ansible-proxmox-apps/issues/3808)) ([1d540f5](https://github.com/dryvist/ansible-proxmox-apps/commit/1d540f537d71952771bc9751efcb3899f4521329))
+* **technitium_dns:** publish a CNAME for each guest inventory name that differs from its hostname ([#3780](https://github.com/dryvist/ansible-proxmox-apps/issues/3780)) ([df9f98a](https://github.com/dryvist/ansible-proxmox-apps/commit/df9f98a9e1b9ae146b989a0133c3cf9d67ae8f8c))
+* **zammad:** gate the app-agent token publish separately and enable it ([bc2a96d](https://github.com/dryvist/ansible-proxmox-apps/commit/bc2a96d0cdbed8aa61aed00519f302531971e163))
+
+
+### Bug Fixes
+
+* **cribl:** make Suppress key expressions JavaScript template literals ([#3799](https://github.com/dryvist/ansible-proxmox-apps/issues/3799)) ([c10567d](https://github.com/dryvist/ansible-proxmox-apps/commit/c10567d58ddb979b0d0e679e57ebc0638ff45629))
+* **cribl:** replace nullish operators in OTEL pipeline expressions ([#3803](https://github.com/dryvist/ansible-proxmox-apps/issues/3803)) ([9a082b2](https://github.com/dryvist/ansible-proxmox-apps/commit/9a082b2a0830248ece9b06f9a684ab2f8f4b1bcf))
+* **cribl:** use the publish_metrics fields schema in metric pipelines ([#3795](https://github.com/dryvist/ansible-proxmox-apps/issues/3795)) ([9619132](https://github.com/dryvist/ansible-proxmox-apps/commit/9619132e8daa2497a69e4ed58a6da0e2623e0aa0))
+* **inventory:** keep the classify guest out of the GPU engine scrape ([#3790](https://github.com/dryvist/ansible-proxmox-apps/issues/3790)) ([9552f49](https://github.com/dryvist/ansible-proxmox-apps/commit/9552f49861805acc446d5b7d88da073033c4a2e1))
+* **zammad:** add a separate gate for the app-agent publish ([#3805](https://github.com/dryvist/ansible-proxmox-apps/issues/3805)) ([bc2a96d](https://github.com/dryvist/ansible-proxmox-apps/commit/bc2a96d0cdbed8aa61aed00519f302531971e163))
+* **zammad:** skip the agent write-rights verify in check mode ([#3810](https://github.com/dryvist/ansible-proxmox-apps/issues/3810)) ([1647603](https://github.com/dryvist/ansible-proxmox-apps/commit/16476039d957e67e491b3b9f6da1e71b57be6065))
+* **zammad:** skip the svc-agent-write rights verification in check mode ([1647603](https://github.com/dryvist/ansible-proxmox-apps/commit/16476039d957e67e491b3b9f6da1e71b57be6065))
+
 ## [5.59.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.59.0...v5.59.1) (2026-11-20)
 
 
