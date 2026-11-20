@@ -1,0 +1,92 @@
+---
+- name: Assert each read-only login names its allowed tables
+  ansible.builtin.assert:
+    that:
+      - item.tables is defined
+      - item.tables is sequence
+      - item.tables is not string
+      - item.tables | length > 0
+    fail_msg: >-
+      Each postgres_readonly_logins item must include a non-empty 'tables' list.
+    quiet: true
+  loop: "{{ postgres_readonly_logins }}"
+  loop_control:
+    label: "{{ item.name | default('unnamed read-only login') }}"
+
+- name: Assert every read-only login has a non-empty source password
+  ansible.builtin.assert:
+    that:
+      - item.password | default('', true) | length > 0
+    fail_msg: >-
+      No password resolved for the '{{ item.name }}' read-only role. Re-run
+      under the secrets environment supplied by the run wrapper or populate
+      bao_apps_secrets.
+    quiet: true
+  loop: "{{ postgres_readonly_logins }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Ensure each read-only login exists with the source password
+  community.postgresql.postgresql_user:
+    name: "{{ item.name }}"
+    password: "{{ item.password }}"
+    role_attr_flags: LOGIN,NOSUPERUSER,NOCREATEDB,NOCREATEROLE,NOINHERIT
+    state: present
+  loop: "{{ postgres_readonly_logins }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Grant each read-only login CONNECT on its database
+  community.postgresql.postgresql_privs:
+    login_db: postgres
+    roles: "{{ item.name }}"
+    type: database
+    objs: "{{ item.database }}"
+    privs: CONNECT
+    state: present
+  loop: "{{ postgres_readonly_logins }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.database }}"
+
+- name: Grant each read-only login USAGE on the public schema
+  community.postgresql.postgresql_privs:
+    login_db: "{{ item.database }}"
+    roles: "{{ item.name }}"
+    type: schema
+    objs: public
+    privs: USAGE
+    state: present
+  loop: "{{ postgres_readonly_logins }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.database }}.public"
+
+- name: Grant each read-only login SELECT on its named public tables
+  community.postgresql.postgresql_privs:
+    login_db: "{{ item.database }}"
+    roles: "{{ item.name }}"
+    type: table
+    schema: public
+    objs: "{{ item.tables | join(',') }}"
+    privs: SELECT
+    state: present
+  loop: "{{ postgres_readonly_logins }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.database }}.public"
+
+- name: Allow each read-only login from its client CIDR (scram)
+  when: postgres_ha_manager != 'patroni'
+  community.postgresql.postgresql_pg_hba:
+    dest: "{{ postgres_conf_dir }}/pg_hba.conf"
+    contype: host
+    databases: "{{ item.database }}"
+    users: "{{ item.name }}"
+    source: "{{ item.client_cidr }}"
+    method: scram-sha-256
+    state: present
+  loop: "{{ postgres_readonly_logins }}"
+  loop_control:
+    label: "{{ item.database }} <- {{ item.client_cidr }}"
+  no_log: true
+  notify: Reload postgresql

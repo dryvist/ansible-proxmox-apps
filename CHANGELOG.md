@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.58.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.57.0...v5.58.0) (2026-11-20)
+
+
+### Features
+
+* **cribl:** count Hermes cron runs as VictoriaMetrics metrics ([#3771](https://github.com/dryvist/ansible-proxmox-apps/issues/3771)) ([c93f862](https://github.com/dryvist/ansible-proxmox-apps/commit/c93f862904557b274d74280d887950a41725dfc8))
+
+
+### Bug Fixes
+
+* **molecule:** sign postgres_patroni test certificates one node at a time ([#3782](https://github.com/dryvist/ansible-proxmox-apps/issues/3782)) ([aae6478](https://github.com/dryvist/ansible-proxmox-apps/commit/aae6478c02d7cc92d6426ccd623ab4b44e8e0808))
+* **tests:** pass the Hermes cron suppress period into the cribl_stream pipelines render ([#3779](https://github.com/dryvist/ansible-proxmox-apps/issues/3779)) ([16b12e6](https://github.com/dryvist/ansible-proxmox-apps/commit/16b12e65c6576b5d93994fde80e26aea1ade8c5c))
+
 ## [5.57.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.56.0...v5.57.0) (2026-11-20)
 
 
