@@ -86,7 +86,6 @@ def test_pipeline_is_native_and_exports_only_the_contract_labels():
         "eval",
         "drop",
         "suppress",
-        "aggregation",
         "publish_metrics",
         "publish_metrics",
         "publish_metrics",
@@ -96,19 +95,19 @@ def test_pipeline_is_native_and_exports_only_the_contract_labels():
     assert suppress["keyExpr"] == "`${hermes_host}:${hermes_timestamp}:${hermes_message}`"
     assert suppress["numAllowed"] == 1
     assert suppress["dropEvents"] is True
-    assert functions[5]["conf"]["groupByFields"] == ["agent", "job", "outcome", "hermes_metric_event"]
-    assert functions[5]["filter"] == "hermes_metric_event === 'outcome'"
-    counter = functions[6]["conf"]
-    assert counter["fields"] == [
-        {"inFieldName": "value", "outFieldExpr": "'hermes_cron_runs_total'", "metricType": "counter"}
+    outcome = functions[5]
+    assert outcome["filter"] == "hermes_metric_event === 'outcome'"
+    assert outcome["conf"]["fields"] == [
+        {"inFieldName": "hermes_info_value", "outFieldExpr": "'hermes_cron_run_outcome'", "metricType": "gauge"}
     ]
-    assert counter["dimensions"] == ["agent", "job", "outcome"]
-    info = functions[7]["conf"]
+    assert outcome["conf"]["dimensions"] == ["agent", "job", "outcome"]
+    assert "hermes_cron_runs_total" not in PIPELINE_TEMPLATE.read_text(encoding="utf-8")
+    info = functions[6]["conf"]
     assert info["fields"] == [
         {"inFieldName": "hermes_info_value", "outFieldExpr": "'hermes_cron_job_info'", "metricType": "gauge"}
     ]
     assert info["dimensions"] == ["agent", "job_id", "job_name"]
-    profile = functions[8]
+    profile = functions[7]
     assert profile["filter"] == "hermes_metric_event === 'profile'"
     assert profile["conf"]["fields"] == [
         {"inFieldName": "hermes_info_value", "outFieldExpr": "'hermes_cron_job_profile'", "metricType": "gauge"}
