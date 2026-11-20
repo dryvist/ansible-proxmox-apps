@@ -61,9 +61,11 @@ def test_zammad_agent_write_identity_uses_its_generated_token_and_publisher():
     assert publisher_write["ansible.builtin.uri"]["method"] == "POST"
 
     verification = _yaml("roles/zammad/tasks/verify_agent_write_rights.yml")
-    role_read = _task(verification, "Read the Agent role permissions as the administrator")
-    assert "/api/v1/roles/{{ zammad_agent_write_agent_role_ids | first }}?expand=true" in role_read["ansible.builtin.uri"]["url"]
-    assert role_read["no_log"] is True
+    rails_read = _task(verification, "Read the agent-write rights and API rows through rails")
+    assert rails_read["ansible.builtin.command"]["cmd"] == (
+        "zammad run rails r {{ zammad_root }}/ansible_agent_write_readback.rb"
+    )
+    assert rails_read["no_log"] is True
     permission_readback = _task(verification, "Resolve expected role and token permissions from the bootstrap source")
     assert "10-admin-and-users.rb" in permission_readback["ansible.builtin.set_fact"]["zammad_agent_write_expected_role_permission_names"]
     assert "20-groups-and-tokens.rb" in permission_readback["ansible.builtin.set_fact"]["zammad_agent_write_expected_token_permission_names"]
