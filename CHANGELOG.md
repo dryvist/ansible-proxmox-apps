@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.57.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.56.0...v5.57.0) (2026-11-20)
+
+
+### Features
+
+* **ci:** replace the CI Fix caller with a dispatch-only OpenHands caller ([#3764](https://github.com/dryvist/ansible-proxmox-apps/issues/3764)) ([8929598](https://github.com/dryvist/ansible-proxmox-apps/commit/8929598b629e9a72affb6a7bcb22d4c82abf3db0))
+
+
+### Bug Fixes
+
+* **postgres:** fail the converge when the pgBackRest credential is unreadable ([#3766](https://github.com/dryvist/ansible-proxmox-apps/issues/3766)) ([dad5ad9](https://github.com/dryvist/ansible-proxmox-apps/commit/dad5ad934e2bce7262e72691beef155b388cf298))
+
 ## [5.56.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.55.0...v5.56.0) (2026-11-17)
 
 
