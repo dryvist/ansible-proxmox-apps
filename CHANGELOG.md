@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.61.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.61.0...v5.61.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **cribl_stream:** match OTEL drop prefixes without an arrow function ([#3818](https://github.com/dryvist/ansible-proxmox-apps/issues/3818)) ([6e783ff](https://github.com/dryvist/ansible-proxmox-apps/commit/6e783ffa0bc3297a3555a665008634282f3c6fac))
+
 ## [5.61.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.60.0...v5.61.0) (2026-11-20)
 
 
