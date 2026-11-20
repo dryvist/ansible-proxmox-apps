@@ -306,3 +306,24 @@ def test_vikunja_token_set_facts_never_read_a_key_they_set():
         for key, expression in facts.items():
             siblings = [other for other in facts if other != key and re.search(rf"\b{other}\b", str(expression))]
             assert not siblings, f"{task['name']}: {key} reads {siblings}"
+
+
+def test_inventory_enables_the_vikunja_and_zammad_agent_token_publishers():
+    assert _yaml("inventory/group_vars/vikunja_group.yml")["vikunja_token_publish_openbao"] is True
+    zammad = _yaml("inventory/group_vars/zammad_group.yml")
+    assert zammad["zammad_agent_token_publish_openbao"] is True
+    assert "zammad_token_publish_openbao" not in zammad
+
+
+def test_zammad_agent_token_gate_covers_only_the_agent_tier_publish():
+    defaults = _yaml("roles/zammad/defaults/main/02-smtp-signing-health.yml")
+    assert defaults["zammad_token_publish_openbao"] is False
+    assert defaults["zammad_agent_token_publish_openbao"] == "{{ zammad_token_publish_openbao }}"
+    tasks = _yaml("roles/zammad/tasks/main.yml")
+    gates = {
+        "Publish Zammad MCP connection to OpenBao": "zammad_token_publish_openbao | bool",
+        "Publish svc-splunk Zammad connection to OpenBao": "zammad_token_publish_openbao | bool",
+        "Publish svc-agent-write Zammad connection to OpenBao": "zammad_agent_token_publish_openbao | bool",
+    }
+    for name, when in gates.items():
+        assert _task(tasks, name)["when"] == when
