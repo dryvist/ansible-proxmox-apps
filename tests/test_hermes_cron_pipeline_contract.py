@@ -99,19 +99,19 @@ def test_pipeline_is_native_and_exports_only_the_contract_labels():
     assert functions[5]["conf"]["groupByFields"] == ["agent", "job", "outcome", "hermes_metric_event"]
     assert functions[5]["filter"] == "hermes_metric_event === 'outcome'"
     counter = functions[6]["conf"]
-    assert counter["metrics"] == [
-        {"field": "value", "metricName": "'hermes_cron_runs_total'", "type": "counter"}
+    assert counter["fields"] == [
+        {"inFieldName": "value", "outFieldExpr": "'hermes_cron_runs_total'", "metricType": "counter"}
     ]
     assert counter["dimensions"] == ["agent", "job", "outcome"]
     info = functions[7]["conf"]
-    assert info["metrics"] == [
-        {"field": "hermes_info_value", "metricName": "'hermes_cron_job_info'", "type": "gauge"}
+    assert info["fields"] == [
+        {"inFieldName": "hermes_info_value", "outFieldExpr": "'hermes_cron_job_info'", "metricType": "gauge"}
     ]
     assert info["dimensions"] == ["agent", "job_id", "job_name"]
     profile = functions[8]
     assert profile["filter"] == "hermes_metric_event === 'profile'"
-    assert profile["conf"]["metrics"] == [
-        {"field": "hermes_info_value", "metricName": "'hermes_cron_job_profile'", "type": "gauge"}
+    assert profile["conf"]["fields"] == [
+        {"inFieldName": "hermes_info_value", "outFieldExpr": "'hermes_cron_job_profile'", "metricType": "gauge"}
     ]
     assert profile["conf"]["dimensions"] == ["agent", "job_id", "profile"]
 
