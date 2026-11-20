@@ -1,5 +1,21 @@
 # Changelog
 
+## [5.62.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.61.1...v5.62.0) (2026-11-20)
+
+
+### Features
+
+* **github-runner:** grow the review pool on the second CI guest ([#3823](https://github.com/dryvist/ansible-proxmox-apps/issues/3823)) ([1644721](https://github.com/dryvist/ansible-proxmox-apps/commit/16447212776cf1cff27138f28f4604071bd514a8))
+* **inventory:** enable the tracker sql_exporter ([#3822](https://github.com/dryvist/ansible-proxmox-apps/issues/3822)) ([1595eea](https://github.com/dryvist/ansible-proxmox-apps/commit/1595eea522f972413b5fc93b4c1598b32e58e36e))
+* **status-post:** add the GPU utilization post with per-series rows ([#3819](https://github.com/dryvist/ansible-proxmox-apps/issues/3819)) ([072f916](https://github.com/dryvist/ansible-proxmox-apps/commit/072f916e051f91c9183fa4806f50917432747cc8))
+* **status-post:** open pull requests are green at 30 ([#3825](https://github.com/dryvist/ansible-proxmox-apps/issues/3825)) ([b6c71bd](https://github.com/dryvist/ansible-proxmox-apps/commit/b6c71bd32ab34def47b54f8ab5e5f3e5be94364c))
+
+
+### Bug Fixes
+
+* **nautobot:** let the MCP token publish run in check mode ([#3824](https://github.com/dryvist/ansible-proxmox-apps/issues/3824)) ([8c7aef6](https://github.com/dryvist/ansible-proxmox-apps/commit/8c7aef6dcf289b0efe0903caf93bc4077c170279))
+* **zammad:** name the failing bootstrap fragment without its message ([#3821](https://github.com/dryvist/ansible-proxmox-apps/issues/3821)) ([8d420bc](https://github.com/dryvist/ansible-proxmox-apps/commit/8d420bc629a767b7cf8b524e6401e902a3bd0e8d))
+
 ## [5.61.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.61.0...v5.61.1) (2026-11-20)
 
 
