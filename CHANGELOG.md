@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.62.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.62.0...v5.62.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **zammad:** release a declared API token value held by another row ([2da7d84](https://github.com/dryvist/ansible-proxmox-apps/commit/2da7d843884775e1bfd4d9f8c0d6b18441623603))
+* **zammad:** update the bootstrap fragment and its test ([#3832](https://github.com/dryvist/ansible-proxmox-apps/issues/3832)) ([2da7d84](https://github.com/dryvist/ansible-proxmox-apps/commit/2da7d843884775e1bfd4d9f8c0d6b18441623603))
+
 ## [5.62.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.61.1...v5.62.0) (2026-11-20)
 
 
