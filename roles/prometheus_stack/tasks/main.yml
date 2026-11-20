@@ -87,6 +87,54 @@
     mode: "0644"
   notify: Restart prometheus stack
 
+- name: Require provisioned sql_exporter tracker credentials
+  ansible.builtin.assert:
+    that:
+      - prometheus_stack_sql_exporter_vikunja_password | default('') | length > 0
+      - prometheus_stack_sql_exporter_zammad_password | default('') | length > 0
+    quiet: true
+  when: prometheus_stack_sql_exporter_enabled | bool
+  no_log: true
+
+- name: Create sql_exporter collector directory
+  ansible.builtin.file:
+    path: "{{ prometheus_stack_sql_exporter_collectors_host_path }}"
+    state: directory
+    owner: "{{ prometheus_stack_sql_exporter_uid }}"
+    group: "{{ prometheus_stack_sql_exporter_gid }}"
+    mode: "0750"
+  when: prometheus_stack_sql_exporter_enabled | bool
+
+- name: Render sql_exporter tracker collectors
+  ansible.builtin.template:
+    src: "{{ item }}"
+    dest: "{{ prometheus_stack_sql_exporter_collectors_host_path }}/{{ item | basename | regex_replace('\\.j2$', '') }}"
+    owner: "{{ prometheus_stack_sql_exporter_uid }}"
+    group: "{{ prometheus_stack_sql_exporter_gid }}"
+    mode: "0400"
+  loop: "{{ prometheus_stack_sql_exporter_collector_templates }}"
+  when: prometheus_stack_sql_exporter_enabled | bool
+  notify: Restart prometheus stack
+
+- name: Render sql_exporter tracker connections
+  ansible.builtin.template:
+    src: sql-exporter.yml.j2
+    dest: "{{ prometheus_stack_sql_exporter_config_host_path }}"
+    owner: "{{ prometheus_stack_sql_exporter_uid }}"
+    group: "{{ prometheus_stack_sql_exporter_gid }}"
+    mode: "0400"
+  when: prometheus_stack_sql_exporter_enabled | bool
+  no_log: true
+  notify: Restart prometheus stack
+
+- name: Remove sql_exporter config when the exporter is disabled
+  ansible.builtin.file:
+    path: "{{ prometheus_stack_sql_exporter_config_host_path }}"
+    state: absent
+  when: not (prometheus_stack_sql_exporter_enabled | bool)
+  no_log: true
+  notify: Restart prometheus stack
+
 - name: Find Prometheus homelab rule files
   ansible.builtin.find:
     paths: "{{ prometheus_stack_rules_checkout_dir }}/rules"
@@ -194,6 +242,53 @@
         project_src: "{{ prometheus_stack_data_dir }}"
         state: present
       register: prometheus_stack_compose
+
+    - name: Apply sql_exporter configuration before verifying its metrics
+      ansible.builtin.meta: flush_handlers
+      when: prometheus_stack_sql_exporter_enabled | bool
+
+    - name: Verify sql_exporter serves tracker metrics
+      ansible.builtin.uri:
+        url: "http://{{ prometheus_stack_sql_exporter_address | trim }}/metrics"
+        return_content: true
+        status_code: 200
+      register: prometheus_stack_sql_exporter_metrics
+      check_mode: false
+      changed_when: false
+      retries: 6
+      delay: 5
+      until:
+        - prometheus_stack_sql_exporter_metrics.status | default(0) == 200
+        - >-
+          prometheus_stack_sql_exporter_metrics.content | default('')
+          is search('(?m)^vikunja_open_tasks(?:\\{|[ \\t])')
+        - >-
+          prometheus_stack_sql_exporter_metrics.content | default('')
+          is search('(?m)^zammad_open_tickets(?:\\{|[ \\t])')
+      when:
+        - prometheus_stack_sql_exporter_enabled | bool
+        - >-
+          not ansible_check_mode or
+          (
+            not (prometheus_stack_compose.skipped | default(false)) and
+            (prometheus_stack_compose.actions | default([]) | length == 0)
+          )
+      no_log: true
+
+    - name: Require both tracker metric families from sql_exporter
+      ansible.builtin.assert:
+        that:
+          - >-
+            prometheus_stack_sql_exporter_metrics.content | default('')
+            is search('(?m)^vikunja_open_tasks(?:\\{|[ \\t])')
+          - >-
+            prometheus_stack_sql_exporter_metrics.content | default('')
+            is search('(?m)^zammad_open_tickets(?:\\{|[ \\t])')
+        quiet: true
+      when:
+        - prometheus_stack_sql_exporter_enabled | bool
+        - not (prometheus_stack_sql_exporter_metrics.skipped | default(false))
+      no_log: true
 
     # =========================================================================
     # Health checks — prove BOTH containers run, both serve, the exporter
