@@ -32,8 +32,9 @@ tasks, commenting on them, and applying or removing the bot's own labels. The
 token is published to OpenBao at `secret/apps/openhands-vikunja`, field
 `token`.
 
-The trigger project and the `openhands` trigger label are created by hand
-under the operator's account, never by this role. The project is matched by
+The trigger project and the `openhands` trigger label are created by hand,
+never by this role; the share is made as the automation account that owns the
+project. The project is matched by
 `vikunja_openhands_project_id` (set it to empty to skip the share), the
 labels by title.
 
