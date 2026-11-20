@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.66.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.65.0...v5.66.0) (2026-11-20)
+
+
+### Features
+
+* **vikunja:** add projects read to a token permission set ([#3857](https://github.com/dryvist/ansible-proxmox-apps/issues/3857)) ([b726270](https://github.com/dryvist/ansible-proxmox-apps/commit/b726270a255163419ef49541207463ffe9fd9aba))
+* **vikunja:** grant the clerk token projects read ([b726270](https://github.com/dryvist/ansible-proxmox-apps/commit/b726270a255163419ef49541207463ffe9fd9aba))
+
 ## [5.65.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.64.1...v5.65.0) (2026-11-20)
 
 
