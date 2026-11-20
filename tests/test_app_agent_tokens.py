@@ -162,6 +162,7 @@ def test_vikunja_clerk_tokens_use_the_shared_idempotent_publisher():
     assert defaults["vikunja_token_openbao_path"] == "ai/mcp/vikunja"
     assert defaults["vikunja_clerk_task_permissions"] == {
         "labels": ["read_all"],
+        "projects": ["read_all"],
         "tasks": ["create", "read_all", "read_one", "update"],
         "tasks_comments": ["create"],
         "tasks_labels": ["create"],
