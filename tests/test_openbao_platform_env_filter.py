@@ -36,6 +36,8 @@ def test_platform_env_filter_keeps_only_approles_binds_and_github_settings():
             "OPENBAO_GITHUB_FOO_INSTALLATION_ID",
             "OPENBAO_GITHUB_FOO_INSTALLATION_IDS",
             "OPENBAO_GITHUB_APP_INSTALL_ALLOWLIST",
+            "OPENBAO_GITHUB_ENTERPRISE_ID",
+            "OPENBAO_GITHUB_ENTERPRISE_ID_EXTRA",
             "OPENBAO_CIDR",
             "OPENBAO__CIDR",
             "OPENBAO_X_CIDR_EXTRA",
@@ -62,4 +64,5 @@ def test_platform_env_filter_keeps_only_approles_binds_and_github_settings():
         "OPENBAO_GITHUB_FOO_INSTALLATION_ID",
         "OPENBAO_GITHUB_FOO_INSTALLATION_IDS",
         "OPENBAO_GITHUB_APP_INSTALL_ALLOWLIST",
+        "OPENBAO_GITHUB_ENTERPRISE_ID",
     }
