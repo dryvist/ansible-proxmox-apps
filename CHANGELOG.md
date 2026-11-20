@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.64.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.63.0...v5.64.0) (2026-11-20)
+
+
+### Features
+
+* **grafana_stack:** deploy the tracker exporter health alert from the pinned release ([#3847](https://github.com/dryvist/ansible-proxmox-apps/issues/3847)) ([746468b](https://github.com/dryvist/ansible-proxmox-apps/commit/746468bfa4948c981a155c54ff7d2c1264dc7131))
+
+
+### Bug Fixes
+
+* **zammad:** use character classes in the agent-write verify pattern ([#3845](https://github.com/dryvist/ansible-proxmox-apps/issues/3845)) ([59a7c21](https://github.com/dryvist/ansible-proxmox-apps/commit/59a7c214c92fbc7fd49ae0061ca8a1f9ba5d6dd2))
+
 ## [5.63.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.62.1...v5.63.0) (2026-11-20)
 
 
