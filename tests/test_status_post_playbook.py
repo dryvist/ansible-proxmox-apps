@@ -131,6 +131,17 @@ def test_with_decimals_a_change_that_rounds_away_is_flat():
     assert _line(row, 0.3, [0.2, 0.3]).endswith(" →")
 
 
+def test_a_percent_sparkline_scales_from_0_to_100():
+    row = {"component": "lane", "label": "tokens:", "unit": "%", "decimals": 0, "sparkline": True}
+    assert _line(row, 0.2, [0.0, 0.4, 0.1, 0.3, 0.2]) == f"{GREEN} lane tokens: 0% ▁▁▁▁▁ →"
+    assert _line(row, 100, [0, 50, 100]).endswith(" ▁▅█ ↑50")
+
+
+def test_a_sparkline_without_a_percent_unit_scales_min_to_max():
+    row = {"component": "lane", "label": "tok/s:", "sparkline": True}
+    assert _line(row, 0.4, [0.0, 0.4, 0.2]).endswith(" ▁█▅ ↓0.2")
+
+
 def test_one_point_of_history_draws_no_sparkline():
     row = {"component": "Vikunja", "label": "open tasks:", "sparkline": True}
     assert _line(row, 8, [5]) == f"{GREEN} Vikunja open tasks: 8"
@@ -172,8 +183,8 @@ def test_a_by_row_prints_one_sorted_line_per_series_with_its_own_history():
     ]}}}]
     lines = _message([row], [instant], ranged).splitlines()
     assert lines[1:] == [
-        f"{YELLOW} lane-a tokens, 4 h: 50% ▁█ ↑10",
-        f"{GREEN} lane-b tokens, 4 h: 95% █▁ ↓4",
+        f"{YELLOW} lane-a tokens, 4 h: 50% ▄▅ ↑10",
+        f"{GREEN} lane-b tokens, 4 h: 95% ██ ↓4",
     ]
 
 
@@ -188,3 +199,9 @@ def test_the_gpu_spec_expands_every_row_by_accelerator():
     assert spec["status_post_title"] == "Local LLM utilization, 4 h"
     assert spec["status_post_rows"]
     assert all(row.get("query") and row.get("by") == "accelerator" for row in spec["status_post_rows"])
+
+
+def test_the_gpu_spec_has_no_generation_rate_row():
+    spec = yaml.safe_load((ROOT / "playbooks/vars/status-posts/gpu.yml").read_text(encoding="utf-8"))
+    assert not [row for row in spec["status_post_rows"] if "tok/s" in row["label"]]
+    assert all(row.get("green") is not None and row.get("yellow") is not None for row in spec["status_post_rows"])
