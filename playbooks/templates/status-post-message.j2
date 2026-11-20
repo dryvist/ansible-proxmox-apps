@@ -3,6 +3,9 @@
  the post title, then one status_line per spec row, in spec order. A row's
  value is its instant query's first series; a failed or empty read is
  unmeasured. Sparkline rows take their history from the 12 h range read.
+ A row with `by: <label>` prints one line per series instead, sorted and named
+ by that label's value, each with its own series' history; with no series it
+ prints one unmeasured line named by the row's component.
 -#}
 {%- from 'status-lines.j2' import status_line -%}
 {%- set ns = namespace(lines=[]) -%}
@@ -11,10 +14,20 @@
 {%- set series = instant.json.data.result | default([]) if instant.status | default(0) | int == 200 else [] -%}
 {%- set ranged = (status_post_history_reads.results | default([]) | selectattr('status_post_row', 'defined')
      | selectattr('status_post_row.query', 'equalto', row.query) | list | first) | default({}) -%}
-{%- set history = (ranged.json.data.result | default([]) | first | default({})).get('values', [])
-     if ranged.status | default(0) | int == 200 else [] -%}
+{%- set histories = ranged.json.data.result | default([]) if ranged.status | default(0) | int == 200 else [] -%}
+{%- if row.by is defined and series | length > 0 -%}
+{%- for s in series | sort(attribute='metric.' ~ row.by) -%}
+{%- set key = s.metric.get(row.by, '') -%}
+{%- set history = (histories | selectattr('metric', 'defined')
+     | selectattr('metric.' ~ row.by, 'defined') | selectattr('metric.' ~ row.by, 'equalto', key)
+     | list | first | default({})).get('values', []) -%}
+{%- set ns.lines = ns.lines + [status_line(dict(row, component=key), s.value[1], history)] -%}
+{%- endfor -%}
+{%- else -%}
+{%- set history = (histories | first | default({})).get('values', []) -%}
 {%- set value = (series | first).value[1] if series | length > 0 else none -%}
 {%- set ns.lines = ns.lines + [status_line(row, value, history)] -%}
+{%- endif -%}
 {%- endfor -%}
 {{ status_post_generated_utc }} {{ status_post_title }}
 {{ ns.lines | join('\n') }}

@@ -126,6 +126,11 @@ def test_sparkline_and_arrow(history, tail):
     assert _line(row, 8, history).endswith(tail)
 
 
+def test_with_decimals_a_change_that_rounds_away_is_flat():
+    row = {"component": "lane", "label": "tokens:", "unit": "%", "decimals": 0, "sparkline": True}
+    assert _line(row, 0.3, [0.2, 0.3]).endswith(" →")
+
+
 def test_one_point_of_history_draws_no_sparkline():
     row = {"component": "Vikunja", "label": "open tasks:", "sparkline": True}
     assert _line(row, 8, [5]) == f"{GREEN} Vikunja open tasks: 8"
@@ -151,3 +156,35 @@ def test_a_message_renders_rows_in_spec_order_with_history():
     lines = _message(rows, [_ok(4100), _ok(900)], ranged).splitlines()
     assert lines[1] == f"{YELLOW} Vikunja open tasks: 4100 ▁█ ↑200"
     assert lines[2] == f"{RED} Zammad open tickets: 900"
+
+
+def _series(lane, value):
+    return {"metric": {"accelerator": lane}, "value": [0, str(value)]}
+
+
+def test_a_by_row_prints_one_sorted_line_per_series_with_its_own_history():
+    row = {"component": "lanes", "label": "tokens, 4 h:", "query": "q", "by": "accelerator", "unit": "%",
+           "decimals": 0, "green": 90, "yellow": 45, "sparkline": True}
+    instant = {"status": 200, "json": {"data": {"result": [_series("lane-b", 95), _series("lane-a", 49.6)]}}}
+    ranged = [{"status": 200, "status_post_row": row, "json": {"data": {"result": [
+        {"metric": {"accelerator": "lane-a"}, "values": [[0, "40"], [1, "50"]]},
+        {"metric": {"accelerator": "lane-b"}, "values": [[0, "99"], [1, "95"]]},
+    ]}}}]
+    lines = _message([row], [instant], ranged).splitlines()
+    assert lines[1:] == [
+        f"{YELLOW} lane-a tokens, 4 h: 50% ▁█ ↑10",
+        f"{GREEN} lane-b tokens, 4 h: 95% █▁ ↓4",
+    ]
+
+
+def test_a_by_row_with_no_series_is_one_unmeasured_line():
+    row = {"component": "lanes", "label": "slot duty, 4 h:", "query": "q", "by": "accelerator"}
+    empty = {"status": 200, "json": {"data": {"result": []}}}
+    assert _message([row], [empty]).splitlines()[1:] == [f"{RED} lanes slot duty, 4 h: unmeasured"]
+
+
+def test_the_gpu_spec_expands_every_row_by_accelerator():
+    spec = yaml.safe_load((ROOT / "playbooks/vars/status-posts/gpu.yml").read_text(encoding="utf-8"))
+    assert spec["status_post_title"] == "Local LLM utilization, 4 h"
+    assert spec["status_post_rows"]
+    assert all(row.get("query") and row.get("by") == "accelerator" for row in spec["status_post_rows"])
