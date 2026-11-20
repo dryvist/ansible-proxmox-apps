@@ -1,0 +1,117 @@
+---
+# Hermes cron outcomes -> hermes_cron_runs_total{agent,job,outcome}.
+# The AI input's Splunk connection remains a separate, unchanged copy.
+output: victoriametrics_rw
+streamtags: []
+groups: {}
+asyncFuncTimeout: 1000
+functions:
+  - id: eval
+    filter: "true"
+    disabled: false
+    conf:
+      add:
+        - name: hermes_host
+          value: >-
+            (/^<\d+>\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+([^\s]+)\s+(?:hermes-file|hermes-profile|hermes(?:\[\d+\])?:)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3}\s+(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL)\s+[^:]+:\s*(.*)$/.exec(_raw) || [])[1] || 'unknown'
+        - name: hermes_source
+          value: >-
+            (/^<\d+>\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+[^\s]+\s+(hermes-file|hermes-profile|hermes(?:\[\d+\])?:)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3}\s+(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL)\s+[^:]+:\s*.*$/.exec(_raw) || [])[1] || 'unknown'
+        - name: hermes_timestamp
+          value: >-
+            (/^<\d+>\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+[^\s]+\s+(?:hermes-file|hermes-profile|hermes(?:\[\d+\])?:)\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3})\s+(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL)\s+[^:]+:\s*.*$/.exec(_raw) || [])[1] || ''
+        - name: hermes_message
+          value: >-
+            (/^<\d+>\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+[^\s]+\s+(?:hermes-file|hermes-profile|hermes(?:\[\d+\])?:)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3}\s+(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL)\s+[^:]+:\s*(.*)$/.exec(_raw) || [])[1] || ''
+  - id: eval
+    filter: "true"
+    disabled: false
+    conf:
+      add:
+        - name: agent
+          value: >-
+            hermes_host + '/' + (hermes_source === 'hermes-file' ? 'root' : 'unknown')
+        - name: job_name
+          value: >-
+            ((/^Running job '([^']+)' \(ID: [0-9a-f]{12}\)$/.exec(hermes_message) || [])[1]) || ((/^Job '([^']+)' failed: /.exec(hermes_message) || [])[1]) || ''
+        - name: job_id
+          value: >-
+            ((/^Running job '[^']+' \(ID: ([0-9a-f]{12})\)$/.exec(hermes_message) || [])[1]) || ((/^Job '([0-9a-f]{12})'(?:\:| \(no_agent\)\:)/.exec(hermes_message) || [])[1]) || ''
+        - name: outcome
+          value: >-
+            /^Job '[0-9a-f]{12}': delivered to /.test(hermes_message) ? 'delivered' :
+            /^Job '[0-9a-f]{12}': agent returned \[SILENT\] — skipping delivery$/.test(hermes_message) ||
+            /^Job '[0-9a-f]{12}' \(no_agent\): empty stdout — silent run$/.test(hermes_message) ? 'silent' :
+            /^Job '[0-9a-f]{12}': platform '[^']+' not configured\/enabled$/.test(hermes_message) ? 'undeliverable' :
+            /^Job '[^']+' failed: /.test(hermes_message) ? 'failed' : ''
+  - id: eval
+    filter: "true"
+    disabled: false
+    conf:
+      add:
+        - name: hermes_metric_event
+          value: >-
+            /^Running job '[^']+' \(ID: [0-9a-f]{12}\)$/.test(hermes_message) ? 'start' :
+            outcome ? 'outcome' : ''
+        - name: job
+          value: >-
+            outcome === 'failed' ? job_name : job_id
+        - name: hermes_info_value
+          value: "1"
+  # The journal repeats file lines (WARNING and above), so only the file copies count; Suppress then folds the
+  # second file copy that errors.log adds. One forwarder connection per host keeps both copies on one worker.
+  - id: drop
+    filter: "(hermes_metric_event !== 'start' && hermes_metric_event !== 'outcome') || (hermes_source !== 'hermes-file' && hermes_source !== 'hermes-profile')"
+    disabled: false
+    conf: {}
+  - id: suppress
+    filter: "true"
+    disabled: false
+    conf:
+      keyExpr: "${hermes_host}:${hermes_timestamp}:${hermes_message}"
+      numAllowed: 1
+      suppressPeriodSec: {{ cribl_stream_hermes_cron_suppress_seconds }}
+      dropEvents: true
+  - id: aggregation
+    filter: "hermes_metric_event === 'outcome'"
+    disabled: false
+    conf:
+      aggregates:
+        - "count().as(value)"
+      groupByFields:
+        - agent
+        - job
+        - outcome
+      timeWindow: 1m
+      lagTolerance: 10s
+      idleBucketTimeLimit: 10s
+      cumulative: true
+      flushOnInputClose: false
+  - id: publish_metrics
+    filter: "hermes_metric_event === 'outcome'"
+    disabled: false
+    conf:
+      metrics:
+        - field: value
+          metricName: "'hermes_cron_runs_total'"
+          type: counter
+      dimensions:
+        - agent
+        - job
+        - outcome
+  - id: publish_metrics
+    filter: "hermes_metric_event === 'start'"
+    disabled: false
+    conf:
+      metrics:
+        - field: hermes_info_value
+          metricName: "'hermes_cron_job_info'"
+          type: gauge
+      dimensions:
+        - agent
+        - job_id
+        - job_name
+  - id: drop
+    filter: "true"
+    disabled: false
+    conf: {}

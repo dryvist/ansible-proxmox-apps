@@ -1,0 +1,36 @@
+---
+- name: Assert the Hermes metric pipeline uses native parse, Suppress, Aggregations and Publish Metrics
+  vars:
+    _hermes_pipeline: "{{ _cribl_stream_hermes_cron_pipeline | from_yaml }}"
+    _hermes_fn_ids: "{{ _hermes_pipeline.functions | map(attribute='id') | list }}"
+    _hermes_input: "{{ (_cribl_stream_inputs | from_yaml).inputs['syslog:in_ai_hermes_agent'] }}"
+    _hermes_input_per_index: >-
+      {{ (_cribl_stream_inputs_per_index | from_yaml).inputs['syslog:in_ai_hermes_agent'] }}
+  ansible.builtin.assert:
+    that:
+      - _hermes_pipeline.output == 'victoriametrics_rw'
+      - _hermes_fn_ids == ['eval', 'eval', 'eval', 'drop', 'suppress', 'aggregation',
+        'publish_metrics', 'publish_metrics', 'drop']
+      - _hermes_pipeline.functions[4].conf.keyExpr == '${hermes_host}:${hermes_timestamp}:${hermes_message}'
+      - _hermes_pipeline.functions[4].conf.numAllowed == 1
+      - _hermes_pipeline.functions[4].conf.dropEvents is true
+      - _hermes_pipeline.functions[5].conf.groupByFields == ['agent', 'job', 'outcome']
+      - _hermes_pipeline.functions[6].conf.metrics[0].metricName == "'hermes_cron_runs_total'"
+      - _hermes_pipeline.functions[6].conf.metrics[0].type == 'counter'
+      - _hermes_pipeline.functions[6].conf.dimensions == ['agent', 'job', 'outcome']
+      - _hermes_pipeline.functions[7].conf.metrics[0].metricName == "'hermes_cron_job_info'"
+      - _hermes_pipeline.functions[7].conf.metrics[0].type == 'gauge'
+      - _hermes_pipeline.functions[7].conf.dimensions == ['agent', 'job_id', 'job_name']
+      - _hermes_input.connections | selectattr('pipeline', 'equalto', 'ai_stamp')
+        | map(attribute='output') | list == ['splunk_hec']
+      - _hermes_input.connections | selectattr('pipeline', 'equalto', 'hermes_cron_to_metrics')
+        | map(attribute='output') | list == ['victoriametrics_rw']
+      - _hermes_input_per_index.connections | selectattr('pipeline', 'equalto', 'ai_stamp')
+        | map(attribute='output') | list == ['splunk_hec_hermes']
+      - _hermes_input_per_index.connections | selectattr('pipeline', 'equalto', 'hermes_cron_to_metrics')
+        | map(attribute='output') | list == ['victoriametrics_rw']
+    fail_msg: >-
+      Hermes cron metrics must be a separate native pipeline connection to
+      VictoriaMetrics, preserve ai_stamp's existing Splunk output in both HEC
+      modes, use Suppress keyed only on host + Hermes timestamp + message,
+      and publish only the contracted labels plus the job info gauge.
