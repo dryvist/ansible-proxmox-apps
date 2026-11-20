@@ -17,6 +17,7 @@ EXPECTED = {
     "pay-per-token-spend.yml",
     "critical-slack-contact-point.yml",
     "hermes-cron-jobs.yml",
+    "runner-guest-blocked.yml",
 }
 
 
