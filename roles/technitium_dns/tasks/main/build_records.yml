@@ -55,6 +55,48 @@
   loop_control:
     label: DHCP guest
 
+- name: Reset inventory-name CNAME records
+  ansible.builtin.set_fact:
+    technitium_dns_inventory_cname_records: []
+
+- name: Build CNAME records for inventory names
+  vars:
+    _alias_name: "{{ item | lower }}"
+    _alias_domain: "{{ _alias_name }}.{{ technitium_dns_zone | lower }}"
+    _container_ip: "{{ hostvars[item].container_ip | default('') }}"
+    _claimed_labels: >-
+      {{ ((technitium_dns_a_records | map(attribute='name') | list)
+          + technitium_dns_ingress_aliases
+          + (technitium_dns_cname_records | map(attribute='name') | list)
+          + (technitium_dns_extra_cname_records | map(attribute='name') | list)
+          + (technitium_dns_inventory_cname_records | map(attribute='name') | list))
+         | map('lower') | list }}
+    _claimed_domains: >-
+      {{ (technitium_dns_explicit_ingress_names + technitium_dns_dhcp_guest_fqdns)
+         | map('lower') | map('regex_replace', '[.]$', '') | list }}
+    _extra_a_zones: >-
+      {{ technitium_dns_extra_a_records | selectattr('ip', 'truthy')
+         | selectattr('name', 'regex', _alias_name, ignorecase=true, match_type='fullmatch')
+         | map(attribute='zone', default=technitium_dns_zone) | map('lower') | list }}
+  ansible.builtin.set_fact:
+    technitium_dns_inventory_cname_records: >-
+      {{ technitium_dns_inventory_cname_records + [{
+          'name': _alias_name,
+          'target': (_container_ip if _container_ip in technitium_dns_dhcp_guest_fqdns
+                     else hostvars[item].hostname ~ '.' ~ technitium_dns_zone)
+        }] }}
+  loop: "{{ groups['all'] | default([]) | reject('equalto', 'localhost') | list }}"
+  when:
+    - technitium_dns_inventory_name_cnames | bool
+    - hostvars[item].hostname is defined
+    - _alias_name != hostvars[item].hostname | lower
+    - _alias_name is regex('[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', match_type='fullmatch')
+    - _alias_name not in _claimed_labels
+    - _alias_domain not in _claimed_domains
+    - technitium_dns_zone | lower not in _extra_a_zones
+  loop_control:
+    label: "{{ item }}"
+
 # Fail loud, not silent: a builder that skips every host (e.g. the hostname
 # fact missing from the dynamic inventory) yields an empty list and the role
 # would "succeed" while creating nothing. There is always at least one guest
