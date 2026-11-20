@@ -42,6 +42,47 @@
         fail_msg: "An unreadable pgBackRest credential did not fail the enabled case."
         quiet: true
 
+- name: Accept a complete pgBackRest credential and name a blank field
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Run the role credential assertion with every field set
+      ansible.builtin.include_tasks: ../../../roles/postgres/tasks/assert_pgbackrest_record.yml
+      vars:
+        postgres_pgbackrest_enabled: true
+        bao_postgres_backup_s3_secrets:
+          AWS_ENDPOINT_URL: https://s3.example.test
+          AWS_REGION: us-east-1
+          AWS_ACCESS_KEY_ID: fixture-access-key
+          AWS_SECRET_ACCESS_KEY: fixture-secret-key
+          BUCKET: fixture-bucket
+
+    - name: Expect a record whose secret key is blank to fail
+      block:
+        - name: Run the role credential assertion with a blank secret key
+          ansible.builtin.include_tasks: ../../../roles/postgres/tasks/assert_pgbackrest_record.yml
+          vars:
+            postgres_pgbackrest_enabled: true
+            bao_postgres_backup_s3_secrets:
+              AWS_ENDPOINT_URL: https://s3.example.test
+              AWS_REGION: us-east-1
+              AWS_ACCESS_KEY_ID: fixture-access-key
+              AWS_SECRET_ACCESS_KEY: "  "
+              BUCKET: fixture-bucket
+      rescue:
+        - name: Record that the blank-field case failed
+          ansible.builtin.set_fact:
+            _pgbackrest_blank_field_failure_seen: true
+
+    - name: Assert only the blank field is reported missing
+      ansible.builtin.assert:
+        that:
+          - _pgbackrest_blank_field_failure_seen | default(false) | bool
+          - postgres_pgbackrest_missing_credential_fields == ['AWS_SECRET_ACCESS_KEY']
+        fail_msg: "A complete record must pass and a blank field must be the only one reported."
+        quiet: true
+
 - name: Allow an unreadable pgBackRest credential when the feature is disabled
   hosts: localhost
   connection: local
