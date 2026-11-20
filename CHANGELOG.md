@@ -1,5 +1,19 @@
 # Changelog
 
+## [5.59.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.58.0...v5.59.0) (2026-11-20)
+
+
+### Features
+
+* **cribl:** publish the Hermes cron job profile gauge ([#3783](https://github.com/dryvist/ansible-proxmox-apps/issues/3783)) ([33e91d7](https://github.com/dryvist/ansible-proxmox-apps/commit/33e91d7d02613d605a9bbfcfc1caf6d6702112b2))
+* **prometheus_stack:** add the tracker sql_exporter and read-only Postgres logins ([#3773](https://github.com/dryvist/ansible-proxmox-apps/issues/3773)) ([367d869](https://github.com/dryvist/ansible-proxmox-apps/commit/367d8694b30164cfe989f28d442d830a2cf3cd41))
+
+
+### Bug Fixes
+
+* **cribl:** publish the Hermes cron run counter ([#3785](https://github.com/dryvist/ansible-proxmox-apps/issues/3785)) ([5f867dd](https://github.com/dryvist/ansible-proxmox-apps/commit/5f867dd61e37be3219792e75be32c787503cbeae))
+* **postgres:** accept a complete pgBackRest credential record ([#3786](https://github.com/dryvist/ansible-proxmox-apps/issues/3786)) ([c67c974](https://github.com/dryvist/ansible-proxmox-apps/commit/c67c97483a1f38ff34982a1fa36726a03c2f6c55))
+
 ## [5.58.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.57.0...v5.58.0) (2026-11-20)
 
 
