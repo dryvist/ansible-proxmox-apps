@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.67.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.67.0...v5.67.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **vikunja:** run MCP token tasks before the project-share reconciles ([#3872](https://github.com/dryvist/ansible-proxmox-apps/issues/3872)) ([fcd847d](https://github.com/dryvist/ansible-proxmox-apps/commit/fcd847d80490bb61222fdcd357baf6d45cded38d))
+
 ## [5.67.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.66.0...v5.67.0) (2026-11-20)
 
 
