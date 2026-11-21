@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.69.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.68.0...v5.69.0) (2026-11-21)
+
+
+### Features
+
+* **vikunja:** declare signed project webhooks ([#3883](https://github.com/dryvist/ansible-proxmox-apps/issues/3883)) ([72abb88](https://github.com/dryvist/ansible-proxmox-apps/commit/72abb88a873c517e0a7fa2f2ac8103acd16ea359))
+
 ## [5.68.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.67.2...v5.68.0) (2026-11-20)
 
 
