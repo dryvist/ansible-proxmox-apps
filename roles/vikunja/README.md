@@ -45,3 +45,9 @@ webhooks are created only through this repository's automation, and every
 Vikunja user is the operator or an agent bot. If either assumption changes,
 turn `vikunja_outgoing_requests_allow_non_routable_ips` off or route webhooks
 through a proxy (`outgoingrequests.proxyurl`).
+
+`vikunja_task_webhooks` declares those webhooks, one row per project, created
+as the project's automation owner when absent and never deleted. Each is
+signed with the route-only secret from `VIKUNJA_TASK_WEBHOOK_SECRET`; the run
+fails if rows are set and the secret is absent, or if a live webhook's events
+differ from its row.
