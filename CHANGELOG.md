@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.72.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.71.2...v5.72.0) (2026-11-21)
+
+
+### Features
+
+* **github_runner:** add runner_prune_now and runner_container_audit tag paths ([#3917](https://github.com/dryvist/ansible-proxmox-apps/issues/3917)) ([53ae004](https://github.com/dryvist/ansible-proxmox-apps/commit/53ae004bcd963d1edd8a8156506c48e5607a3046))
+
 ## [5.71.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.71.1...v5.71.2) (2026-11-21)
 
 
