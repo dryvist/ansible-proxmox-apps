@@ -70,10 +70,11 @@
     github_runner_apt_proxy_url: ""
     _inventory_mount_flag: >-
       --volume\s+{{ github_runner_inventory_file }}:{{ github_runner_inventory_mount }}:ro
+    # Slot 3 is pooled (review_slots is 2), so its mounts file carries the host mounts.
     _diag_mount_flag: >-
-      --volume\s+{{ github_runner_diag_host_dir }}/%i:/actions-runner/_diag
+      --volume\s+{{ github_runner_diag_host_dir }}/3:/actions-runner/_diag
     _tool_cache_mount_flag: >-
-      --volume\s+{{ github_runner_tool_cache_host_dir }}/%i:{{ github_runner_tool_cache_mount }}
+      --volume\s+{{ github_runner_tool_cache_host_dir }}/3:{{ github_runner_tool_cache_mount }}
 
   tasks:
     - name: Read fixture identity values from the render directory
@@ -129,6 +130,18 @@
         github_runner_group: example-group
         github_runner_bao_addr: "https://openbao.example.invalid"
 
+    - name: Render a review slot's and a pooled slot's host mounts files
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/runner-mounts.env.j2"
+        dest: "{{ _fixture_dir }}/test_runner.env-{{ github_runner_slot }}.mounts"
+        mode: "0644"
+      loop: [1, 3]
+      loop_control:
+        loop_var: github_runner_slot
+      vars:
+        # vars_files (role defaults) outrank play vars, so the boundary is set here.
+        github_runner_review_slots: 2
+
     - name: Render the runner diagnostics retention policy
       ansible.builtin.template:
         src: "{{ _template_dir }}/github-runner-diag-tmpfiles.conf.j2"
@@ -143,11 +156,19 @@
         - test_github-runner@.service
         - test_runner.env
         - test_github-runner-diag-tmpfiles.conf
+        - test_runner.env-1.mounts
+        - test_runner.env-3.mounts
 
     - name: Decode the rendered files
       ansible.builtin.set_fact:
         _unit_raw: "{{ _runner_raw.results[0].content | b64decode }}"
         _env_raw: "{{ _runner_raw.results[1].content | b64decode }}"
+        _review_mounts: >-
+          {{ (_runner_raw.results[3].content | b64decode).splitlines()
+             | select('match', 'RUNNER_HOST_MOUNTS=') | list }}
+        _pooled_mounts: >-
+          {{ (_runner_raw.results[4].content | b64decode).splitlines()
+             | select('match', 'RUNNER_HOST_MOUNTS=') | list }}
         _tmpfiles_raw: "{{ _runner_raw.results[2].content | b64decode }}"
 
     # Assert on DIRECTIVE LINES ONLY, as a list. Two traps informed this:
@@ -192,10 +213,21 @@
           it to Splunk. journald is what syslog_forwarder already collects on
           this host.
 
+    - name: Assert the unit takes its host mounts from the slot's mounts file
+      ansible.builtin.assert:
+        that:
+          - _unit | select('search', '^EnvironmentFile=/etc/github-runner/runner\\.env-%i\\.mounts$') | length > 0
+          - _unit | select('search', '^\\s+\\$RUNNER_HOST_MOUNTS\\s') | length > 0
+          - _unit | select('search', 'docker\\.sock|--group-add|_diag') | length == 0
+          - _review_mounts == ['RUNNER_HOST_MOUNTS=']
+        fail_msg: >-
+          The unit must read RUNNER_HOST_MOUNTS from the slot's mounts file and
+          name no host mount itself; a review slot's file must mount nothing.
+
     - name: Assert the runner's _diag log files survive past --rm
       ansible.builtin.assert:
         that:
-          - _unit | select('search', _diag_mount_flag) | length > 0
+          - _pooled_mounts | select('search', _diag_mount_flag) | length > 0
         fail_msg: >-
           The unit does not bind-mount the per-slot _diag directory into
           /actions-runner/_diag. Runner.Listener/Runner.Worker's own log
@@ -205,7 +237,7 @@
     - name: Assert tool cache
       ansible.builtin.assert:
         that:
-          - _unit | select('search', _tool_cache_mount_flag) | length > 0
+          - _pooled_mounts | select('search', _tool_cache_mount_flag) | length > 0
         fail_msg: Tool cache mount missing.
 
     - name: Assert the _diag directory is actually cleaned up
@@ -240,7 +272,7 @@
             '(^|\\s)--user\\s+' ~ (github_runner_container_user | regex_escape) ~ '(\\s|$)')
             | length > 0
           - >-
-            _unit | select('search',
+            _pooled_mounts | select('search',
             '(^|\\s)--group-add\\s+' ~ (github_runner_docker_gid | string | regex_escape) ~ '(\\s|$)')
             | length > 0
           - >-
