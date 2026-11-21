@@ -52,6 +52,15 @@ sops exec-env secrets.enc.yaml 'scripts/run-ansible.sh \
 scripts/run-ansible.sh playbooks/site.yml \
   --tags github_runner --limit docker_vms,localhost
 
+# Add runner_prune_now to start github-runner-docker-prune.service and wait
+# for it before the data-disk free-space check; alone, it runs only that.
+scripts/run-ansible.sh playbooks/site.yml \
+  --tags github_runner,runner_prune_now --limit docker_vms,localhost
+
+# Read-only container audit (also the last step of every runner converge)
+scripts/run-ansible.sh playbooks/site.yml \
+  --tags runner_container_audit --limit docker_vms,localhost
+
 # Edit encrypted secrets
 sops secrets.enc.yaml
 

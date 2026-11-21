@@ -1,0 +1,33 @@
+---
+# Imported by main.yml with tags [never, runner_prune_now], ahead of
+# data_disk.yml: a run that asks for the tag reclaims the Docker data disk
+# first, so the headroom check in data_disk.yml reads the result.
+- name: Run the declared Docker reclaim unit and wait for it
+  # Type=oneshot: `systemctl start` returns when the prune has finished.
+  ansible.builtin.systemd_service:
+    name: github-runner-docker-prune.service
+    state: started
+
+- name: Read Docker's data root after the reclaim
+  ansible.builtin.command:
+    cmd: docker info --format '{{ "{{" }}.DockerRootDir{{ "}}" }}'
+  register: github_runner_prune_docker_root
+  changed_when: false
+  check_mode: false
+
+- name: Read free space on the Docker data filesystem after the reclaim
+  ansible.builtin.command:
+    cmd: "findmnt -no AVAIL,SIZE --bytes --target {{ github_runner_prune_docker_root.stdout | trim }}"
+  register: github_runner_prune_free
+  changed_when: false
+  check_mode: false
+
+- name: Report free space after the reclaim
+  vars:
+    _avail: "{{ github_runner_prune_free.stdout.split()[0] | int }}"
+    _size: "{{ github_runner_prune_free.stdout.split()[1] | int }}"
+  ansible.builtin.debug:
+    msg: >-
+      After the reclaim the Docker data filesystem has
+      {{ (_avail | int * 100 // (_size | int)) if (_size | int) > 0 else 0 }}% free
+      (threshold {{ github_runner_data_min_free_percent }}%).
