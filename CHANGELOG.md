@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.72.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.72.1...v5.72.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* **github_runner:** report every container audit finding before asserting ([#3924](https://github.com/dryvist/ansible-proxmox-apps/issues/3924)) ([20e533a](https://github.com/dryvist/ansible-proxmox-apps/commit/20e533a7b30f6e9b5c12774b1f6fae5d0e2b6f42))
+
 ## [5.72.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.72.0...v5.72.1) (2026-11-21)
 
 
