@@ -1,0 +1,51 @@
+---
+# Imported by main.yml with tags [never, runner_remove_containers] and the same
+# run-tags gate as prune_now.yml. Removes the containers a run names in
+# github_runner_remove_containers, logging what each one was first.
+- name: Validate the containers to remove
+  ansible.builtin.assert:
+    that:
+      - github_runner_remove_containers is defined
+      - github_runner_remove_containers is sequence
+      - github_runner_remove_containers is not string
+      - github_runner_remove_containers | length > 0
+      - github_runner_remove_containers | select('match', github_runner_container_prefix) | list | length == 0
+    fail_msg: >-
+      Name the containers to remove as a non-empty list in github_runner_remove_containers.
+      No name may start with {{ github_runner_container_prefix }}: runner containers belong to their units.
+
+- name: Log each container's identity, privilege and mounts before removal
+  vars:
+    # Never .Config.Env: it can hold credentials.
+    _format: >-
+      {{ ['{{.Name}}', '{{.Config.Image}}', '{{.Image}}', '{{.Created}}',
+          '{{.HostConfig.Privileged}}', '{{json .Mounts}}'] | join('|') }}
+  ansible.builtin.command:
+    argv: [docker, inspect, --format, "{{ _format }}", "{{ item }}"]
+  loop: "{{ github_runner_remove_containers }}"
+  register: github_runner_remove_inspect
+  changed_when: false
+  check_mode: false
+
+- name: Log each container's filesystem changes before removal
+  ansible.builtin.command:
+    argv: [docker, diff, "{{ item }}"]
+  loop: "{{ github_runner_remove_containers }}"
+  register: github_runner_remove_diff
+  changed_when: false
+  check_mode: false
+
+- name: Report each container before removal
+  ansible.builtin.debug:
+    msg:
+      - "{{ item.0.stdout }}"
+      - "{{ item.1.stdout_lines }}"
+  loop: "{{ github_runner_remove_inspect.results | zip(github_runner_remove_diff.results) | list }}"
+  loop_control:
+    label: "{{ item.0.item }}"
+
+- name: Remove each named container
+  ansible.builtin.command:
+    argv: [docker, rm, --force, "{{ item }}"]
+  loop: "{{ github_runner_remove_containers }}"
+  changed_when: true
