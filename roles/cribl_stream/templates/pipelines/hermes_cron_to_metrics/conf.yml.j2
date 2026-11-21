@@ -1,6 +1,7 @@
 ---
 # Hermes cron outcomes -> hermes_cron_run_outcome{agent,job,outcome}: one sample per run outcome,
 # stamped with the log line's own time (the syslog _time), so count_over_time counts runs.
+# agent is host/profile; a profile's own log lines carry the rsyslog tag hermes-profile-<profile>.
 # The AI input's Splunk connection remains a separate, unchanged copy.
 output: victoriametrics_rw
 streamtags: []
@@ -14,16 +15,16 @@ functions:
       add:
         - name: hermes_host
           value: >-
-            (/^<\d+>\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+([^\s]+)\s+(?:hermes-file|hermes-profile|hermes(?:\[\d+\])?:)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3}\s+(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL)\s+[^:]+:\s*(.*)$/.exec(_raw) || [])[1] || 'unknown'
+            (/^<\d+>\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+([^\s]+)\s+(?:hermes-file|hermes-profile(?:-[A-Za-z0-9_.-]+)?|hermes(?:\[\d+\])?:)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3}\s+(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL)\s+[^:]+:\s*(.*)$/.exec(_raw) || [])[1] || 'unknown'
         - name: hermes_source
           value: >-
-            (/^<\d+>\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+[^\s]+\s+(hermes-file|hermes-profile|hermes(?:\[\d+\])?:)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3}\s+(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL)\s+[^:]+:\s*.*$/.exec(_raw) || [])[1] || 'unknown'
+            (/^<\d+>\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+[^\s]+\s+(hermes-file|hermes-profile(?:-[A-Za-z0-9_.-]+)?|hermes(?:\[\d+\])?:)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3}\s+(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL)\s+[^:]+:\s*.*$/.exec(_raw) || [])[1] || 'unknown'
         - name: hermes_timestamp
           value: >-
-            (/^<\d+>\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+[^\s]+\s+(?:hermes-file|hermes-profile|hermes(?:\[\d+\])?:)\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3})\s+(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL)\s+[^:]+:\s*.*$/.exec(_raw) || [])[1] || ''
+            (/^<\d+>\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+[^\s]+\s+(?:hermes-file|hermes-profile(?:-[A-Za-z0-9_.-]+)?|hermes(?:\[\d+\])?:)\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3})\s+(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL)\s+[^:]+:\s*.*$/.exec(_raw) || [])[1] || ''
         - name: hermes_message
           value: >-
-            (/^<\d+>\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+[^\s]+\s+(?:hermes-file|hermes-profile|hermes(?:\[\d+\])?:)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3}\s+(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL)\s+[^:]+:\s*(.*)$/.exec(_raw) || [])[1] || ''
+            (/^<\d+>\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+[^\s]+\s+(?:hermes-file|hermes-profile(?:-[A-Za-z0-9_.-]+)?|hermes(?:\[\d+\])?:)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3}\s+(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL)\s+[^:]+:\s*(.*)$/.exec(_raw) || [])[1] || ''
   - id: eval
     filter: "true"
     disabled: false
@@ -35,7 +36,8 @@ functions:
             (/^Job '[0-9a-f]{12}': using task-scoped workdir .+$/.test(hermes_message) ? 'root' : '')
         - name: agent
           value: >-
-            hermes_host + '/' + (profile || (hermes_source === 'hermes-file' ? 'root' : 'unknown'))
+            hermes_host + '/' + (profile || (/^hermes-profile-(.+)$/.exec(hermes_source) || [])[1] ||
+            (hermes_source === 'hermes-file' ? 'root' : 'unknown'))
         - name: job_name
           value: >-
             ((/^Running job '([^']+)' \(ID: [0-9a-f]{12}\)$/.exec(hermes_message) || [])[1]) || ((/^Job '([^']+)' failed: /.exec(hermes_message) || [])[1]) || ''
@@ -67,7 +69,7 @@ functions:
   # The journal repeats file lines (WARNING and above), so only the file copies count; Suppress then folds the
   # second file copy that errors.log adds. One forwarder connection per host keeps both copies on one worker.
   - id: drop
-    filter: "(hermes_metric_event !== 'start' && hermes_metric_event !== 'outcome' && hermes_metric_event !== 'profile') || (hermes_source !== 'hermes-file' && hermes_source !== 'hermes-profile')"
+    filter: "(hermes_metric_event !== 'start' && hermes_metric_event !== 'outcome' && hermes_metric_event !== 'profile') || (hermes_source !== 'hermes-file' && !/^hermes-profile/.test(hermes_source))"
     disabled: false
     conf: {}
   - id: suppress
@@ -77,6 +79,15 @@ functions:
       keyExpr: "`${hermes_host}:${hermes_timestamp}:${hermes_message}`"
       numAllowed: 1
       suppressPeriodSec: {{ cribl_stream_hermes_cron_suppress_seconds }}
+      dropEvents: true
+  # One outcome per run: a no_agent run logs both "(no_agent): empty stdout" and "agent returned [SILENT]".
+  - id: suppress
+    filter: "hermes_metric_event === 'outcome'"
+    disabled: false
+    conf:
+      keyExpr: "`${hermes_host}:${job}:${outcome}`"
+      numAllowed: 1
+      suppressPeriodSec: {{ cribl_stream_hermes_cron_outcome_suppress_seconds }}
       dropEvents: true
   - id: publish_metrics
     filter: "hermes_metric_event === 'outcome'"
