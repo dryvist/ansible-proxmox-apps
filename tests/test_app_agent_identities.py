@@ -37,7 +37,9 @@ def test_vikunja_agent_tiers_have_exact_identity_and_project_access():
 
     access_tasks = _yaml("roles/vikunja/tasks/agent_read_access.yml")
     reconcile_dispatch = _task(access_tasks, "Reconcile each configured app-agent tier exactly")
-    assert reconcile_dispatch["loop"] == "{{ vikunja_agent_tiers }}"
+    assert reconcile_dispatch["loop"] == (
+        "{{ vikunja_agent_tiers + (vikunja_share_only_tiers | selectattr('project_allowlist') | list) }}"
+    )
     reconcile = _yaml("roles/vikunja/tasks/agent_tier_reconcile.yml")
     regrant = _task(reconcile, "Regrant only the configured direct project shares to the tier account")
     assert regrant["vars"]["vikunja_share_grantee_username"] == "{{ vikunja_agent_tier.username }}"
