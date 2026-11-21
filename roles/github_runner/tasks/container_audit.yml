@@ -1,0 +1,71 @@
+---
+# Read-only. Imported last by main.yml with tag runner_container_audit, so it is
+# the readback of every converge and can also run alone with that tag.
+- name: Apply pending runner restarts before the audit
+  ansible.builtin.meta: flush_handlers
+
+- name: List every container on the runner host
+  ansible.builtin.command:
+    cmd: docker ps --all --format '{{ "{{" }}.Names{{ "}}" }}'
+  register: github_runner_audit_names
+  changed_when: false
+  check_mode: false
+
+- name: Read each container's mounts, added groups and privilege
+  vars:
+    # Never .Config.Env: a runner container's environment holds its registration token.
+    # Mounts last: split('|', 3) leaves any '|' in a mount path inside that field.
+    _format: >-
+      {{ ['{{.Name}}', '{{.HostConfig.Privileged}}', '{{json .HostConfig.GroupAdd}}', '{{json .Mounts}}']
+         | join('|') }}
+  ansible.builtin.command:
+    argv: "{{ ['docker', 'inspect', '--format', _format] + github_runner_audit_names.stdout_lines }}"
+  register: github_runner_audit_inspect
+  when: github_runner_audit_names.stdout_lines | length > 0
+  changed_when: false
+  check_mode: false
+
+- name: Keep each container's name, socket mount, added groups, privilege and lane
+  vars:
+    _prefix: "{{ github_runner_container_prefix }}"
+  ansible.builtin.set_fact:
+    github_runner_audit: >-
+      {%- set rows = [] -%}
+      {%- for line in github_runner_audit_inspect.stdout_lines | default([]) -%}
+      {%- set f = line.split('|', 3) -%}
+      {%- set name = f[0] | regex_replace('^/', '') -%}
+      {%- set slot = name | regex_replace('^' ~ _prefix ~ '-', '') -%}
+      {%- set review = name is match(_prefix ~ '-review-')
+          or (slot is match('^[0-9]+$') and slot | int <= github_runner_review_slots | int) -%}
+      {%- set _ = rows.append({'name': name, 'privileged': f[1] | bool,
+          'group_add': (f[2] | from_json) or [], 'socket': 'docker.sock' in f[3], 'review': review}) -%}
+      {%- endfor -%}
+      {{ rows }}
+
+- name: Assert no container named seerr-* is on the runner host
+  vars:
+    _seerr: "{{ github_runner_audit | map(attribute='name') | select('match', 'seerr-') | list }}"
+  ansible.builtin.assert:
+    that:
+      - _seerr | length == 0
+    fail_msg: "Containers named seerr-* are on the runner host: {{ _seerr | join(', ') }}"
+    success_msg: No container named seerr-* is on the runner host.
+
+- name: Assert every review runner container has no Docker socket and no added group
+  vars:
+    _review: "{{ github_runner_audit | selectattr('review') | list }}"
+    _bad: >-
+      {{ (_review | selectattr('socket') | map(attribute='name') | list)
+         + (_review | selectattr('group_add') | map(attribute='name') | list) }}
+  ansible.builtin.assert:
+    that:
+      - _bad | length == 0
+    fail_msg: "Review runner containers with the Docker socket or an added group: {{ _bad | unique | join(', ') }}"
+    success_msg: >-
+      {{ _review | length }} review runner container(s), none with the Docker socket or an added group.
+
+- name: Report privileged containers
+  ansible.builtin.debug:
+    msg: >-
+      Privileged containers:
+      {{ github_runner_audit | selectattr('privileged') | map(attribute='name') | list | join(', ') or 'none' }}
