@@ -1,10 +1,13 @@
 ---
 name: OpenHands CI Fix
 
-# Started by the PR Reconcile sweep: one workflow_dispatch per head commit of a
-# pull request whose code checks failed. The called workflow handles gating,
-# attempt caps, daily limits and concurrency.
+# Started when CI Gate fails, and by the PR Reconcile sweep: one
+# workflow_dispatch per head commit of a pull request whose code checks failed.
+# The called workflow handles gating, attempt caps, daily limits and concurrency.
 on:
+  workflow_run:
+    workflows: ["CI Gate"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       failure_run_id:
@@ -27,7 +30,8 @@ permissions:
 
 jobs:
   fix:
-    uses: JacobPEvans/.github-ai/.github/workflows/cc-ci-fix.yml@f518278dda04f5b600df56be9c8263e7bc80bdd4 # v2.44.0
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'failure'
+    uses: JacobPEvans/.github-ai/.github/workflows/cc-ci-fix.yml@43e8fcee609767853e5a582b26f4f55333ef6d10 # v2.49.0
     secrets:
       LLM_ROUTER_BASE_URL: ${{ secrets.LLM_ROUTER_BASE_URL }}
       LLM_ROUTER_API_KEY: ${{ secrets.LLM_ROUTER_API_KEY }}
@@ -40,11 +44,12 @@ jobs:
       agent: openhands
       local_model: medium
       daily_run_limit: "20"
-      failure_conclusion: failure
+      # Empty on workflow_run: the called workflow reads the failed run from the event.
+      failure_conclusion: ${{ github.event_name == 'workflow_dispatch' && 'failure' || '' }}
       failure_run_id: ${{ inputs.failure_run_id }}
       failure_head_branch: ${{ inputs.failure_head_branch }}
-      failure_head_repository: ${{ github.repository }}
-      failure_actor: ${{ github.actor }}
+      failure_head_repository: ${{ github.event_name == 'workflow_dispatch' && github.repository || '' }}
+      failure_actor: ${{ github.event_name == 'workflow_dispatch' && github.actor || '' }}
       repo_context: "Ansible playbooks and roles for applications on Proxmox VMs/containers"
       ci_structure: "ansible-lint.yml (ansible-lint + ansible-playbook --syntax-check)"
       extra_tools: "Bash(ansible-lint:*),Bash(ansible-playbook:*)"

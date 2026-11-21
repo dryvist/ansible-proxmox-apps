@@ -1,5 +1,19 @@
 # Changelog
 
+## [5.70.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.70.2...v5.70.3) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cribl_stream:** publish one Hermes cron outcome per run with its profile ([#3897](https://github.com/dryvist/ansible-proxmox-apps/issues/3897)) ([7ce9d83](https://github.com/dryvist/ansible-proxmox-apps/commit/7ce9d83dda12b529385cbbde61229783b193c226))
+
+## [5.70.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.70.1...v5.70.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* **site:** keep OPENBAO_GITHUB_PR_RECONCILE_CALLER_OWNERS from the env document ([#3899](https://github.com/dryvist/ansible-proxmox-apps/issues/3899)) ([b9c08af](https://github.com/dryvist/ansible-proxmox-apps/commit/b9c08afa6638020e916f589e1a15c257e457bfa1))
+
 ## [5.70.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.70.0...v5.70.1) (2026-11-21)
 
 
