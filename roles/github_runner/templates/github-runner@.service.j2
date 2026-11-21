@@ -91,13 +91,14 @@ ExecStartPre=/usr/bin/timeout 60 /bin/sh -c 'until [ -s {{ github_runner_unit_to
 # (inventory/group_vars/docker_vms.yml) tails it into the same journald ->
 # Splunk path as everything else on this host -- no new mount, index, or
 # reaper; the files just outlive the container that wrote them.
+# Host mounts come per slot from runner-mounts.env.j2: none on a review slot.
+EnvironmentFile={{ github_runner_unit_env_file | default(github_runner_env_file) }}-%i.mounts
 ExecStart=/usr/bin/docker run \
     --rm \
     --name {{ github_runner_container_prefix }}-%i \
     --log-driver journald \
     --log-opt tag={{ github_runner_container_prefix }}-%i \
-    --volume {{ github_runner_unit_diag_dir | default(github_runner_diag_host_dir ~ '/%i') }}:/actions-runner/_diag \
-    --volume {{ github_runner_unit_tool_cache_dir | default(github_runner_tool_cache_host_dir ~ '/%i') }}:{{ github_runner_tool_cache_mount }} \
+    $RUNNER_HOST_MOUNTS \
     --user {{ github_runner_container_user }} \
     --security-opt {{ (github_runner_container_seccomp_option | trim)
                        or undef(hint='github_runner_container_seccomp_option must name a seccomp profile') }} \
@@ -107,9 +108,7 @@ ExecStart=/usr/bin/docker run \
     --volume {{ github_runner_inventory_file }}:{{ github_runner_inventory_mount }}:ro \
     --cpus {{ github_runner_cpu_limit }} \
     --memory {{ github_runner_memory_limit }} \
-    --group-add {{ github_runner_docker_gid }} \
     --network {{ github_runner_network }} \
-    --volume /var/run/docker.sock:/var/run/docker.sock \
     --env RUNNER_NAME_PREFIX={{ github_runner_name_prefix }}-%i \
     {{ github_runner_image }}
 # `docker run` forwards the container's exit status. An ephemeral runner exits
