@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.71.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.71.1...v5.71.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* **github_runner:** register review slots with only their own labels ([#3914](https://github.com/dryvist/ansible-proxmox-apps/issues/3914)) ([327e815](https://github.com/dryvist/ansible-proxmox-apps/commit/327e815b8041d302d9c7def3daf8e6dde1392d38))
+
 ## [5.71.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.71.0...v5.71.1) (2026-11-21)
 
 
