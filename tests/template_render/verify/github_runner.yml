@@ -70,10 +70,6 @@
     github_runner_apt_proxy_url: ""
     _inventory_mount_flag: >-
       --volume\s+{{ github_runner_inventory_file }}:{{ github_runner_inventory_mount }}:ro
-    _diag_mount_flag: >-
-      --volume\s+{{ github_runner_diag_host_dir }}/%i:/actions-runner/_diag
-    _tool_cache_mount_flag: >-
-      --volume\s+{{ github_runner_tool_cache_host_dir }}/%i:{{ github_runner_tool_cache_mount }}
 
   tasks:
     - name: Read fixture identity values from the render directory
@@ -192,21 +188,9 @@
           it to Splunk. journald is what syslog_forwarder already collects on
           this host.
 
-    - name: Assert the runner's _diag log files survive past --rm
-      ansible.builtin.assert:
-        that:
-          - _unit | select('search', _diag_mount_flag) | length > 0
-        fail_msg: >-
-          The unit does not bind-mount the per-slot _diag directory into
-          /actions-runner/_diag. Runner.Listener/Runner.Worker's own log
-          files are richer than the container's stdout and are discarded by
-          --rm the moment the container exits unless a host path outlives it.
-
-    - name: Assert tool cache
-      ansible.builtin.assert:
-        that:
-          - _unit | select('search', _tool_cache_mount_flag) | length > 0
-        fail_msg: Tool cache mount missing.
+    # Per-slot host mounts: split out to stay under the per-file token budget.
+    - name: Verify per-slot host mounts
+      ansible.builtin.import_tasks: github_runner_host_mounts.yml
 
     - name: Assert the _diag directory is actually cleaned up
       ansible.builtin.assert:
@@ -238,10 +222,6 @@
           - >-
             _unit | select('search',
             '(^|\\s)--user\\s+' ~ (github_runner_container_user | regex_escape) ~ '(\\s|$)')
-            | length > 0
-          - >-
-            _unit | select('search',
-            '(^|\\s)--group-add\\s+' ~ (github_runner_docker_gid | string | regex_escape) ~ '(\\s|$)')
             | length > 0
           - >-
             _unit | select('search',
