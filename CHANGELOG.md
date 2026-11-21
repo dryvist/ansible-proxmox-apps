@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.73.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.72.2...v5.73.0) (2026-11-21)
+
+
+### Features
+
+* **github_runner:** remove named containers and prove review runner labels ([#3928](https://github.com/dryvist/ansible-proxmox-apps/issues/3928)) ([0634d6d](https://github.com/dryvist/ansible-proxmox-apps/commit/0634d6d5ce2e8ae06a255d2fc4dfdff8679c182e))
+
 ## [5.72.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.72.1...v5.72.2) (2026-11-21)
 
 
