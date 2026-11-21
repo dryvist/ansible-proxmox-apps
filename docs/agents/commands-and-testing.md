@@ -57,9 +57,17 @@ scripts/run-ansible.sh playbooks/site.yml \
 scripts/run-ansible.sh playbooks/site.yml \
   --tags github_runner,runner_prune_now --limit docker_vms,localhost
 
-# Read-only container audit (also the last step of every runner converge)
+# Read-only container audit (also the last step of every runner converge).
+# It also reads only the LABELS and NO_DEFAULT_LABELS lines of each review
+# runner's env file and asserts NO_DEFAULT_LABELS=true and no self-hosted.
 scripts/run-ansible.sh playbooks/site.yml \
   --tags runner_container_audit --limit docker_vms,localhost
+
+# Remove named non-runner containers, logging docker inspect and docker diff
+# for each first; refuses an empty list and any runner container name.
+scripts/run-ansible.sh playbooks/site.yml \
+  --tags runner_remove_containers,runner_container_audit --limit docker_vms,localhost \
+  -e '{"github_runner_remove_containers": ["<name>"]}'
 
 # Edit encrypted secrets
 sops secrets.enc.yaml
