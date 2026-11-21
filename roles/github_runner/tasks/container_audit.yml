@@ -42,30 +42,33 @@
       {%- endfor -%}
       {{ rows }}
 
-- name: Assert no container named seerr-* is on the runner host
+# Report every finding first and assert once, so one failure never hides the others.
+- name: Report and assert the runner host's containers
   vars:
     _seerr: "{{ github_runner_audit | map(attribute='name') | select('match', 'seerr-') | list }}"
-  ansible.builtin.assert:
-    that:
-      - _seerr | length == 0
-    fail_msg: "Containers named seerr-* are on the runner host: {{ _seerr | join(', ') }}"
-    success_msg: No container named seerr-* is on the runner host.
-
-- name: Assert every review runner container has no Docker socket and no added group
-  vars:
     _review: "{{ github_runner_audit | selectattr('review') | list }}"
     _bad: >-
-      {{ (_review | selectattr('socket') | map(attribute='name') | list)
-         + (_review | selectattr('group_add') | map(attribute='name') | list) }}
-  ansible.builtin.assert:
-    that:
-      - _bad | length == 0
-    fail_msg: "Review runner containers with the Docker socket or an added group: {{ _bad | unique | join(', ') }}"
-    success_msg: >-
-      {{ _review | length }} review runner container(s), none with the Docker socket or an added group.
+      {{ ((_review | selectattr('socket') | map(attribute='name') | list)
+         + (_review | selectattr('group_add') | map(attribute='name') | list)) | unique }}
+  block:
+    - name: Report privileged containers, review runner containers and seerr-* containers
+      ansible.builtin.debug:
+        msg:
+          - >-
+            Privileged containers:
+            {{ github_runner_audit | selectattr('privileged') | map(attribute='name') | list | join(', ') or 'none' }}
+          - "{{ _review | length }} review runner container(s)"
+          - "Review runner containers with the Docker socket or an added group: {{ _bad | join(', ') or 'none' }}"
+          - "Containers named seerr-* are on the runner host: {{ _seerr | join(', ') or 'none' }}"
 
-- name: Report privileged containers
-  ansible.builtin.debug:
-    msg: >-
-      Privileged containers:
-      {{ github_runner_audit | selectattr('privileged') | map(attribute='name') | list | join(', ') or 'none' }}
+    - name: Assert no seerr-* container and no review runner container with the Docker socket or an added group
+      ansible.builtin.assert:
+        that:
+          - _seerr | length == 0
+          - _bad | length == 0
+        fail_msg: >-
+          Containers named seerr-* are on the runner host: {{ _seerr | join(', ') or 'none' }}.
+          Review runner containers with the Docker socket or an added group: {{ _bad | join(', ') or 'none' }}.
+        success_msg: >-
+          {{ _review | length }} review runner container(s), none with the Docker socket or an added group;
+          no container named seerr-*.

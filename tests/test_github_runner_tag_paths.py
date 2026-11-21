@@ -172,6 +172,14 @@ class ContainerAudit(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("Containers named seerr-* are on the runner host: seerr-diag", out)
 
+    def test_every_finding_is_reported_when_several_fail(self):
+        code, out, _ = _audit("/seerr-diag|true|null|[]", f"/github-runner-1|false|null|{SOCK}")
+        self.assertNotEqual(code, 0)
+        self.assertIn("Privileged containers: seerr-diag", out)
+        self.assertIn("1 review runner container(s)", out)
+        self.assertIn("Containers named seerr-* are on the runner host: seerr-diag", out)
+        self.assertIn("Docker socket or an added group: github-runner-1", out)
+
     def test_no_containers_passes(self):
         code, out, _ = _audit()
         self.assertEqual(code, 0, out)
