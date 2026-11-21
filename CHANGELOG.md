@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.71.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.71.0...v5.71.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **github_runner:** mount nothing from the host on review slots ([#3909](https://github.com/dryvist/ansible-proxmox-apps/issues/3909)) ([6fbe2a9](https://github.com/dryvist/ansible-proxmox-apps/commit/6fbe2a93597d13648514f4e3d42f16dc445dbde5))
+
 ## [5.71.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.70.3...v5.71.0) (2026-11-21)
 
 
