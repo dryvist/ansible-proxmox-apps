@@ -1,0 +1,80 @@
+# Split out of github_runner.yml to stay under the repo's per-file token
+# budget (.token-limits.yaml) -- imported by that file's own play, so it
+# shares its vars and the _unit / _env / _pooled_mounts / _tmpfiles_raw
+# facts set in the parent play rather than redeclaring them.
+#
+# How the container is started: the load-bearing `docker run` flags (--rm,
+# journald, host mounts) and the EPHEMERAL/RUN_AS_ROOT env contract.
+- name: Assert the container is discarded when it exits
+  ansible.builtin.assert:
+    that:
+      - _unit | select('search', 'docker run') | length > 0
+      - _unit | select('search', '(^|\\s)--rm(\\s|$)') | length > 0
+    fail_msg: >-
+      The runner unit does not start its container with `docker run --rm`.
+      Without it the container's writable layer survives every job and the
+      host's disk fills until the guest dies. This is the exact defect that
+      took two guests down.
+
+- name: Assert the container's own output reaches the host journal
+  ansible.builtin.assert:
+    that:
+      - _unit | select('search', '(^|\\s)--log-driver\\s+journald(\\s|$)') | length > 0
+    fail_msg: >-
+      The unit does not start the container with --log-driver journald.
+      Docker's default json-file driver is not read by rsyslog, so every
+      job's Runner.Listener/Runner.Worker output vanishes with the
+      container on exit -- --rm above discards it before anything ships
+      it to Splunk. journald is what syslog_forwarder already collects on
+      this host.
+
+- name: Assert the unit takes its host mounts from the slot's mounts file
+  ansible.builtin.assert:
+    that:
+      - _unit | select('search', '^EnvironmentFile=/etc/github-runner/runner\\.env-%i\\.mounts$') | length > 0
+      - _unit | select('search', '^\\s+\\$RUNNER_HOST_MOUNTS\\s') | length > 0
+      - _unit | select('search', 'docker\\.sock|--group-add|_diag') | length == 0
+      - _review_mounts == ['RUNNER_HOST_MOUNTS=']
+    fail_msg: >-
+      The unit must read RUNNER_HOST_MOUNTS from the slot's mounts file and
+      name no host mount itself; a review slot's file must mount nothing.
+
+- name: Assert the runner's _diag log files survive past --rm
+  ansible.builtin.assert:
+    that:
+      - _pooled_mounts | select('search', _diag_mount_flag) | length > 0
+    fail_msg: >-
+      The unit does not bind-mount the per-slot _diag directory into
+      /actions-runner/_diag. Runner.Listener/Runner.Worker's own log
+      files are richer than the container's stdout and are discarded by
+      --rm the moment the container exits unless a host path outlives it.
+
+- name: Assert tool cache
+  ansible.builtin.assert:
+    that:
+      - _pooled_mounts | select('search', _tool_cache_mount_flag) | length > 0
+    fail_msg: Tool cache mount missing.
+
+- name: Assert the _diag directory is actually cleaned up
+  ansible.builtin.assert:
+    that:
+      - >-
+        _tmpfiles_raw is search('^e\\s+' ~ (github_runner_diag_host_dir | regex_escape)
+        ~ '/\\*\\s', multiline=True)
+      - _tmpfiles_raw is search(github_runner_diag_retention_days | string ~ 'd')
+    fail_msg: >-
+      The tmpfiles rule does not age-clean every slot's _diag directory
+      with the configured retention. Each job writes NEW files rather than
+      appending to one, so without this the bind mount above turns into
+      an unbounded file count on the same data disk the role exists to
+      protect from exactly that.
+
+- name: Assert the runner serves one job per container
+  ansible.builtin.assert:
+    that:
+      - "'EPHEMERAL=true' in _env"
+      - "'RUN_AS_ROOT=false' in _env"
+      - "'HOME=/home/runner' in _env"
+    fail_msg: >-
+      The runner environment must enable one-job containers and start job
+      processes with the image's unprivileged user and home directory.
