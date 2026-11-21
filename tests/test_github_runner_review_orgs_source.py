@@ -73,7 +73,8 @@ class RunnerReviewOrgsSource(unittest.TestCase):
         self.assertIsNone(re.match(_kept_keys(), "OPENBAO_GITHUB_RUNNER_REGISTER_OWNERS_EXTRA"))
 
     def test_pr_reconcile_inputs_survive_the_load_play(self):
-        for key in ("OPENBAO_GITHUB_PR_RECONCILE_REPOSITORY", "OPENBAO_GITHUB_PR_RECONCILE_OWNERS"):
+        for key in ("OPENBAO_GITHUB_PR_RECONCILE_REPOSITORY", "OPENBAO_GITHUB_PR_RECONCILE_OWNERS",
+                    "OPENBAO_GITHUB_PR_RECONCILE_CALLER_OWNERS"):
             self.assertRegex(key, _kept_keys())
             self.assertIsNone(re.match(_kept_keys(), key + "_EXTRA"))
 
