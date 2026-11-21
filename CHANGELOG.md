@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.70.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.70.2...v5.70.3) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cribl_stream:** publish one Hermes cron outcome per run with its profile ([#3897](https://github.com/dryvist/ansible-proxmox-apps/issues/3897)) ([7ce9d83](https://github.com/dryvist/ansible-proxmox-apps/commit/7ce9d83dda12b529385cbbde61229783b193c226))
+
 ## [5.70.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.70.1...v5.70.2) (2026-11-21)
 
 
