@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.70.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.69.0...v5.70.0) (2026-11-21)
+
+
+### Features
+
+* **vikunja:** read the task webhook secret from the apps domain ([#3886](https://github.com/dryvist/ansible-proxmox-apps/issues/3886)) ([02b210d](https://github.com/dryvist/ansible-proxmox-apps/commit/02b210d23626218bb42c88b64754d13e08daca8e))
+
 ## [5.69.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.68.0...v5.69.0) (2026-11-21)
 
 

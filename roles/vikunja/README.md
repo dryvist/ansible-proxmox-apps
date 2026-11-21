@@ -48,6 +48,6 @@ through a proxy (`outgoingrequests.proxyurl`).
 
 `vikunja_task_webhooks` declares those webhooks, one row per project, created
 as the project's automation owner when absent and never deleted. Each is
-signed with the route-only secret from `VIKUNJA_TASK_WEBHOOK_SECRET`; the run
-fails if rows are set and the secret is absent, or if a live webhook's events
-differ from its row.
+signed with the route-only secret `vikunja_task_webhook_secret` (default: env
+`VIKUNJA_TASK_WEBHOOK_SECRET`); the run fails if rows are set and the secret is
+empty, or if a live webhook's events differ from its row.
