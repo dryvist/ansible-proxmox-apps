@@ -82,13 +82,13 @@ def _row():
     return row
 
 
-def _share_when(project_id, *, check_mode=False, password="pw", operator="operator", operator_password="pw"):
+def _share_when(project_id, *, check_mode=False, password="pw", owner="svc-mcp-rw", owner_password="pw"):
     variables = {
         "ansible_check_mode": check_mode,
         "vikunja_openhands_project_id": project_id,
         "vikunja_openhands_user": {"password": password},
-        "vikunja_operator_username": operator,
-        "vikunja_operator_password": operator_password,
+        "vikunja_share_owner": owner,
+        "vikunja_project_share_owner_password_map": {"svc-mcp-rw": owner_password},
     }
     task = find(SHARE, TRIGGER)
     return all(bool(_render_expr(condition, variables)) for condition in task["when"])
@@ -238,16 +238,24 @@ def test_the_share_reuses_the_shared_reconciler():
     assert find(SHARE, TRIGGER)["ansible.builtin.include_tasks"] == "operator_access_one.yml"
 
 
-def test_the_share_loop_targets_the_operator_account():
+def test_the_share_loop_targets_the_automation_owners():
     loop = find(SHARE, TRIGGER)["loop"]
-    assert _render(loop, {"vikunja_operator_username": "operator"}) == ["operator"]
+    owners = ["admin", "svc-mcp-rw"]
+    assert _render(loop, {"vikunja_operator_share_owner_usernames": owners}) == owners
+
+
+def test_the_owner_credential_map_is_loaded_before_the_share():
+    tasks = _yaml(ROOT / TRIGGER)
+    names = [task.get("name") for task in tasks]
+    load = "Build the owner credential map for the trigger share"
+    assert tasks[names.index(load)]["ansible.builtin.include_tasks"] == "project_share_owner_password_map.yml"
+    assert names.index(load) < names.index(SHARE)
 
 
 def test_the_share_drives_the_reconciler_with_the_trigger_triple():
     variables = {
         "vikunja_openhands_project_id": 90,
         "vikunja_openhands_permission": 1,
-        "vikunja_operator_password": "pw-operator",
     }
     rendered = {
         key: _render(value, variables) for key, value in find(SHARE, TRIGGER)["vars"].items()
@@ -278,15 +286,15 @@ def test_the_share_skips_without_a_provisioned_bot_password():
 
 
 def test_the_share_skips_without_an_owner_credential():
-    assert _share_when(90, operator_password="") is False
+    assert _share_when(90, owner_password="") is False
 
 
-def test_the_share_logs_in_with_the_operator_password():
-    rendered = _render(
-        find(SHARE, TRIGGER)["vars"]["vikunja_share_owner_password"],
-        {"vikunja_operator_password": "pw-operator"},
-    )
-    assert rendered == "pw-operator"
+def test_the_share_skips_an_owner_outside_the_credential_map():
+    assert _share_when(90, owner="someone-else") is False
+
+
+def test_the_share_takes_the_owner_password_from_the_map():
+    assert "vikunja_share_owner_password" not in find(SHARE, TRIGGER)["vars"]
 
 
 def test_the_skip_is_announced_by_its_task_name_and_condition():
@@ -372,11 +380,12 @@ def test_the_share_is_read_back_as_the_bot_on_the_trigger_project():
 # --- wiring in main.yml --------------------------------------------------------
 
 
-def test_the_trigger_include_sits_before_the_token_validation():
+def test_the_trigger_include_sits_after_the_operator_user():
+    # The trigger shares its project acting as the operator.
     names = [task.get("name") for task in _yaml(ROOT / MAIN)]
-    assert names.index("Provision the OpenHands trigger bot") < names.index(
-        "Validate MCP API token scopes and publish when enabled"
-    )
+    assert names.index(
+        "Create the Vikunja operator user (idempotent — skipped if already present)"
+    ) < names.index("Provision the OpenHands trigger bot")
 
 
 def test_the_trigger_include_points_at_the_trigger_task_file():
