@@ -1,76 +1,39 @@
 ---
-- name: Read Zammad groups as the administrator
-  ansible.builtin.uri:
-    url: "http://localhost:{{ zammad_web_port }}/api/v1/groups"
-    method: GET
-    user: "{{ zammad_admin_email }}"
-    password: "{{ zammad_admin_password }}"
-    force_basic_auth: true
-    status_code: [200]
-  register: zammad_agent_write_groups_readback
+# The rights are read through rails on the host, so verification needs no
+# administrator credential. The readback writes nothing and prints names only.
+- name: Stage the agent-write rights readback on the target
+  ansible.builtin.copy:
+    src: zammad_agent_write_readback.rb
+    dest: "{{ zammad_root }}/ansible_agent_write_readback.rb"
+    owner: "{{ zammad_user }}"
+    group: "{{ zammad_group }}"
+    mode: "0640"
+  no_log: true
+
+- name: Read the agent-write rights and API rows through rails
+  ansible.builtin.command:
+    cmd: "zammad run rails r {{ zammad_root }}/ansible_agent_write_readback.rb"
+  environment:
+    ZAMMAD_AGENT_WRITE_EMAIL: "{{ zammad_agent_write_email }}"
+    ZAMMAD_AGENT_WRITE_GROUPS: "{{ zammad_agent_write_groups | to_json }}"
+  register: zammad_agent_write_rails_readback
   changed_when: false
   no_log: true
 
-- name: Read Zammad roles as the administrator
-  ansible.builtin.uri:
-    url: "http://localhost:{{ zammad_web_port }}/api/v1/roles"
-    method: GET
-    user: "{{ zammad_admin_email }}"
-    password: "{{ zammad_admin_password }}"
-    force_basic_auth: true
-    status_code: [200]
-  register: zammad_agent_write_roles_readback
-  changed_when: false
-  no_log: true
-
-- name: Search for svc-agent-write as the administrator
-  ansible.builtin.uri:
-    url: >-
-      http://localhost:{{ zammad_web_port }}/api/v1/users/search?query={{
-        zammad_agent_write_email | urlencode }}
-    method: GET
-    user: "{{ zammad_admin_email }}"
-    password: "{{ zammad_admin_password }}"
-    force_basic_auth: true
-    status_code: [200]
-  register: zammad_agent_write_user_search
-  changed_when: false
-  no_log: true
-
-- name: Resolve svc-agent-write and expected group/role IDs
+- name: Parse the agent-write rights readback
   ansible.builtin.set_fact:
-    zammad_agent_write_user_matches: >-
-      {{ zammad_agent_write_user_search.json
-         | selectattr('email', 'equalto', zammad_agent_write_email) | list }}
-    zammad_agent_write_expected_group_ids: >-
-      {{ zammad_agent_write_groups_readback.json
-         | selectattr('name', 'in', zammad_agent_write_groups)
-         | map(attribute='id') | map('string') | sort | list }}
-    zammad_agent_write_agent_role_ids: >-
-      {{ zammad_agent_write_roles_readback.json
-         | selectattr('name', 'equalto', 'Agent') | map(attribute='id') | list }}
+    zammad_agent_write_readback: >-
+      {{ zammad_agent_write_rails_readback.stdout
+         | regex_findall('ZAMMAD_AGENT_WRITE_READBACK=([^\n]+)')
+         | first | from_json }}
   no_log: true
 
 - name: Require exactly one built-in Agent role before reading its capabilities
   ansible.builtin.assert:
     that:
-      - zammad_agent_write_agent_role_ids | length == 1
+      - zammad_agent_write_readback.agent_role_count == 1
     fail_msg: The built-in Zammad Agent role is missing or ambiguous.
     quiet: true
-  no_log: true
-
-- name: Read the Agent role permissions as the administrator
-  ansible.builtin.uri:
-    url: >-
-      http://localhost:{{ zammad_web_port }}/api/v1/roles/{{
-      zammad_agent_write_agent_role_ids | first }}?expand=true
-    method: GET
-    user: "{{ zammad_admin_email }}"
-    password: "{{ zammad_admin_password }}"
-    force_basic_auth: true
-    status_code: [200]
-  register: zammad_agent_write_role_readback
-  changed_when: false
   no_log: true
 
 - name: Resolve expected role and token permissions from the bootstrap source
@@ -81,20 +44,10 @@
          | first | split | sort }}
     zammad_agent_write_expected_token_permission_names: >-
       {{ lookup('file', role_path ~ '/files/zammad_bootstrap/20-groups-and-tokens.rb')
-         | regex_findall("agent_write_prefs = \\{ 'permission' => %w\[([^]]+)\] \\}")
+         | regex_findall("agent_write_prefs = [{] 'permission' => %w\[([^]]+)\] [}]")
          | first | split | sort }}
     zammad_agent_write_effective_role_permission_names: >-
-      {%- set ns = namespace(names=[]) -%}
-      {%- set candidates = zammad_agent_write_role_readback.json.get('permissions', [])
-          or zammad_agent_write_role_readback.json.get('permission_ids', []) -%}
-      {%- for permission in candidates -%}
-      {%- if permission is mapping and permission.name is defined -%}
-      {%- set _ = ns.names.append(permission.name) -%}
-      {%- elif permission is string -%}
-      {%- set _ = ns.names.append(permission) -%}
-      {%- endif -%}
-      {%- endfor -%}
-      {{ ns.names | sort }}
+      {{ zammad_agent_write_readback.agent_role_permissions | sort }}
     zammad_agent_write_token_row_permission_names: >-
       {{ zammad_bootstrap.stdout
          | regex_findall('ZAMMAD_AGENT_WRITE_TOKEN_PERMISSIONS=([^\n]+)')
@@ -116,20 +69,18 @@
 - name: Assert the exact svc-agent-write roles and minimum group access
   ansible.builtin.assert:
     that:
-      - zammad_agent_write_user_matches | length == 1
-      - zammad_agent_write_expected_group_ids | length == zammad_agent_write_groups | length
-      - zammad_agent_write_agent_role_ids | length == 1
+      - zammad_agent_write_readback.user_count == 1
+      - (zammad_agent_write_readback.declared_groups_present | sort) == (zammad_agent_write_groups | sort)
+      - zammad_agent_write_readback.agent_role_count == 1
       - >-
-        (zammad_agent_write_user_matches[0].group_ids | default({}, true)
-         | dict2items | map(attribute='key') | list | sort)
-        == zammad_agent_write_expected_group_ids
+        (zammad_agent_write_readback.user_group_access | dict2items
+         | map(attribute='key') | sort | list)
+        == (zammad_agent_write_groups | sort | list)
       - >-
-        (zammad_agent_write_user_matches[0].group_ids | default({}, true)
-         | dict2items | map(attribute='value') | map('sort') | unique | list)
+        (zammad_agent_write_readback.user_group_access | dict2items
+         | map(attribute='value') | map('sort') | unique | list)
         == [['change', 'create', 'read']]
-      - >-
-        zammad_agent_write_user_matches[0].role_ids | map('int') | sort | list
-        == zammad_agent_write_agent_role_ids | map('int') | sort | list
+      - zammad_agent_write_readback.user_roles == ['Agent']
     fail_msg: >-
       svc-agent-write roles or effective group access differs from the declared
       group list and minimum ticket actions.

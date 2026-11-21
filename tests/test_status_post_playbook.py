@@ -126,6 +126,22 @@ def test_sparkline_and_arrow(history, tail):
     assert _line(row, 8, history).endswith(tail)
 
 
+def test_with_decimals_a_change_that_rounds_away_is_flat():
+    row = {"component": "lane", "label": "tokens:", "unit": "%", "decimals": 0, "sparkline": True}
+    assert _line(row, 0.3, [0.2, 0.3]).endswith(" →")
+
+
+def test_a_percent_sparkline_scales_from_0_to_100():
+    row = {"component": "lane", "label": "tokens:", "unit": "%", "decimals": 0, "sparkline": True}
+    assert _line(row, 0.2, [0.0, 0.4, 0.1, 0.3, 0.2]) == f"{GREEN} lane tokens: 0% ▁▁▁▁▁ →"
+    assert _line(row, 100, [0, 50, 100]).endswith(" ▁▅█ ↑50")
+
+
+def test_a_sparkline_without_a_percent_unit_scales_min_to_max():
+    row = {"component": "lane", "label": "tok/s:", "sparkline": True}
+    assert _line(row, 0.4, [0.0, 0.4, 0.2]).endswith(" ▁█▅ ↓0.2")
+
+
 def test_one_point_of_history_draws_no_sparkline():
     row = {"component": "Vikunja", "label": "open tasks:", "sparkline": True}
     assert _line(row, 8, [5]) == f"{GREEN} Vikunja open tasks: 8"
@@ -151,3 +167,76 @@ def test_a_message_renders_rows_in_spec_order_with_history():
     lines = _message(rows, [_ok(4100), _ok(900)], ranged).splitlines()
     assert lines[1] == f"{YELLOW} Vikunja open tasks: 4100 ▁█ ↑200"
     assert lines[2] == f"{RED} Zammad open tickets: 900"
+
+
+def _series(lane, value):
+    return {"metric": {"accelerator": lane}, "value": [0, str(value)]}
+
+
+def test_a_by_row_prints_one_sorted_line_per_series_with_its_own_history():
+    row = {"component": "lanes", "label": "tokens, 4 h:", "query": "q", "by": "accelerator", "unit": "%",
+           "decimals": 0, "green": 90, "yellow": 45, "sparkline": True}
+    instant = {"status": 200, "json": {"data": {"result": [_series("lane-b", 95), _series("lane-a", 49.6)]}}}
+    ranged = [{"status": 200, "status_post_row": row, "json": {"data": {"result": [
+        {"metric": {"accelerator": "lane-a"}, "values": [[0, "40"], [1, "50"]]},
+        {"metric": {"accelerator": "lane-b"}, "values": [[0, "99"], [1, "95"]]},
+    ]}}}]
+    lines = _message([row], [instant], ranged).splitlines()
+    assert lines[1:] == [
+        f"{YELLOW} lane-a tokens, 4 h: 50% ▄▅ ↑10",
+        f"{GREEN} lane-b tokens, 4 h: 95% ██ ↓4",
+    ]
+
+
+def test_a_by_row_with_no_series_is_one_unmeasured_line():
+    row = {"component": "lanes", "label": "slot duty, 4 h:", "query": "q", "by": "accelerator"}
+    empty = {"status": 200, "json": {"data": {"result": []}}}
+    assert _message([row], [empty]).splitlines()[1:] == [f"{RED} lanes slot duty, 4 h: unmeasured"]
+
+
+def test_the_gpu_spec_expands_every_row_by_accelerator():
+    spec = yaml.safe_load((ROOT / "playbooks/vars/status-posts/gpu.yml").read_text(encoding="utf-8"))
+    assert spec["status_post_title"] == "Local LLM utilization, 4 h"
+    assert spec["status_post_rows"]
+    assert all(row.get("query") and row.get("by") == "accelerator" for row in spec["status_post_rows"])
+
+
+def test_the_gpu_spec_has_no_generation_rate_row():
+    spec = yaml.safe_load((ROOT / "playbooks/vars/status-posts/gpu.yml").read_text(encoding="utf-8"))
+    assert not [row for row in spec["status_post_rows"] if "tok/s" in row["label"]]
+    assert all(row.get("green") is not None and row.get("yellow") is not None for row in spec["status_post_rows"])
+
+
+def test_a_row_with_a_dashboard_uid_links_it_after_the_arrow():
+    macro = ENV.get_template("status-lines.j2").module.status_line
+    row = {"component": "lane", "label": "tokens:", "unit": "%", "decimals": 0, "sparkline": True, "dashboard": "abc"}
+    line = str(macro(row, 100, [0, 50, 100], "https://grafana.example.test"))
+    assert line.endswith(" ▁▅█ ↑50 <https://grafana.example.test/d/abc|dashboard>")
+
+
+def test_no_link_without_a_dashboard_uid_or_a_base():
+    macro = ENV.get_template("status-lines.j2").module.status_line
+    row = {"component": "Vikunja", "label": "open tasks:"}
+    assert str(macro(row, 8, [], "https://grafana.example.test")) == f"{GREEN} Vikunja open tasks: 8"
+    assert str(macro(dict(row, dashboard="abc"), 8, [], "")) == f"{GREEN} Vikunja open tasks: 8"
+
+
+def test_the_message_passes_the_dashboard_base_to_every_row():
+    text = ENV.get_template("status-post-message.j2").render(
+        status_post_rows=[{"component": "lane", "label": "busy:", "dashboard": "abc"}],
+        status_post_title="t",
+        status_post_generated_utc="u",
+        status_post_instant_reads={"results": [_ok(5)]},
+        status_post_history_reads={"results": []},
+        status_post_dashboard_base="https://grafana.example.test",
+    )
+    assert "<https://grafana.example.test/d/abc|dashboard>" in text
+
+
+def test_the_gpu_rows_link_the_local_llm_scoreboard():
+    spec = yaml.safe_load((ROOT / "playbooks/vars/status-posts/gpu.yml").read_text(encoding="utf-8"))
+    assert all(row.get("dashboard") == "local-llm-scoreboard" for row in spec["status_post_rows"])
+
+
+def test_the_dashboard_base_is_the_grafana_vhost_from_the_environment():
+    assert _play()["vars"]["status_post_dashboard_base"] == "https://grafana.{{ status_post_ingress_domain }}"

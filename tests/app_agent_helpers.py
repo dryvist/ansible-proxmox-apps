@@ -26,5 +26,12 @@ def _render(value, variables: dict):
     return templar.template(trust_as_template(value))
 
 
+def _task_tree(tasks: list[dict]):
+    for task in tasks or []:
+        yield task
+        for branch in ("block", "rescue", "always"):
+            yield from _task_tree(task.get(branch, []))
+
+
 def _task(tasks: list[dict], name: str) -> dict:
-    return next(task for task in tasks if task.get("name") == name)
+    return next(task for task in _task_tree(tasks) if task.get("name") == name)

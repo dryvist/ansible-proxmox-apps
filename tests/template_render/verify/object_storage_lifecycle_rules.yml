@@ -1,0 +1,123 @@
+---
+- name: Render and verify the object-storage lifecycle documents
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _lifecycle_template: "{{ playbook_dir }}/../../../roles/object_storage/templates/lifecycle.json.j2"
+    # The exact documents the template rendered before prefix_lifecycle_rules
+    # existed. A bucket without the key must still produce these bytes, so
+    # declaring prefix rules on one bucket changes no other bucket.
+    _expected_plain_doc: |
+      {
+        "Rules": [
+          {
+            "ID": "expire-noncurrent",
+            "Status": "Enabled",
+            "Filter": {"Prefix": ""},
+            "NoncurrentVersionExpiration": {"NoncurrentDays": 3650}
+          }
+        ]
+      }
+    _expected_markers_doc: |
+      {
+        "Rules": [
+          {
+            "ID": "expire-noncurrent",
+            "Status": "Enabled",
+            "Filter": {"Prefix": ""},
+            "NoncurrentVersionExpiration": {"NoncurrentDays": 30},
+            "Expiration": {"ExpiredObjectDeleteMarker": true}
+          }
+        ]
+      }
+  tasks:
+    - name: Load the object-storage role defaults
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../roles/object_storage/defaults/main/00-core.yml"
+        name: _object_storage_defaults
+
+    - name: Publish the backups bucket declaration for this play
+      ansible.builtin.set_fact:
+        _backups_bucket: >-
+          {{ _object_storage_defaults.object_storage_default_buckets
+             | selectattr('name', 'equalto', 'dryvist-homelab-backups') | first }}
+
+    - name: Render the lifecycle document for a bucket without prefix rules
+      ansible.builtin.template:
+        src: "{{ _lifecycle_template }}"
+        dest: "{{ _fixture_dir }}/lifecycle-plain.json"
+        mode: "0644"
+      vars:
+        item:
+          name: plain-bucket
+        object_storage_noncurrent_expiration_days: 3650
+
+    - name: Render the lifecycle document from the backups bucket declaration
+      ansible.builtin.template:
+        src: "{{ _lifecycle_template }}"
+        dest: "{{ _fixture_dir }}/lifecycle-backups.json"
+        mode: "0644"
+      vars:
+        item: "{{ _backups_bucket }}"
+        object_storage_noncurrent_expiration_days: 3650
+
+    - name: Render the backups declaration minus the prefix rules
+      ansible.builtin.template:
+        src: "{{ _lifecycle_template }}"
+        dest: "{{ _fixture_dir }}/lifecycle-backups-historical.json"
+        mode: "0644"
+      vars:
+        item: >-
+          {{ _backups_bucket | dict2items
+             | rejectattr('key', 'equalto', 'prefix_lifecycle_rules') | items2dict }}
+        object_storage_noncurrent_expiration_days: 3650
+
+    - name: Read the rendered lifecycle documents
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/{{ item }}"
+      loop:
+        - lifecycle-plain.json
+        - lifecycle-backups.json
+        - lifecycle-backups-historical.json
+      register: _rendered_docs
+      loop_control:
+        label: "{{ item }}"
+
+    # from_json in every assertion here is also the valid-JSON check.
+    - name: Assert a bucket without prefix rules renders the historical document
+      vars:
+        _plain: "{{ _rendered_docs.results[0].content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - _plain | from_json is mapping
+          - (_plain | from_json).Rules | length == 1
+          - _plain == _expected_plain_doc
+        fail_msg: "A bucket without prefix_lifecycle_rules no longer renders the historical single-rule document."
+
+    - name: Assert the backups declaration renders the prefix-scoped rule
+      vars:
+        _backups: "{{ _rendered_docs.results[1].content | b64decode | from_json }}"
+        _rules: "{{ _backups.Rules }}"
+      ansible.builtin.assert:
+        that:
+          - _rules | length == 2
+          - _rules[0].ID == 'expire-noncurrent'
+          - _rules[0].NoncurrentVersionExpiration.NoncurrentDays == 30
+          - _rules[1].ID == 'expire-noncurrent-postgres'
+          - _rules[1].Filter.Prefix == 'postgres/'
+          - _rules[1].NoncurrentVersionExpiration.NoncurrentDays == 1
+          - _rules[1].Expiration.ExpiredObjectDeleteMarker is defined
+          - _rules[1].Expiration.ExpiredObjectDeleteMarker | bool
+        fail_msg: "The backups bucket declaration did not render the expected prefix-scoped rule."
+
+    - name: Assert the backups declaration without the key renders unchanged
+      vars:
+        _historical: "{{ _rendered_docs.results[2].content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - _historical | from_json is mapping
+          - _historical == _expected_markers_doc
+        fail_msg: "Stripping prefix_lifecycle_rules no longer renders the historical delete-marker document."

@@ -102,14 +102,31 @@ ntfy_prefs = { 'permission' => %w[ticket.agent] }
 # svc-cribl only creates tickets (dedup happens in the pipeline's Suppress).
 cribl_prefs = { 'permission' => %w[ticket.agent] }
 agent_write_prefs = { 'permission' => %w[ticket.agent] }
-[
+service_tokens = [
   ['hermes', service_users[0], api_token, agent_prefs],
   ['ai', service_users[1], ai_api_token, agent_prefs],
   ['splunk', service_users[2], splunk_api_token, splunk_prefs],
   ['ntfy', service_users[3], ntfy_api_token, ntfy_prefs],
   ['cribl', service_users[4], cribl_api_token, cribl_prefs],
   ['agent-write', agent_write_user, agent_write_api_token, agent_write_prefs],
-].each do |name, user, value, token_prefs|
+]
+# The token column is unique, so a declared value can only be set while no
+# other api row holds it. Give any such holder row a random token and keep the
+# row; a declared holder gets its own value back in the loop below. The line
+# names the two rows, never a value.
+require 'securerandom'
+service_tokens.each do |name, _user, value, _token_prefs|
+  owner_id = Token.find_by(action: 'api', name: name)&.id
+  Token.where(action: 'api', token: value).each do |holder|
+    next if holder.id == owner_id
+
+    holder.update_column(:token, SecureRandom.hex(32))
+    holder_name = holder.name.to_s.gsub(/[^A-Za-z0-9_.:@-]/, '_')[0, 64]
+    puts "ZAMMAD_BOOTSTRAP_RELEASED name=#{name} holder=#{holder_name}"
+    changed = true
+  end
+end
+service_tokens.each do |name, user, value, token_prefs|
   t = Token.find_by(action: 'api', name: name)
   if t.nil?
     t = Token.create!(action: 'api', name: name, persistent: true,

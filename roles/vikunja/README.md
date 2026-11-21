@@ -32,8 +32,9 @@ tasks, commenting on them, and applying or removing the bot's own labels. The
 token is published to OpenBao at `secret/apps/openhands-vikunja`, field
 `token`.
 
-The trigger project and the `openhands` trigger label are created by hand
-under the operator's account, never by this role. The project is matched by
+The trigger project and the `openhands` trigger label are created by hand,
+never by this role; the share is made as the automation account that owns the
+project. The project is matched by
 `vikunja_openhands_project_id` (set it to empty to skip the share), the
 labels by title.
 
@@ -44,3 +45,9 @@ webhooks are created only through this repository's automation, and every
 Vikunja user is the operator or an agent bot. If either assumption changes,
 turn `vikunja_outgoing_requests_allow_non_routable_ips` off or route webhooks
 through a proxy (`outgoingrequests.proxyurl`).
+
+`vikunja_task_webhooks` declares those webhooks, one row per project, created
+as the project's automation owner when absent and never deleted. Each is
+signed with the route-only secret `vikunja_task_webhook_secret` (default: env
+`VIKUNJA_TASK_WEBHOOK_SECRET`); the run fails if rows are set and the secret is
+empty, or if a live webhook's events differ from its row.
