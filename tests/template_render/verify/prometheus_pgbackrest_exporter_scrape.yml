@@ -1,0 +1,121 @@
+---
+- name: Verify the pgBackRest exporter scrape job
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    llm_large_serving_host: serving.example.test
+    grafana_hostname: metrics-store
+    pve_exporter_scrape_targets: []
+    _pst_tpl: "{{ playbook_dir }}/../../../roles/prometheus_stack/templates/prometheus.yml.j2"
+    _fixture_tofu_data:
+      domain: test.example
+      constants:
+        service_ports:
+          prometheus_web: 9090
+          victoriametrics: 18428
+          blackbox_exporter: 9115
+          node_exporter: 9100
+          pgbackrest_exporter: 9854
+          llm_router_api: 4321
+          llm_fast_api: 10434
+          smokeping_prober: 9374
+          gatus_web: 8080
+          agentgateway_metrics: 15020
+        memory_ports:
+          hindsight_api: 8888
+          hindsight_cp: 9999
+        serving:
+          host: serving.example.test
+      nodes: {}
+      containers:
+        grafana:
+          hostname: metrics.example.test
+        agentgateway:
+          ip: agw.test.example
+          tags: [agentgateway]
+        cribl-stream-01:
+          ip: stream.test.example
+          tags: [cribl-stream]
+
+  vars_files:
+    - "../../../roles/prometheus_stack/defaults/main/00-core.yml"
+    - "../../../roles/prometheus_stack/defaults/main/10-json-exporter.yml"
+    - "../../../roles/prometheus_stack/defaults/main/11-sql-exporter.yml"
+    - "../../../inventory/group_vars/prometheus_group/00-remote-write.yml"
+    - "../../../inventory/group_vars/prometheus_group/10-pve-exporters.yml"
+    - "../../../inventory/group_vars/prometheus_group/15-github-actions-exporter.yml"
+    - "../../../inventory/group_vars/prometheus_group/20-guest-exporters.yml"
+    - "../../../inventory/group_vars/prometheus_group/30-tagged-exporters.yml"
+    - "../../../inventory/group_vars/prometheus_group/40-gpu-exporters.yml"
+    - "../../../inventory/group_vars/prometheus_group/50-macmon-exporters.yml"
+    - "../../../inventory/group_vars/prometheus_group/60-scrape-configs.yml"
+
+  tasks:
+    # A fact, like the other trailing scrape plays: the group_vars expressions
+    # read hostvars['localhost']['tofu_data'].
+    - name: Publish the fixture inventory as a fact
+      ansible.builtin.set_fact:
+        tofu_data: "{{ _fixture_tofu_data }}"
+
+    - name: Add an enabled primary example to the PostgreSQL inventory group
+      ansible.builtin.add_host:
+        name: postgres-primary-example
+        groups: postgres_group
+        postgres_pgbackrest_enabled: true
+
+    - name: Add an enabled standby example to the PostgreSQL AI inventory group
+      ansible.builtin.add_host:
+        name: postgres-standby-example
+        groups: postgres_ai_group
+        postgres_pgbackrest_enabled: true
+
+    - name: Add a disabled PostgreSQL example to verify the scrape filter
+      ansible.builtin.add_host:
+        name: postgres-disabled-example
+        groups: postgres_group
+        postgres_pgbackrest_enabled: false
+
+    - name: Render prometheus.yml
+      ansible.builtin.set_fact:
+        _rendered: "{{ lookup('template', _pst_tpl) | from_yaml }}"
+      vars:
+        wan_hop_discovery_isp_hops: []
+        ingress_domain: example.test
+
+    - name: Isolate the pgBackRest exporter job
+      ansible.builtin.set_fact:
+        _jobs: >-
+          {{ _rendered.scrape_configs
+             | selectattr('job_name', 'equalto', 'pgbackrest_exporter')
+             | list }}
+
+    - name: Assert the job scrapes enabled PostgreSQL inventory members
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _jobs | length == 1
+          - _jobs[0].scrape_interval == '60s'
+          - _jobs[0].scrape_timeout == '30s'
+          - _jobs[0].static_configs | length == 2
+          - >-
+            _jobs[0].static_configs
+            | selectattr('labels.guest', 'equalto', 'postgres-primary-example')
+            | selectattr('targets', 'equalto', ['postgres-primary-example.example.test:9854'])
+            | list | length == 1
+          - >-
+            _jobs[0].static_configs
+            | selectattr('labels.guest', 'equalto', 'postgres-standby-example')
+            | selectattr('targets', 'equalto', ['postgres-standby-example.example.test:9854'])
+            | list | length == 1
+          - >-
+            _jobs[0].static_configs
+            | selectattr('labels.guest', 'equalto', 'postgres-disabled-example')
+            | list | length == 0
+        fail_msg: >-
+          The pgBackRest exporter job must target enabled members of both
+          PostgreSQL groups, label each target with its inventory guest name,
+          and omit disabled members. Rendered: {{ _jobs }}
+        success_msg: The pgBackRest exporter scrape job renders the enabled PostgreSQL targets.
