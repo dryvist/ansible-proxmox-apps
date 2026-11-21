@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.70.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.70.0...v5.70.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **openbao:** keep the enterprise id and Hermes author repo keys in the platform env doc ([#3802](https://github.com/dryvist/ansible-proxmox-apps/issues/3802)) ([aec9c4c](https://github.com/dryvist/ansible-proxmox-apps/commit/aec9c4ce1a4dd14ada2497b8c84b043951c48fd6))
+
 ## [5.70.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.69.0...v5.70.0) (2026-11-21)
 
 
