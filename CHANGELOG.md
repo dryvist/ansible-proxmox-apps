@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.72.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.72.0...v5.72.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **github_runner:** grow the Docker data filesystem onto an enlarged disk ([#3921](https://github.com/dryvist/ansible-proxmox-apps/issues/3921)) ([e202cde](https://github.com/dryvist/ansible-proxmox-apps/commit/e202cdef13456ff7d4ad0f68f9de9af1bfb98e33))
+
 ## [5.72.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.71.2...v5.72.0) (2026-11-21)
 
 
