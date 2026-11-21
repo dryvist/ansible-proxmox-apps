@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.71.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.70.3...v5.71.0) (2026-11-21)
+
+
+### Features
+
+* **vikunja:** exact project shares for the clerk service user through a share-only tier ([#3908](https://github.com/dryvist/ansible-proxmox-apps/issues/3908)) ([4bededc](https://github.com/dryvist/ansible-proxmox-apps/commit/4bededc7be5108751463e0ac671c46a27ecb636b))
+
 ## [5.70.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.70.2...v5.70.3) (2026-11-21)
 
 
