@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.77.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.77.0...v5.77.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **ci:** follow the v2 line for the CI fix workflow ([#3973](https://github.com/dryvist/ansible-proxmox-apps/issues/3973)) ([c0cd9bd](https://github.com/dryvist/ansible-proxmox-apps/commit/c0cd9bd0548aa06fe2afb88fcf3b9079fa47fde7))
+
 ## [5.77.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.76.4...v5.77.0) (2026-11-22)
 
 
