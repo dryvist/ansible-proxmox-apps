@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.76.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.76.0...v5.76.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **agent_sandbox:** pin the sandbox image to the current build ([#3956](https://github.com/dryvist/ansible-proxmox-apps/issues/3956)) ([91a19fd](https://github.com/dryvist/ansible-proxmox-apps/commit/91a19fdb17b69dd45ea55c5146c995d073a78543))
+
 ## [5.76.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.75.2...v5.76.0) (2026-11-22)
 
 
