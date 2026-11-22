@@ -38,6 +38,11 @@ checkout. The role validates each file with `promtool check rules` in the
 Prometheus image before a rules update can trigger the lifecycle reload. The
 checkout commit is `prometheus_stack_rules_version` in `defaults/main.yml`.
 
+When `prometheus_stack_sql_exporter_enabled` is true, sql_exporter loads every
+`collectors/*.collector.yml` file from the pinned
+[`JacobPEvans/prometheus-sql-exporter-collectors`](https://github.com/JacobPEvans/prometheus-sql-exporter-collectors)
+checkout. The checkout commit is `prometheus_stack_sql_exporter_collectors_version`.
+
 ## Networking
 
 Both services run on `network_mode: host`. blackbox needs it so ICMP probes egress
