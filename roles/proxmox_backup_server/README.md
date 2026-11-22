@@ -84,6 +84,7 @@ and never prints them.
 | `proxmox_backup_server_verify_schedule` | `sun 08:00` | Verify job calendar event |
 | `proxmox_backup_server_verify_ignore_verified` | `true` | Skip snapshots verified recently |
 | `proxmox_backup_server_verify_outdated_after` | `30` | Days after which a verified snapshot is verified again |
+| `proxmox_backup_server_verify_new` | `true` | Verify each new snapshot when its backup ends |
 | `proxmox_backup_server_publish_openbao` | `false` | Create the PVE backup identity and publish it to OpenBao |
 | `proxmox_backup_server_openbao_mount` | `secret` | KV v2 mount for the published fields |
 | `proxmox_backup_server_openbao_path` | `platform/pbs/pve-nodes` | KV v2 path for the published fields |

@@ -24,6 +24,7 @@ EXPECTED_RULE_FILES = {
     "hermes-cron-jobs.yml",
     "runner-guest-blocked.yml",
     "tracker-exporter-health.yml",
+    "postgres-resilience.yml",
 }
 CONTACT_POINT = "critical-slack-contact-point.yml"
 
