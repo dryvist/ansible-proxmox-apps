@@ -215,5 +215,22 @@ class LxcGroups(unittest.TestCase):
         self.assertNotIn("llm_gpu_classify_group", groups(["gpu-passthrough"]))
 
 
+class VerifyNew(unittest.TestCase):
+    def test_new_snapshots_are_verified_by_default(self):
+        defaults = load_yaml(ROLE / "defaults" / "main.yml")
+        self.assertIs(defaults["proxmox_backup_server_verify_new"], True)
+
+    def test_the_datastore_update_sets_verify_new_and_skips_check_mode(self):
+        tasks = {task["name"]: task for _, task in all_tasks() if task.get("name")}
+        update = tasks["Set verify-new on the datastore when it differs"]
+        argv = update["ansible.builtin.command"]["argv"]
+        self.assertEqual(argv[:3], ["proxmox-backup-manager", "datastore", "update"])
+        self.assertIn("--verify-new", argv)
+        self.assertIn("not ansible_check_mode", update["when"])
+
+    def test_the_readme_documents_the_variable(self):
+        self.assertIn("proxmox_backup_server_verify_new", (ROLE / "README.md").read_text())
+
+
 if __name__ == "__main__":
     unittest.main()
