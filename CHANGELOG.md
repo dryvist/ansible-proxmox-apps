@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.75.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.75.1...v5.75.2) (2026-11-22)
+
+
+### Bug Fixes
+
+* **site:** publish the workstation connection profile only from its dedicated playbook ([#3950](https://github.com/dryvist/ansible-proxmox-apps/issues/3950)) ([f2248f5](https://github.com/dryvist/ansible-proxmox-apps/commit/f2248f51da2acb733b548a7ae41ee8f577e33eda))
+
 ## [5.75.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.75.0...v5.75.1) (2026-11-22)
 
 
