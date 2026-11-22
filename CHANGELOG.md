@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.76.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.76.2...v5.76.3) (2026-11-22)
+
+
+### Bug Fixes
+
+* **openbao:** keep the workflow-dispatch settings in the platform env prefetch ([#3965](https://github.com/dryvist/ansible-proxmox-apps/issues/3965)) ([6d03ed9](https://github.com/dryvist/ansible-proxmox-apps/commit/6d03ed9abafdd6f0c5328fa30b841359090985f6))
+
 ## [5.76.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.76.1...v5.76.2) (2026-11-22)
 
 
