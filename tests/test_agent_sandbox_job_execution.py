@@ -277,6 +277,41 @@ job_json job
     assert (tmp_path / "published").exists() is (has_bundle and write == "true")
 
 
+def test_finalize_keeps_a_job_with_a_published_pr_succeeded(sources, tmp_path):
+    rdir = tmp_path / "job/runs/2"
+    rdir.mkdir(parents=True)
+    (rdir / "exit").write_text("0")
+    (rdir / "cid").write_text("fixture-container")
+    (rdir / "started").write_text("0")
+    (tmp_path / "job/job.json").write_text('{"repo":"example/repository"}')
+    script = sources["dispatcher"].rsplit('cmd="${1:-}"', 1)[0] + r'''
+job_get() { case "$2" in .mode) echo start ;; .repo) echo example/repository ;; *) echo shell ;; esac; }
+docker() {
+  case "$1" in
+    cp)
+      [ "$2" = "fixture-container:/home/agent/work/.agent-pr-url" ] || return 1
+      printf '%s\n' "$TEST_PR_URL" > pr-url
+      tar -cf - pr-url
+      ;;
+    logs) echo 'fixture log' ;;
+    rm) : ;;
+    *) return 1 ;;
+  esac
+}
+write_result_tail() { cp "$1/log" "$1/result.txt"; }
+notify() { :; }
+finalize job 2 fixture-value
+'''
+    result = bash(
+        script, tmp_path, AGENT_JOB_GITHUB_WRITE="true",
+        AGENT_DISPATCH_STATE_DIR=str(tmp_path), TEST_PR_URL="https://github.com/example/repository/pull/7",
+    )
+    assert result.returncode == 0, result.stderr
+    assert (rdir / "state").read_text().strip() == "succeeded"
+    assert not (rdir / "reason").exists()
+    assert (tmp_path / "job/pr_url").read_text().strip() == "https://github.com/example/repository/pull/7"
+
+
 @pytest.mark.parametrize("kind", ["dispatcher", "entrypoint"])
 def test_role_configures_source_idempotently(sources, tmp_path, kind):
     destination = tmp_path / "configured-source"
