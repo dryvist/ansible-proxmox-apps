@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.74.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.73.1...v5.74.0) (2026-11-22)
+
+
+### Features
+
+* **postgres:** restart the cluster service on failure and export systemd unit state ([#3939](https://github.com/dryvist/ansible-proxmox-apps/issues/3939)) ([1a98d5c](https://github.com/dryvist/ansible-proxmox-apps/commit/1a98d5c5dbb02406c4cd66b4375eaf5eb7e7a470))
+
 ## [5.73.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.73.0...v5.73.1) (2026-11-22)
 
 
