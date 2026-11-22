@@ -11,7 +11,7 @@
     ansible_managed: Ansible managed
     _expected_node_exporter_extra_args:
       - --collector.systemd
-      - '--collector.systemd.unit-include=(postgresql@.*|pgbackrest-backup@.*)\.service'
+      - '--collector.systemd.unit-include=(postgresql@.*|pgbackrest-backup@.*)[.]service'
     _restart_policy_tasks: "{{ playbook_dir }}/../../../roles/systemd_restart_policy/tasks/main.yml"
     _restart_policy_template: >-
       {{ playbook_dir }}/../../../roles/systemd_restart_policy/templates/restart-override.conf.j2
@@ -64,9 +64,18 @@
           - node_exporter_extra_args == _expected_node_exporter_extra_args
           - _expected_node_exporter_extra_args[0] in _node_exporter_service
           - _expected_node_exporter_extra_args[1] in _node_exporter_service
+          - "'\\\\' not in _expected_node_exporter_extra_args[1]"
+          - "'postgresql@18-main.service' is match(_unit_include_re)"
+          - "'pgbackrest-backup@main.service' is match(_unit_include_re)"
+          - "'postgresqlXservice' is not match(_unit_include_re)"
+          - "'ssh.service' is not match(_unit_include_re)"
         fail_msg: >-
           The rendered PostgreSQL node_exporter service must contain the two
-          systemd collector flags from postgres_group inventory.
+          systemd collector flags from postgres_group inventory, with a unit
+          pattern that has no backslash and matches only the intended units.
+      vars:
+        _unit_include_re: >-
+          ^(?:{{ _expected_node_exporter_extra_args[1].split('unit-include=')[1] }})$
 
     - name: Guest metrics filter keeps systemd unit state without matching unrelated units
       ansible.builtin.assert:
