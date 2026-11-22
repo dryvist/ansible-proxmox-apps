@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.73.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.73.0...v5.73.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **github_runner:** poll the data filesystem format past the task timeout ([#3936](https://github.com/dryvist/ansible-proxmox-apps/issues/3936)) ([9ad56c3](https://github.com/dryvist/ansible-proxmox-apps/commit/9ad56c333f5689dec55f1298b45512831503e617))
+
 ## [5.73.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.72.2...v5.73.0) (2026-11-21)
 
 
