@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.75.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.74.0...v5.75.0) (2026-11-22)
+
+
+### Features
+
+* **grafana_stack:** provision the Postgres resilience alert rules ([#3944](https://github.com/dryvist/ansible-proxmox-apps/issues/3944)) ([aa5d4e9](https://github.com/dryvist/ansible-proxmox-apps/commit/aa5d4e9fe2cd0281150e3e9fef5dfe4249c9a6d1))
+
 ## [5.74.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.73.1...v5.74.0) (2026-11-22)
 
 
