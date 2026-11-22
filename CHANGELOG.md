@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.76.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.76.3...v5.76.4) (2026-11-22)
+
+
+### Bug Fixes
+
+* **ci:** run the AI merge gate on the canonical pull request event types ([#3969](https://github.com/dryvist/ansible-proxmox-apps/issues/3969)) ([3d4c997](https://github.com/dryvist/ansible-proxmox-apps/commit/3d4c9971f325970743365d726574cd6b813e7464))
+
 ## [5.76.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.76.2...v5.76.3) (2026-11-22)
 
 
