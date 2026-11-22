@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.75.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.75.0...v5.75.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **agent_sandbox:** keep a job with a published PR succeeded when the bundle export fails ([#3947](https://github.com/dryvist/ansible-proxmox-apps/issues/3947)) ([91f2c61](https://github.com/dryvist/ansible-proxmox-apps/commit/91f2c6145d60f3873eb392cdb7f4ab337e623d5b))
+
 ## [5.75.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.74.0...v5.75.0) (2026-11-22)
 
 
