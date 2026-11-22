@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.77.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.76.4...v5.77.0) (2026-11-22)
+
+
+### Features
+
+* **prometheus_stack:** fetch sql_exporter collectors from their repository ([#3972](https://github.com/dryvist/ansible-proxmox-apps/issues/3972)) ([1799963](https://github.com/dryvist/ansible-proxmox-apps/commit/179996315235758e1d77ac633cfcf14e5af67f3a))
+
 ## [5.76.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.76.3...v5.76.4) (2026-11-22)
 
 
