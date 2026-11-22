@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.76.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.75.2...v5.76.0) (2026-11-22)
+
+
+### Features
+
+* **proxmox_backup_server:** verify each new snapshot when its backup ends ([#3953](https://github.com/dryvist/ansible-proxmox-apps/issues/3953)) ([18c93d8](https://github.com/dryvist/ansible-proxmox-apps/commit/18c93d80c37a67874867dcc896e64f46a96458fc))
+
 ## [5.75.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.75.1...v5.75.2) (2026-11-22)
 
 

@@ -275,6 +275,55 @@
     (proxmox_backup_server_datastore_list.stdout | from_json
      | map(attribute='name') | list)
 
+# The datastore list omits a boolean that is false, so an absent verify-new reads
+# as false. This applies to a new and an existing datastore alike.
+- name: Read the datastore settings
+  ansible.builtin.command: proxmox-backup-manager datastore list --output-format json
+  register: proxmox_backup_server_datastore_settings
+  check_mode: false
+  changed_when: false
+
+- name: Set verify-new on the datastore when it differs
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - datastore
+      - update
+      - "{{ proxmox_backup_server_datastore_name }}"
+      - --verify-new
+      - "{{ proxmox_backup_server_verify_new | bool | lower }}"
+  vars:
+    current: >-
+      {{ (proxmox_backup_server_datastore_settings.stdout | from_json
+          | selectattr('name', 'equalto', proxmox_backup_server_datastore_name)
+          | list | first) | default({}) }}
+  when:
+    - not ansible_check_mode
+    - (current.get('verify-new', current.get('verify_new', false)) | bool)
+      != (proxmox_backup_server_verify_new | bool)
+  changed_when: true
+
+- name: Read the verify-new setting back
+  ansible.builtin.command: proxmox-backup-manager datastore list --output-format json
+  register: proxmox_backup_server_verify_new_readback
+  check_mode: false
+  changed_when: false
+
+- name: Assert the datastore has the declared verify-new setting
+  ansible.builtin.assert:
+    that:
+      - (current.get('verify-new', current.get('verify_new', false)) | bool)
+        == (proxmox_backup_server_verify_new | bool)
+    fail_msg: >-
+      Datastore {{ proxmox_backup_server_datastore_name }} does not have
+      verify-new={{ proxmox_backup_server_verify_new | bool | lower }}: {{ current }}.
+  vars:
+    current: >-
+      {{ (proxmox_backup_server_verify_new_readback.stdout | from_json
+          | selectattr('name', 'equalto', proxmox_backup_server_datastore_name)
+          | list | first) | default({}) }}
+  when: not ansible_check_mode
+
 - name: Reconcile PBS prune, verify, and garbage-collection jobs
   ansible.builtin.include_tasks: maintenance_jobs.yml
 
