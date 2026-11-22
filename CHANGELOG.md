@@ -1,5 +1,62 @@
 # Changelog
 
+## [5.76.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.76.1...v5.76.2) (2026-11-22)
+
+
+### Bug Fixes
+
+* **ci:** align the AI Merge Gate caller with the canonical caller ([#3960](https://github.com/dryvist/ansible-proxmox-apps/issues/3960)) ([363d3a2](https://github.com/dryvist/ansible-proxmox-apps/commit/363d3a25efb6d777baada13ca3f2dac4f75f4945))
+* **ci:** grant the AI Merge Gate caller the permissions its reusable workflow requests ([363d3a2](https://github.com/dryvist/ansible-proxmox-apps/commit/363d3a25efb6d777baada13ca3f2dac4f75f4945))
+
+## [5.76.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.76.0...v5.76.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **agent_sandbox:** pin the sandbox image to the current build ([#3956](https://github.com/dryvist/ansible-proxmox-apps/issues/3956)) ([91a19fd](https://github.com/dryvist/ansible-proxmox-apps/commit/91a19fdb17b69dd45ea55c5146c995d073a78543))
+
+## [5.76.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.75.2...v5.76.0) (2026-11-22)
+
+
+### Features
+
+* **proxmox_backup_server:** verify each new snapshot when its backup ends ([#3953](https://github.com/dryvist/ansible-proxmox-apps/issues/3953)) ([18c93d8](https://github.com/dryvist/ansible-proxmox-apps/commit/18c93d80c37a67874867dcc896e64f46a96458fc))
+
+## [5.75.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.75.1...v5.75.2) (2026-11-22)
+
+
+### Bug Fixes
+
+* **site:** publish the workstation connection profile only from its dedicated playbook ([#3950](https://github.com/dryvist/ansible-proxmox-apps/issues/3950)) ([f2248f5](https://github.com/dryvist/ansible-proxmox-apps/commit/f2248f51da2acb733b548a7ae41ee8f577e33eda))
+
+## [5.75.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.75.0...v5.75.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **agent_sandbox:** keep a job with a published PR succeeded when the bundle export fails ([#3947](https://github.com/dryvist/ansible-proxmox-apps/issues/3947)) ([91f2c61](https://github.com/dryvist/ansible-proxmox-apps/commit/91f2c6145d60f3873eb392cdb7f4ab337e623d5b))
+
+## [5.75.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.74.0...v5.75.0) (2026-11-22)
+
+
+### Features
+
+* **grafana_stack:** provision the Postgres resilience alert rules ([#3944](https://github.com/dryvist/ansible-proxmox-apps/issues/3944)) ([aa5d4e9](https://github.com/dryvist/ansible-proxmox-apps/commit/aa5d4e9fe2cd0281150e3e9fef5dfe4249c9a6d1))
+
+## [5.74.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.73.1...v5.74.0) (2026-11-22)
+
+
+### Features
+
+* **postgres:** restart the cluster service on failure and export systemd unit state ([#3939](https://github.com/dryvist/ansible-proxmox-apps/issues/3939)) ([1a98d5c](https://github.com/dryvist/ansible-proxmox-apps/commit/1a98d5c5dbb02406c4cd66b4375eaf5eb7e7a470))
+
+## [5.73.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.73.0...v5.73.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **github_runner:** poll the data filesystem format past the task timeout ([#3936](https://github.com/dryvist/ansible-proxmox-apps/issues/3936)) ([9ad56c3](https://github.com/dryvist/ansible-proxmox-apps/commit/9ad56c333f5689dec55f1298b45512831503e617))
+
 ## [5.73.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.72.2...v5.73.0) (2026-11-21)
 
 

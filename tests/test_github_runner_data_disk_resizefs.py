@@ -19,3 +19,9 @@ def test_data_filesystem_task_resizes():
 
 def test_resize_runs_before_the_headroom_assert():
     assert NAMES.index(CREATE) < NAMES.index(HEADROOM)
+
+
+def test_data_filesystem_task_polls_past_the_task_timeout():
+    task = TASKS[NAMES.index(CREATE)]
+    assert task["timeout"] == task["async"] == "{{ github_runner_data_mkfs_timeout }}"
+    assert task["poll"] > 0
