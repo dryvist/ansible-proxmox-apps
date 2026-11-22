@@ -1,0 +1,80 @@
+---
+# Renders the real restart-policy and node_exporter service templates against
+# PostgreSQL inventory, then checks the real Prometheus guest metric filter.
+- name: Verify PostgreSQL restart policy and systemd unit metrics
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    ansible_managed: Ansible managed
+    _expected_node_exporter_extra_args:
+      - --collector.systemd
+      - '--collector.systemd.unit-include=(postgresql@.*|pgbackrest-backup@.*)\.service'
+    _restart_policy_tasks: "{{ playbook_dir }}/../../../roles/systemd_restart_policy/tasks/main.yml"
+    _restart_policy_template: >-
+      {{ playbook_dir }}/../../../roles/systemd_restart_policy/templates/restart-override.conf.j2
+    _node_exporter_template: "{{ playbook_dir }}/../../../roles/node_exporter/templates/node_exporter.service.j2"
+    _guest_keep_metrics_re: "^(?:{{ guest_node_exporter_keep_metrics | join('|') }})$"
+    _node_exporter_virt_container:
+      rc: 1
+
+  vars_files:
+    - "../../../roles/systemd_restart_policy/defaults/main.yml"
+    - "../../../roles/node_exporter/defaults/main.yml"
+    - "../../../inventory/group_vars/all.yml"
+    - "../../../inventory/group_vars/postgres_group.yml"
+    - "../../../inventory/group_vars/prometheus_group/20-guest-exporters.yml"
+
+  tasks:
+    - name: Render the restart override and resolve its real role destination
+      ansible.builtin.set_fact:
+        _restart_policy_dropin: "{{ lookup('ansible.builtin.template', _restart_policy_template) }}"
+        _restart_policy_dropin_path: >-
+          {{ (((lookup('ansible.builtin.file', _restart_policy_tasks) | from_yaml)
+               | selectattr('name', 'equalto', 'Deploy restart policy override')
+               | first)['ansible.builtin.template']['dest'])
+             | replace('{' ~ '{ item }' ~ '}', systemd_restart_policy_services[0]) }}
+
+    - name: Restart policy uses the PostgreSQL cluster unit drop-in
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - systemd_restart_policy_services == ['postgresql@18-main']
+          - _restart_policy_dropin_path == '/etc/systemd/system/postgresql@18-main.service.d/99-restart-policy.conf'
+          - "'[Service]' in _restart_policy_dropin"
+          - "('Restart=' ~ systemd_restart_policy_restart) in _restart_policy_dropin"
+        fail_msg: >-
+          The PostgreSQL restart policy must render the role's restart override
+          at the postgresql@18-main.service drop-in path.
+
+    - name: Render the node_exporter systemd service
+      ansible.builtin.set_fact:
+        _node_exporter_service: "{{ lookup('ansible.builtin.template', _node_exporter_template) }}"
+      vars:
+        # This address only renders ExecStart; this verify checks collector
+        # arguments, not guest network discovery.
+        node_exporter_listen_address: 127.0.0.1
+
+    - name: PostgreSQL node_exporter service enables only the requested unit collector flags
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - node_exporter_extra_args == _expected_node_exporter_extra_args
+          - _expected_node_exporter_extra_args[0] in _node_exporter_service
+          - _expected_node_exporter_extra_args[1] in _node_exporter_service
+        fail_msg: >-
+          The rendered PostgreSQL node_exporter service must contain the two
+          systemd collector flags from postgres_group inventory.
+
+    - name: Guest metrics filter keeps systemd unit state without matching unrelated units
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - "'node_systemd_unit_state' in guest_node_exporter_keep_metrics"
+          - "'node_systemd_unit_state' is match(_guest_keep_metrics_re)"
+          - "'node_systemd_foo' is not match(_guest_keep_metrics_re)"
+        fail_msg: >-
+          The joined guest node_exporter metric filter must include
+          node_systemd_unit_state and leave unrelated node_systemd_* metrics out.
