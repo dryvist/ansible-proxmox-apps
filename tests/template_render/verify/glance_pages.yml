@@ -18,6 +18,15 @@
     ansible_managed: "test fixture"
     glance_monitor_enabled: true
     glance_monitor_interval: "1m"
+    ingress_domain: example.invalid
+    tofu_data:
+      containers:
+        metrics-store:
+          hostname: metrics-store
+          tags: [grafana]
+      constants:
+        service_ports:
+          victoriametrics: 8428
     dashboard_catalog_group_order:
       - apps
       - ai
@@ -149,6 +158,25 @@
           - "'dns' in (_glance_pages[0] | string)"
         fail_msg: "media_svc/dns groups missing from the single Services board"
 
+    - name: Assert the Mac memory tile reads its three series from the metrics store
+      ansible.builtin.assert:
+        that:
+          - _mac_tile | length == 1
+          - _mac_tile[0].url.startswith(_mac_base)
+          - "'macmon_memory_ram_used_bytes' in _mac_tile[0].url"
+          - _mac_tile[0].subrequests.pressure.url.startswith(_mac_base)
+          - "'macmon_memory_pressure_percent' in _mac_tile[0].subrequests.pressure.url"
+          - _mac_tile[0].subrequests.models.url.startswith(_mac_base)
+          - "'process_phys_footprint_bytes' in _mac_tile[0].subrequests.models.url"
+          - "'${' not in (_glance_raw.content | b64decode)"
+        fail_msg: "the Mac memory tile is missing, is not addressed by the metrics store name, or reads another series"
+      vars:
+        _mac_base: "http://metrics-store.example.invalid:8428/api/v1/query?query="
+        _mac_tile: >-
+          {{ _glance_pages[0].columns[0].widgets
+             | selectattr('title', 'defined')
+             | selectattr('title', 'equalto', 'Mac memory') | list }}
+
     - name: Render generated-services.yml with the LLM profile widget enabled
       ansible.builtin.template:
         src: "../../../roles/glance/templates/generated-services.yml.j2"
@@ -255,6 +283,15 @@
     ansible_become: false
     ansible_managed: "test fixture"
     glance_monitor_enabled: false
+    ingress_domain: example.invalid
+    tofu_data:
+      containers:
+        metrics-store:
+          hostname: metrics-store
+          tags: [grafana]
+      constants:
+        service_ports:
+          victoriametrics: 8428
     dashboard_catalog_group_order: [ai]
     dashboard_catalog_services:
       - name: llm

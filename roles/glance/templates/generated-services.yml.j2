@@ -140,3 +140,48 @@
             </div>
             {% endraw %}
 {% endif %}
+{% if glance_mac_memory_enabled | bool %}
+        # Mac memory tile: one row per Mac with its RAM percent and memory pressure,
+        # and the local models it has loaded in GB. The three PromQL series are
+        # subrequests; their rows carry the same short host label, so they join on it.
+        - type: custom-api
+          title: Mac memory
+          cache: 1m
+          url: "{{ glance_metrics_base_url }}/api/v1/query?query={{ glance_mac_ram_percent_query | urlencode }}"
+          subrequests:
+            pressure:
+              url: "{{ glance_metrics_base_url }}/api/v1/query?query={{ glance_mac_pressure_query | urlencode }}"
+            models:
+              url: "{{ glance_metrics_base_url }}/api/v1/query?query={{ glance_mac_model_memory_query | urlencode }}"
+          template: |
+            {% raw %}
+            {{ $pressure := .Subrequest "pressure" }}
+            {{ $models := .Subrequest "models" }}
+            {{ $rows := .JSON.Array "data.result" }}
+            <div class="flex flex-column gap-5">
+              {{ if or (ne .Response.StatusCode 200) (ne $pressure.Response.StatusCode 200) (ne $models.Response.StatusCode 200) }}
+                <p class="color-negative">Metrics error: RAM HTTP {{ .Response.StatusCode }}, pressure HTTP {{ $pressure.Response.StatusCode }}, models HTTP {{ $models.Response.StatusCode }}</p>
+              {{ else if not $rows }}
+                <p class="color-subtle">No Mac memory series</p>
+              {{ else }}
+                {{ range $rows }}
+                  {{ $host := .String "metric.host" }}
+                  <div class="flex flex-column gap-5">
+                    <div class="flex justify-between">
+                      <span class="size-h4 color-primary">{{ $host }}</span>
+                      <span class="size-h6 color-subtle">RAM {{ printf "%.0f" (.Float "value.1") }}%{{ range $pressure.JSON.Array "data.result" }}{{ if eq (.String "metric.host") $host }} · pressure {{ printf "%.0f" (.Float "value.1") }}%{{ end }}{{ end }}</span>
+                    </div>
+                    {{ range $models.JSON.Array "data.result" }}
+                      {{ if eq (.String "metric.host") $host }}
+                        <div class="flex justify-between">
+                          <span class="size-h6">{{ replaceMatches "^.*/" "" (.String "metric.model") }}</span>
+                          <span class="size-h6 color-subtle">{{ printf "%.1f" (.Float "value.1") }} GB</span>
+                        </div>
+                      {{ end }}
+                    {{ end }}
+                  </div>
+                {{ end }}
+              {{ end }}
+            </div>
+            {% endraw %}
+{% endif %}
