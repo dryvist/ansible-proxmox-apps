@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.76.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.76.1...v5.76.2) (2026-11-22)
+
+
+### Bug Fixes
+
+* **ci:** align the AI Merge Gate caller with the canonical caller ([#3960](https://github.com/dryvist/ansible-proxmox-apps/issues/3960)) ([363d3a2](https://github.com/dryvist/ansible-proxmox-apps/commit/363d3a25efb6d777baada13ca3f2dac4f75f4945))
+* **ci:** grant the AI Merge Gate caller the permissions its reusable workflow requests ([363d3a2](https://github.com/dryvist/ansible-proxmox-apps/commit/363d3a25efb6d777baada13ca3f2dac4f75f4945))
+
 ## [5.76.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.76.0...v5.76.1) (2026-11-22)
 
 
