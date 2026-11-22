@@ -1,5 +1,33 @@
 # Changelog
 
+## [5.77.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.77.0...v5.77.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **ci:** follow the v2 line for the CI fix workflow ([#3973](https://github.com/dryvist/ansible-proxmox-apps/issues/3973)) ([c0cd9bd](https://github.com/dryvist/ansible-proxmox-apps/commit/c0cd9bd0548aa06fe2afb88fcf3b9079fa47fde7))
+
+## [5.77.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.76.4...v5.77.0) (2026-11-22)
+
+
+### Features
+
+* **prometheus_stack:** fetch sql_exporter collectors from their repository ([#3972](https://github.com/dryvist/ansible-proxmox-apps/issues/3972)) ([1799963](https://github.com/dryvist/ansible-proxmox-apps/commit/179996315235758e1d77ac633cfcf14e5af67f3a))
+
+## [5.76.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.76.3...v5.76.4) (2026-11-22)
+
+
+### Bug Fixes
+
+* **ci:** run the AI merge gate on the canonical pull request event types ([#3969](https://github.com/dryvist/ansible-proxmox-apps/issues/3969)) ([3d4c997](https://github.com/dryvist/ansible-proxmox-apps/commit/3d4c9971f325970743365d726574cd6b813e7464))
+
+## [5.76.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.76.2...v5.76.3) (2026-11-22)
+
+
+### Bug Fixes
+
+* **openbao:** keep the workflow-dispatch settings in the platform env prefetch ([#3965](https://github.com/dryvist/ansible-proxmox-apps/issues/3965)) ([6d03ed9](https://github.com/dryvist/ansible-proxmox-apps/commit/6d03ed9abafdd6f0c5328fa30b841359090985f6))
+
 ## [5.76.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.76.1...v5.76.2) (2026-11-22)
 
 
