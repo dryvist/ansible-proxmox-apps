@@ -1,0 +1,42 @@
+---
+# Load the wall slide list and its two derived vars, which were moved out of
+# inventory/group_vars/all.yml to keep that file under its 4000-token limit.
+#
+# A sibling file under group_vars/ is NOT auto-loaded by Ansible inventory, so
+# the values are inlined here (single source of truth) and injected as
+# per-host facts onto every host in the `all` group — the same set of hosts
+# inventory/load_tofu.yml populates via add_host earlier in this play.
+#
+# This mirrors the per-host `set_fact` + `delegate_facts: true` pattern used by
+# inventory/load_tofu/propagate_facts.yml. delegate_facts: true is what makes
+# the fact land on the delegated-to host rather than the controller. Roles and
+# templates read these vars exactly as they did when they lived in all.yml.
+#
+# All three values are set in one task with fully literal data, because within
+# a single set_fact its keys are not visible to each other. The list is static
+# (the Homarr slide's path uses the literal board name, as it did in all.yml);
+# wall_kiosk_route_names is the derived value, inlined as its literal result.
+- name: Load wall slide vars onto every host (moved out of all.yml)
+  ansible.builtin.set_fact:
+    wall_slides:
+      # GLANCE: the Homarr Glance dashboard
+      - name: GLANCE
+        route: glance
+      # HOMARR: the Homarr app wall board
+      - name: HOMARR
+        route: homarr-v2
+        path: /boards/wall
+      # UNIFI INSIGHTS: the UniFi Network Insights dashboard (this PR)
+      - name: UNIFI INSIGHTS
+        route: unifi-insights
+    homarr_wall_board: wall
+    # Derived from wall_slides: the "wall" board route plus the route of every
+    # slide — the first entry (wall) is the default slide.
+    wall_kiosk_route_names: [wall, glance, homarr-v2, unifi-insights]
+  delegate_to: "{{ _host }}"
+  delegate_facts: true
+  vars:
+    ansible_connection: local
+  loop: "{{ groups['all'] | reject('equalto', 'localhost') | list }}"
+  loop_control:
+    loop_var: _host
