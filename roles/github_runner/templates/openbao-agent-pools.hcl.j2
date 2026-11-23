@@ -1,0 +1,22 @@
+{# Appended to openbao-agent.hcl.j2 whenever any per-org pool is selected: one
+   stanza per pool organization, review or general alike -- the registration
+   path depends only on the org, never on the pool's kind. #}
+{% include "openbao-agent.hcl.j2" %}
+{% for github_runner_pool in github_runner_active_pools %}
+{# A listed owner mints from its own registration set; any other pool keeps the shared path. #}
+{% if github_runner_pool.org in github_runner_register_owners %}
+{% raw %}
+template {
+  contents             = "ACCESS_TOKEN={{ with secret \"{% endraw %}{{ github_runner_registration_token_path_prefix }}-{{ github_runner_pool.org }}{% raw %}\" }}{{ .Data.token }}{{ end }}\n"
+{% endraw %}
+{% else %}
+{% raw %}
+template {
+  contents             = "ACCESS_TOKEN={{ with secret \"{% endraw %}{{ github_runner_review_token_path }}{% raw %}\" \"org_name={% endraw %}{{ github_runner_pool.org }}{% raw %}\" }}{{ .Data.token }}{{ end }}\n"
+{% endraw %}
+{% endif %}
+  destination          = "{{ github_runner_token_env_file | dirname }}/access-token-{{ github_runner_pool.org }}.env"
+  perms                = "0600"
+  error_on_missing_key = true
+}
+{% endfor %}
