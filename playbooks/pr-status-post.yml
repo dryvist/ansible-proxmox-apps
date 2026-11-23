@@ -1,9 +1,9 @@
 ---
-# Hourly pull-request and lane status, posted to the chat channel through the
-# alert hub. Counts and metrics only, all on localhost, no privilege
-# escalation: GitHub search totals for open pull requests and pull requests
-# merged in the last hour (one search pair per census owner), two instant
-# reads against a Prometheus-compatible endpoint, and one ntfy publish — the
+# Daily pull-request status, posted to the chat channel through the alert
+# hub. Counts and metrics only, all on localhost, no privilege escalation:
+# GitHub search totals for open pull requests and pull requests merged in the
+# last 24 h (one search pair per census owner), one optional instant read
+# against a Prometheus-compatible endpoint, and one ntfy publish — the
 # hub fans its topics out to Slack channels, the same publish shape as the
 # existing ntfy alert task in playbooks/tasks/.
 #
@@ -11,9 +11,11 @@
 # (playbooks/tasks/sync-cribl-packs/mint-github-tokens.yml): BAO_ADDR plus
 # BAO_TOKEN/VAULT_TOKEN mint a short-lived read token per census owner;
 # otherwise PR_CENSUS_GITHUB_TOKEN is used for every owner. Every task that
-# holds a token is masked. The metrics reads are masked too, because a
+# holds a token is masked. The metrics read is masked too, because a
 # metrics endpoint can carry a token in its URL; a failed or empty read
-# surfaces as "unmeasured" in the posted message instead.
+# surfaces as "unmeasured" in the posted message instead. Lane utilization is
+# not read here: the gpu status post (playbooks/status-post.yml) owns it, so
+# a red lane is reported once a day, not once per post.
 #
 # Fails before any request unless PR_CENSUS_OWNERS, STATUS_METRICS_URL,
 # STATUS_CHANNEL and PROXMOX_SUBDOMAIN are set.
@@ -23,7 +25,7 @@
 #   PR_CENSUS_EXCLUDE_REPOS comma-separated owner/repo values appended as
 #                           -repo: terms to both searches (optional)
 #   STATUS_METRICS_URL      base URL of the Prometheus-compatible read API (required)
-#   STATUS_JOBS_QUERY       second instant query, taken verbatim (optional)
+#   STATUS_JOBS_QUERY       instant query, taken verbatim (optional)
 #   STATUS_CHANNEL          chat channel topic to post to (required)
 #   PROXMOX_SUBDOMAIN       estate subdomain that fronts the alert hub (required)
 #   PR_CENSUS_GITHUB_TOKEN  GitHub token when no OpenBao token source is set
@@ -74,7 +76,7 @@
              | map('regex_replace', '^', '-repo:') | list }}
         pr_status_generated_utc: "{{ now(utc=True).strftime('%Y-%m-%d %H:%M UTC') }}"
         pr_status_merged_since: >-
-          {{ '%Y-%m-%dT%H:%M:%S+00:00' | strftime((now(utc=True).timestamp() - 3600) | int, utc=True) }}
+          {{ '%Y-%m-%dT%H:%M:%S+00:00' | strftime((now(utc=True).timestamp() - 86400) | int, utc=True) }}
         pr_status_post_channel: "{{ pr_status_channel }}"
         pr_status_post_ingress_domain: "{{ pr_status_ingress_domain }}"
         pr_status_post_metrics_url: "{{ pr_status_metrics_url }}"
@@ -94,7 +96,6 @@
     pr_status_github_mint_mount: github
     pr_status_open_terms: "is:pr is:open archived:false"
     pr_status_merged_terms: "is:pr is:merged merged:>={{ pr_status_merged_since }}"
-    pr_status_busy_query: "avg_over_time(accelerator:busy_percent:avg5m[4h])"
     pr_status_bao_addr: "{{ lookup('env', 'BAO_ADDR') }}"
     pr_status_bao_token: >-
       {{ lookup('env', 'BAO_TOKEN') | default(lookup('env', 'VAULT_TOKEN'), true) }}
@@ -214,7 +215,7 @@
       changed_when: false
       no_log: true
 
-    - name: Search each owner for pull requests merged in the last hour
+    - name: Search each owner for pull requests merged in the last 24 h
       vars:
         pr_status_search_terms: >-
           {{ (pr_status_merged_terms ~ ' org:' ~ item
@@ -244,18 +245,9 @@
              | map(attribute='json.total_count') | map('int') | sum }}
       changed_when: false
 
-    # Both reads are masked: the metrics endpoint can carry a token in its
-    # URL, and a failed read's diagnostic would otherwise print it. A failed
-    # or empty read becomes an "unmeasured" line and never stops the run.
-    - name: Read the per-lane accelerator busy percent
-      ansible.builtin.uri:
-        url: "{{ pr_status_post_metrics_url }}/api/v1/query?query={{ pr_status_busy_query | urlencode }}"
-        method: GET
-      register: pr_status_busy_read
-      changed_when: false
-      failed_when: false
-      no_log: true
-
+    # Masked: the metrics endpoint can carry a token in its URL, and a failed
+    # read's diagnostic would otherwise print it. A failed or empty read
+    # becomes an "unmeasured" line and never stops the run.
     - name: Read the jobs query verbatim
       ansible.builtin.uri:
         url: "{{ pr_status_post_metrics_url }}/api/v1/query?query={{ pr_status_jobs_terms | urlencode }}"
@@ -265,13 +257,6 @@
       failed_when: false
       no_log: true
       when: pr_status_jobs_terms | length > 0
-
-    - name: Resolve the per-lane busy series
-      ansible.builtin.set_fact:
-        pr_status_busy_series: >-
-          {{ [] if (pr_status_busy_read.status | default(0)) | int != 200
-             else (pr_status_busy_read.json.data.result | default([])) }}
-      changed_when: false
 
     - name: Resolve the jobs figure
       vars:
@@ -295,7 +280,7 @@
         url: "https://ntfy.{{ pr_status_post_ingress_domain }}/{{ pr_status_post_channel }}"
         method: POST
         headers:
-          Title: "Pull-request and lane status"
+          Title: "Pull-request status"
           Priority: low
           Tags: bar_chart
         body: "{{ pr_status_message }}"
