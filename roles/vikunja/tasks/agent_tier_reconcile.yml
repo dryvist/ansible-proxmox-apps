@@ -1,5 +1,6 @@
 ---
-- name: "Log in to Vikunja for exact access reconcile as {{ vikunja_agent_tier.username }}"
+- &vikunja_agent_tier_login_task
+  name: "Log in to Vikunja for exact access reconcile as {{ vikunja_agent_tier.username }}"
   ansible.builtin.uri:
     url: "http://localhost:{{ vikunja_port }}/api/v1/login"
     method: POST
@@ -147,6 +148,9 @@
 # Link shares use an independent bearer secret, not an account membership.
 # Team memberships are account-linked and are removed below; final readback is
 # the effective-access proof for this login.
+# The share loops above can outlast the login session, so log in again before the next token use.
+- *vikunja_agent_tier_login_task
+
 - name: Read the first page of team memberships for the tier account
   ansible.builtin.uri:
     url: "http://localhost:{{ vikunja_port }}/api/v1/teams?page=1"
@@ -209,6 +213,9 @@
     vikunja_project_share_owner_password_map.get(vikunja_share_owner, '')
     | default('', true) | length > 0
   no_log: true
+
+# The share loops above can outlast the login session, so log in again before the next token use.
+- *vikunja_agent_tier_login_task
 
 - name: Read back all project pages visible to the tier account
   ansible.builtin.uri:

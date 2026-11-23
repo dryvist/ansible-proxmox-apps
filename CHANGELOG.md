@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.79.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.79.0...v5.79.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **glance:** pin the published v0.8.8 release checksum ([#3986](https://github.com/dryvist/ansible-proxmox-apps/issues/3986)) ([16d897e](https://github.com/dryvist/ansible-proxmox-apps/commit/16d897e2b67d126dcd7e8c7bb4a8324065557d3b))
+* **vikunja:** log in again before later token uses in the tier reconcile ([#3987](https://github.com/dryvist/ansible-proxmox-apps/issues/3987)) ([cf79086](https://github.com/dryvist/ansible-proxmox-apps/commit/cf79086bb49c99cb63c730cc269b5509182709a3))
+
 ## [5.79.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.78.0...v5.79.0) (2026-11-23)
 
 
