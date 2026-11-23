@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.83.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.83.0...v5.83.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **grafana:** route critical alerts to their channel and bound repeats per issue ([#4005](https://github.com/dryvist/ansible-proxmox-apps/issues/4005)) ([b4b3c44](https://github.com/dryvist/ansible-proxmox-apps/commit/b4b3c445c858a51bdc54269e732a5f11ba19b016))
+
 ## [5.83.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.82.0...v5.83.0) (2026-11-23)
 
 
