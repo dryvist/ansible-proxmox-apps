@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.78.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.77.1...v5.78.0) (2026-11-23)
+
+
+### Features
+
+* **glance:** show Mac and per-model memory, and fetch the llama.cpp dashboard ([#3979](https://github.com/dryvist/ansible-proxmox-apps/issues/3979)) ([a0ef2e2](https://github.com/dryvist/ansible-proxmox-apps/commit/a0ef2e2f1757a2fed220e6d598a29462b9f08ee3))
+
 ## [5.77.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.77.0...v5.77.1) (2026-11-22)
 
 
