@@ -1,0 +1,109 @@
+---
+# The bootstrap runs no_log, so a failure hides its output. Its entrypoint
+# prints one secret-free line naming the failing fragment, line and exception
+# class; the rescue shows only lines of that exact shape and fails the play.
+- name: Run the Zammad bootstrap and name the failing fragment on failure
+  # The block carries the bootstrap secrets; only the two rescue tasks, which
+  # read none, are shown.
+  no_log: true
+  block:
+    - name: Run the idempotent Zammad bootstrap
+      ansible.builtin.command:
+        cmd: "zammad run rails r {{ zammad_root }}/ansible_bootstrap.rb"
+      environment:
+        ZAMMAD_FQDN: "{{ zammad_ui_fqdn }}"
+        ZAMMAD_ES_URL: "{{ zammad_es_url }}"
+        ZAMMAD_ADMIN_EMAIL: "{{ zammad_admin_email }}"
+        ZAMMAD_ADMIN_FIRSTNAME: "{{ zammad_admin_firstname }}"
+        ZAMMAD_ADMIN_LASTNAME: "{{ zammad_admin_lastname }}"
+        ZAMMAD_ADMIN_PASSWORD: "{{ zammad_admin_password }}"
+        ZAMMAD_API_TOKEN: "{{ zammad_hermes_api_token }}"
+        ZAMMAD_AI_API_TOKEN: "{{ zammad_ai_api_token }}"
+        ZAMMAD_HERMES_EMAIL: "{{ zammad_hermes_email }}"
+        ZAMMAD_AI_EMAIL: "{{ zammad_ai_email }}"
+        ZAMMAD_AGENT_WRITE_EMAIL: "{{ zammad_agent_write_email }}"
+        ZAMMAD_AGENT_WRITE_API_TOKEN: "{{ zammad_agent_write_api_token }}"
+        ZAMMAD_AGENT_WRITE_GROUPS: "{{ zammad_agent_write_groups | to_json }}"
+        ZAMMAD_SPLUNK_EMAIL: "{{ zammad_splunk_email }}"
+        ZAMMAD_SPLUNK_API_TOKEN: "{{ zammad_splunk_api_token }}"
+        ZAMMAD_NTFY_EMAIL: "{{ zammad_ntfy_email }}"
+        ZAMMAD_NTFY_API_TOKEN: "{{ zammad_ntfy_api_token }}"
+        ZAMMAD_CRIBL_EMAIL: "{{ zammad_cribl_email }}"
+        ZAMMAD_CRIBL_API_TOKEN: "{{ zammad_cribl_api_token }}"
+        ZAMMAD_TRIAGE_EMAIL: "{{ zammad_triage_email }}"
+        ZAMMAD_TRIAGE_API_TOKEN: "{{ zammad_triage_api_token }}"
+        ZAMMAD_CLERK_EMAIL: "{{ zammad_clerk_email }}"
+        ZAMMAD_CLERK_API_TOKEN: "{{ zammad_clerk_api_token }}"
+        ZAMMAD_CLERK_GROUPS: "{{ zammad_clerk_groups | to_json }}"
+        ZAMMAD_SMTP_HOST: "{{ zammad_smtp_host }}"
+        ZAMMAD_SMTP_PORT: "{{ zammad_smtp_port }}"
+        ZAMMAD_NOTIFICATION_SENDER: "{{ zammad_notification_sender }}"
+        ZAMMAD_SSO_LOGIN: "{{ zammad_sso_login }}"
+        ZAMMAD_SSO_EMAIL: "{{ zammad_sso_email }}"
+        ZAMMAD_SSO_FIRSTNAME: "{{ zammad_sso_firstname }}"
+        ZAMMAD_SSO_LASTNAME: "{{ zammad_sso_lastname }}"
+        ZAMMAD_SSO_TRUSTED_IPS: "{{ zammad_sso_trusted_ips }}"
+        ZAMMAD_GROUPS: "{{ zammad_groups | join(',') }}"
+        ZAMMAD_ORGANIZATION: "{{ zammad_organization }}"
+        ZAMMAD_HERMES_ORGANIZATION: "{{ zammad_hermes_organization }}"
+        ZAMMAD_OVERVIEWS: "{{ zammad_overviews | to_json }}"
+        # Time-based automation (Job) + SLA/calendar declarative data.
+        ZAMMAD_JOBS: "{{ zammad_jobs | to_json }}"
+        ZAMMAD_SLAS: "{{ zammad_slas | to_json }}"
+        ZAMMAD_SLA_CALENDAR_NAME: "{{ zammad_sla_calendar_name }}"
+        # Outbound webhooks + triggers: declarative data as JSON, empty lists by
+        # default (the seed then does nothing). Bearer values travel ONLY here —
+        # environment on a no_log task — never on a command line, file or diff.
+        ZAMMAD_WEBHOOKS: "{{ zammad_webhooks | to_json }}"
+        ZAMMAD_TRIGGERS: "{{ zammad_triggers | to_json }}"
+        # Declared Settings + the history-deleting Scheduler rows to deactivate.
+        # JSON so the YAML keeps Zammad's own value types (Integer, Array, String).
+        ZAMMAD_SETTINGS: "{{ zammad_settings | to_json }}"
+        ZAMMAD_DISABLED_SCHEDULERS: "{{ zammad_disabled_schedulers | to_json }}"
+        # AI provider ("same brain" — the LiteLLM router). Booleanized to the
+        # literal string the bootstrap checks (`== 'true'`).
+        ZAMMAD_AI_ENABLED: "{{ zammad_ai_enabled | bool | string | lower }}"
+        ZAMMAD_AI_PROVIDER: "{{ zammad_ai_provider_name }}"
+        ZAMMAD_AI_PROVIDER_URL: "{{ zammad_ai_provider_url }}"
+        ZAMMAD_AI_MODEL: "{{ zammad_ai_model }}"
+        ZAMMAD_AI_PROVIDER_TOKEN: "{{ zammad_ai_provider_token }}"
+        ZAMMAD_AI_FEATURES: "{{ zammad_ai_features | join(',') }}"
+        # GitHub issue-linking (opt-in; token minted from the OpenBao github engine)
+        ZAMMAD_CONFIGURE_GITHUB: "{{ zammad_configure_github | bool | ternary('true', 'false') }}"
+        ZAMMAD_GITHUB_ENDPOINT: "{{ zammad_github_endpoint }}"
+        ZAMMAD_GITHUB_API_TOKEN: "{{ zammad_github_api_token }}"
+        # Incident ticket templates + KB docs answers (declarative data as JSON)
+        ZAMMAD_TICKET_TEMPLATES: "{{ zammad_ticket_templates | to_json }}"
+        ZAMMAD_KB_DOCS_CATEGORY: "{{ zammad_kb_docs_category }}"
+        ZAMMAD_KB_ANSWERS: "{{ zammad_kb_answers | to_json }}"
+      # Secrets arrive via environment: only; output carries no values.
+      register: zammad_bootstrap
+      changed_when: "'ZAMMAD_BOOTSTRAP_CHANGED' in zammad_bootstrap.stdout"
+      no_log: true
+  rescue:
+    - name: Show the secret-free Zammad bootstrap failure line
+      no_log: false
+      vars:
+        zammad_bootstrap_failure_line: >-
+          ^ZAMMAD_BOOTSTRAP_FAILED fragment=[A-Za-z0-9_.-]+ line=([0-9]+|[?]) class=[A-Za-z0-9_:]+$
+      ansible.builtin.debug:
+        msg: >-
+          {{ (zammad_bootstrap | default({})).stdout_lines | default([])
+             | select("match", zammad_bootstrap_failure_line) | list }}
+
+    - name: Fail after reporting the Zammad bootstrap failure
+      no_log: false
+      ansible.builtin.fail:
+        msg: The Zammad bootstrap failed; the line above names the fragment, line and exception class.
+  always:
+    # Names the token rows the bootstrap moved off a declared value, success
+    # or failure; the lines carry row names only.
+    - name: Show the token rows the Zammad bootstrap released
+      no_log: false
+      vars:
+        zammad_bootstrap_release_line: "^ZAMMAD_BOOTSTRAP_RELEASED name=(hermes|ai|splunk|ntfy|cribl|\
+          agent-write|zammad-triage|zammad-clerk) holder=[A-Za-z0-9_.:@-]*$"
+      ansible.builtin.debug:
+        msg: >-
+          {{ (zammad_bootstrap | default({})).stdout_lines | default([])
+             | select("match", zammad_bootstrap_release_line) | list }}
