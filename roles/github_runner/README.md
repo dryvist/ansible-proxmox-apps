@@ -14,7 +14,7 @@ group, never per repository; the labels decide which jobs land where.
 | --- | --- | --- | --- | --- |
 | Main | `github_runner_org`, `github_runner_replicas`, `github_runner_group` | — | common + `github_runner_labels_pool` | yes |
 | Review | `github_runner_review_orgs` (list of `{org, replicas, group}`) | replicas 2, group `pr-agent` | common minus `self-hosted` + `review` | no |
-| General extra-org | `github_runner_extra_orgs` (list of `{org, replicas, group}`) | replicas 1, group `Default` | common + `github_runner_labels_pool` (as the main pool) | yes |
+| General extra-org | `github_runner_extra_orgs` (list of `{org, replicas, group}`) | replicas 1, group `Default` | as the main pool | yes |
 | Heavy | `github_runner_heavy_pool_enabled` + `*_heavy_pool_*` | 1 replica, label `heavy` | common + heavy label instead of the pool label | yes |
 
 - **Main** — the org-level pool. Its runner group must allow all repositories
