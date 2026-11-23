@@ -18,6 +18,16 @@
     ansible_managed: "test fixture"
     glance_monitor_enabled: true
     glance_monitor_interval: "1m"
+    ingress_domain: example.invalid
+    # Seeded by set_fact: earlier plays' facts outrank play vars.
+    _glance_fixture_tofu_data:
+      containers:
+        metrics-store:
+          hostname: metrics-store
+          tags: [grafana]
+      constants:
+        service_ports:
+          victoriametrics: 8428
     dashboard_catalog_group_order:
       - apps
       - ai
@@ -86,6 +96,10 @@
     dashboard_catalog_api_services: "{{ dashboard_catalog_services | rejectattr('ui') | list }}"
 
   tasks:
+    - name: Seed the published inventory fixture
+      ansible.builtin.set_fact:
+        tofu_data: "{{ _glance_fixture_tofu_data }}"
+
     - name: Render generated-services.yml
       ansible.builtin.template:
         src: "../../../roles/glance/templates/generated-services.yml.j2"
@@ -148,6 +162,49 @@
           - "'media_svc' in (_glance_pages[0] | string)"
           - "'dns' in (_glance_pages[0] | string)"
         fail_msg: "media_svc/dns groups missing from the single Services board"
+
+    - name: Assert the Mac memory tile reads its three series from the metrics store
+      ansible.builtin.assert:
+        that:
+          - _mac_tile | length == 1
+          - _mac_tile[0].url.startswith(_mac_base)
+          - "'macmon_memory_ram_used_bytes' in _mac_tile[0].url"
+          - _mac_tile[0].subrequests.pressure.url.startswith(_mac_base)
+          - "'macmon_memory_pressure_percent' in _mac_tile[0].subrequests.pressure.url"
+          - _mac_tile[0].subrequests.models.url.startswith(_mac_base)
+          - "'process_phys_footprint_bytes' in _mac_tile[0].subrequests.models.url"
+          - "'${' not in (_glance_raw.content | b64decode)"
+          - "'https://grafana.example.invalid/d/model-residency-memory' in (_glance_raw.content | b64decode)"
+        fail_msg: "Mac memory tile or its Grafana link is missing or misaddressed"
+      vars:
+        _mac_base: "http://metrics-store.example.invalid:8428/api/v1/query?query="
+        _mac_tile: >-
+          {{ _glance_pages[0].columns[0].widgets
+             | selectattr('title', 'defined')
+             | selectattr('title', 'equalto', 'Mac memory') | list }}
+
+    - name: Render generated-services.yml without a metrics store
+      ansible.builtin.template:
+        src: "../../../roles/glance/templates/generated-services.yml.j2"
+        dest: "{{ render_tmp }}/glance-generated-services-no-metrics.yml"
+        mode: "0600"
+      vars:
+        glance_metrics_host: ""
+
+    - name: Read back the page rendered without a metrics store
+      ansible.builtin.slurp:
+        src: "{{ render_tmp }}/glance-generated-services-no-metrics.yml"
+      register: _glance_no_metrics_raw
+
+    - name: Assert the Mac memory tile is omitted without a grafana-tagged container
+      ansible.builtin.assert:
+        that:
+          - "'Mac memory' not in (_glance_no_metrics_raw.content | b64decode)"
+          - "'model-residency-memory' not in (_glance_no_metrics_raw.content | b64decode)"
+          - _glance_no_metrics_pages | length == 1
+        fail_msg: "Mac memory tile rendered without a metrics store"
+      vars:
+        _glance_no_metrics_pages: "{{ _glance_no_metrics_raw.content | b64decode | from_yaml }}"
 
     - name: Render generated-services.yml with the LLM profile widget enabled
       ansible.builtin.template:
@@ -255,6 +312,15 @@
     ansible_become: false
     ansible_managed: "test fixture"
     glance_monitor_enabled: false
+    ingress_domain: example.invalid
+    tofu_data:
+      containers:
+        metrics-store:
+          hostname: metrics-store
+          tags: [grafana]
+      constants:
+        service_ports:
+          victoriametrics: 8428
     dashboard_catalog_group_order: [ai]
     dashboard_catalog_services:
       - name: llm

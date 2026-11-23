@@ -44,7 +44,8 @@ def _git_collection_is_current(requirement: dict, pins: dict[str, dict[str, str]
     # says it is still there; a cache restore or manual change can remove it.
     version = requirement.get("version")
     entry = pins.get(requirement["name"])
-    if not version or entry is None or entry["ref"] != version or not entry["path"]:
+    # A branch ref moves, so only a full commit SHA can be satisfied from the cache.
+    if not version or not re.fullmatch(r"[0-9a-f]{40}", version) or entry is None or entry["ref"] != version or not entry["path"]:
         return False
     return (collections_root / entry["path"]).is_dir()
 
