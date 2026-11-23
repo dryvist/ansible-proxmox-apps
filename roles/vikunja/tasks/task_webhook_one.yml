@@ -49,7 +49,9 @@
   no_log: true
 
 # Readback: the API never returns the secret, so the proof is the target and
-# its events. Skipped in check mode only when the create above was skipped.
+# its events. The GET runs in check mode too (check_mode: false), so a check
+# run still lists what is there; the assert below is skipped there, which
+# cannot verify a webhook the skipped create did not make.
 - name: "Read back the webhooks on project {{ vikunja_task_webhook.project_id }}"
   ansible.builtin.uri:
     url: "http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_task_webhook.project_id }}/webhooks"
@@ -67,7 +69,13 @@
   ansible.builtin.assert:
     that:
       - _matches | length == 1
-      - (_matches | first).events | sort == vikunja_task_webhook.events | sort
+      # `| default([], true)`: with no matching webhook the readback must fail
+      # this clause, not raise on `first` of an empty list — assert would then
+      # die on the Jinja error and never render the fail_msg that names the
+      # match count the operator needs.
+      - >-
+        (_matches | first).events | default([], true) | sort
+        == vikunja_task_webhook.events | sort
     fail_msg: >-
       Project {{ vikunja_task_webhook.project_id }} has {{ _matches | length }} webhook(s) for the
       declared target; events must equal {{ vikunja_task_webhook.events | sort }}.
