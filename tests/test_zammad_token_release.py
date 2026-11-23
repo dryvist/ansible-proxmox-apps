@@ -52,8 +52,11 @@ end
 User = Struct.new(:id, :email)
 service_users = (1..5).map { |i| User.new(i, "svc#{i}@example.test") }
 agent_write_user = User.new(6, 'agent-write@example.test')
-api_token, ai_api_token, splunk_api_token, ntfy_api_token, cribl_api_token, agent_write_api_token =
-  %w[hermes ai splunk ntfy cribl agent-write].map { |n| "fixture-secret-#{n}" }
+triage_user = User.new(7, 'triage@example.test')
+clerk_user = User.new(8, 'clerk@example.test')
+api_token, ai_api_token, splunk_api_token, ntfy_api_token, cribl_api_token, agent_write_api_token,
+  triage_api_token, clerk_api_token =
+  %w[hermes ai splunk ntfy cribl agent-write zammad-triage zammad-clerk].map { |n| "fixture-secret-#{n}" }
 agent = { 'permission' => %w[ticket.agent knowledge_base.editor] }
 Token.seed(name: 'hermes', user_id: 1, token: api_token, preferences: agent)
 Token.seed(name: 'ai', user_id: 2, token: agent_write_api_token, preferences: agent)

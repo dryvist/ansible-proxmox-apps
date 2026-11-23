@@ -39,13 +39,17 @@ end
 # enforced on the token's scopes instead (see splunk_prefs below).
 # The app-agent writer is matched by email so list order cannot widen its grant.
 agent_write_user = service_users.find { |u| u.email == agent_write_email } or raise "svc-agent-write missing"
+# The tracker agents' users are matched by email too and get only their own grants below.
+triage_user = service_users.find { |u| u.email == triage_email } or raise "svc-zammad-triage missing"
+clerk_user = service_users.find { |u| u.email == clerk_email } or raise "svc-zammad-clerk missing"
+scoped_user_ids = [agent_write_user.id, triage_user.id, clerk_user.id]
 groups.each do |gname|
   group = Group.find_by(name: gname)
   if group.nil?
     group = Group.create!(name: gname, active: true)
     changed = true
   end
-  ([admin] + service_users).reject { |u| u.id == agent_write_user.id }.each do |u|
+  ([admin] + service_users).reject { |u| scoped_user_ids.include?(u.id) }.each do |u|
     next if u.group_ids_access('full').include?(group.id)
     u.group_names_access_map = u.group_names_access_map.merge(group.name => ['full'])
     u.save!
@@ -68,6 +72,24 @@ desired_agent_write_access = agent_write_access.transform_values(&:sort)
 unless current_agent_write_access == desired_agent_write_access
   agent_write_user.group_names_access_map = agent_write_access
   agent_write_user.save!
+  changed = true
+end
+
+# zammad-triage reads every incident group and writes none. zammad-clerk writes only its
+# declared groups, with the same ticket actions as the app-agent writer.
+clerk_group_names = JSON.parse(ENV.fetch('ZAMMAD_CLERK_GROUPS'))
+unless clerk_group_names.is_a?(Array) && clerk_group_names.all? { |name| name.is_a?(String) }
+  raise 'ZAMMAD_CLERK_GROUPS must be a JSON array of group names'
+end
+{
+  triage_user => groups.to_h { |group_name| [Group.find_by!(name: group_name).name, %w[read]] },
+  clerk_user => clerk_group_names.to_h { |group_name| [Group.find_by!(name: group_name).name, %w[create change read]] },
+}.each do |user, access|
+  current = user.group_names_access_map.transform_values { |values| Array(values).sort }
+  next if current == access.transform_values(&:sort)
+
+  user.group_names_access_map = access
+  user.save!
   changed = true
 end
 
@@ -109,6 +131,8 @@ service_tokens = [
   ['ntfy', service_users[3], ntfy_api_token, ntfy_prefs],
   ['cribl', service_users[4], cribl_api_token, cribl_prefs],
   ['agent-write', agent_write_user, agent_write_api_token, agent_write_prefs],
+  ['zammad-triage', triage_user, triage_api_token, { 'permission' => %w[ticket.agent] }],
+  ['zammad-clerk', clerk_user, clerk_api_token, { 'permission' => %w[ticket.agent] }],
 ]
 # The token column is unique, so a declared value can only be set while no
 # other api row holds it. Give any such holder row a random token and keep the
