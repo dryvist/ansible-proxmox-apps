@@ -1,0 +1,55 @@
+---
+# Read shares for the read-only tracker service account: svc-mcp-ro reads every
+# project the read-write automation account owns, at Read permission. The
+# project list is derived at run time from the owner's own project pages by
+# operator_access_one.yml (the shared reconciler) — never pinned by id — so a
+# project moved between parents keeps its explicit grant. An inherited share
+# alone vanishes the moment a project is reparented out of the shared ancestor,
+# which is how the tracker lost its read on a moved top-level project.
+#
+# Sharing is strictly ADDITIVE, as in operator_access.yml: create-if-absent,
+# correct-if-drifted, never a revoke. Ownership stays with the automation
+# account, whose bridge and agent sessions depend on it.
+#
+# Loaded independently of operator_access.yml (its own credential-map include),
+# so the tracker keeps its reads even when the human operator account is not
+# provisioned. ansible.builtin.uri has no check-mode support; main.yml skips
+# this include in check mode and notes the skip instead.
+
+- name: Build the owner credential map for the tracker read share
+  ansible.builtin.include_tasks: project_share_owner_password_map.yml
+  no_log: true
+
+- name: Resolve the read-only tracker user from vikunja_service_users
+  ansible.builtin.set_fact:
+    vikunja_mcp_ro_user: >-
+      {{ vikunja_service_users
+         | selectattr('username', 'equalto', 'svc-mcp-ro')
+         | list | first | default({}, true) }}
+  no_log: true
+
+- name: Note the read-only tracker account is not provisioned
+  ansible.builtin.debug:
+    msg: >-
+      Read-share reconciliation for the read-only tracker account is skipped:
+      vikunja_service_users has no svc-mcp-ro entry with a password.
+  when: vikunja_mcp_ro_user.get('password', '') | length == 0
+  no_log: true
+
+# No project-ID or title allowlist is passed: operator_access_one.yml shares
+# EVERY project the owner owns, paging the owner's project list at run time.
+- name: Share every read-write-owned project with the read-only tracker account
+  ansible.builtin.include_tasks: operator_access_one.yml
+  loop: "{{ vikunja_mcp_ro_share_owner_usernames }}"
+  loop_control:
+    loop_var: vikunja_share_owner
+    label: "{{ vikunja_share_owner }}"
+  vars:
+    vikunja_share_grantee_username: svc-mcp-ro
+    vikunja_share_permission: "{{ vikunja_mcp_ro_share_permission }}"
+  when:
+    - vikunja_mcp_ro_user.get('password', '') | length > 0
+    - >-
+      vikunja_project_share_owner_password_map.get(vikunja_share_owner, '')
+      | default('', true) | length > 0
+  no_log: true
