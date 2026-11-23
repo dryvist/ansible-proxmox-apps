@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.81.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.80.0...v5.81.0) (2026-11-23)
+
+
+### Features
+
+* **roles:** add UniFi Insights role, inventory group, Cribl feed ([#3753](https://github.com/dryvist/ansible-proxmox-apps/issues/3753)) ([444aaae](https://github.com/dryvist/ansible-proxmox-apps/commit/444aaae505f317980e0c97890c46f0dfd95ed647))
+
 ## [5.80.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.79.1...v5.80.0) (2026-11-23)
 
 

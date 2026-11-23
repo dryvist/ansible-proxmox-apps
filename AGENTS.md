@@ -17,6 +17,9 @@ vendor ships no other runnable form:
   and nixpkgs has no package. Read 2026-11-01 from the
   [v0.114.2 release assets](https://github.com/hatchet-dev/hatchet/releases/tag/v0.114.2).
 - `openhands`: vendor-shipped per-conversation containers.
+- `unifi_insights_docker`: UniFi-Insights-Plus ships only a container image
+  (`ghcr.io/jmasarweh/unifi-log-insight`) and no native package. Read
+  2026-11-16 from the [v3.7.2 release](https://github.com/jmasarweh/UniFi-Insights-Plus/releases/tag/v3.7.2).
 
 Full docs live under `docs/agents/`, one topic per page:
 

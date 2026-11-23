@@ -43,6 +43,8 @@ BASE_VARS = {
     "cribl_stream_unpoller_scrape_target": "unpoller.invalid:9130",
     "cribl_stream_ai_log_routing": {},
     "cribl_stream_ai_input_types": {},
+    "cribl_stream_unifi_insights_syslog_host": "",
+    "cribl_stream_unifi_insights_syslog_port": 514,
 }
 
 
