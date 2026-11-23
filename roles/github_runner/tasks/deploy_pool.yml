@@ -1,0 +1,134 @@
+---
+# Deploys one selected per-org pool (github_runner_pool) of either kind: a
+# review pool keeps its dedicated lane (no Docker socket, the `review` label
+# in place of the pooled one), a general extra-org pool runs the main pool's
+# labels and host mounts in another organization. The per-slot difference is
+# entirely inside runner.env.j2 / runner-mounts.env.j2 via the
+# github_runner_review_slots value below; naming, token file and slot loop
+# are identical for both kinds.
+#
+# Resolved from this pool's inputs (replicas, group, cpu_limit, memory_limit)
+# before the renders below reference them: the unit template reads
+# github_runner_pool_replicas / _group / _cpu_limit / _memory_limit, and a
+# task var cannot default onto the name it defines. Re-resolved every
+# iteration, so the next pool always starts from the role-wide values again.
+- name: Resolve this pool's replicas, group and container limits
+  ansible.builtin.set_fact:
+    github_runner_pool_replicas: >-
+      {{ github_runner_pool.replicas
+         | default(2 if github_runner_pool.kind == 'review' else 1) }}
+    github_runner_pool_group: >-
+      {{ github_runner_pool.group
+         | default('pr-agent' if github_runner_pool.kind == 'review' else 'Default') }}
+    github_runner_pool_cpu_limit: >-
+      {{ github_runner_pool.cpu_limit | default(github_runner_cpu_limit) }}
+    github_runner_pool_memory_limit: >-
+      {{ github_runner_pool.memory_limit | default(github_runner_memory_limit) }}
+
+- name: Create pool runner diagnostics directories
+  ansible.builtin.file:
+    path: >-
+      {{ github_runner_diag_host_dir }}/{{ github_runner_pool.kind }}-{{
+      github_runner_pool.org }}-{{ github_runner_pool_slot }}
+    state: directory
+    recurse: true
+    owner: "{{ github_runner_container_uid }}"
+    group: "{{ github_runner_container_gid }}"
+    mode: "u=rwX,g=rX,o=rX"
+  loop: "{{ range(1, github_runner_pool_replicas | int + 1) | list }}"
+  loop_control:
+    loop_var: github_runner_pool_slot
+
+- name: Create pool runner tool cache directories
+  ansible.builtin.file:
+    path: >-
+      {{ github_runner_tool_cache_host_dir }}/{{ github_runner_pool.kind }}-{{
+      github_runner_pool.org }}-{{ github_runner_pool_slot }}
+    state: directory
+    owner: "{{ github_runner_container_uid }}"
+    group: "{{ github_runner_container_gid }}"
+    mode: "0755"
+  loop: "{{ range(1, github_runner_pool_replicas | int + 1) | list }}"
+  loop_control:
+    loop_var: github_runner_pool_slot
+
+- name: Deploy pool runner environment files
+  ansible.builtin.template:
+    src: runner.env.j2
+    dest: >-
+      {{ github_runner_env_file }}-{{ github_runner_pool.kind }}-{{
+      github_runner_pool.org }}-{{ github_runner_pool_slot }}
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ range(1, github_runner_pool_replicas | int + 1) | list }}"
+  loop_control:
+    loop_var: github_runner_pool_slot
+  vars:
+    github_runner_org: "{{ github_runner_pool.org }}"
+    github_runner_group: "{{ github_runner_pool_group }}"
+    # A review pool is ALL review slots; a general pool has none, so every
+    # slot takes the pooled-label branch of runner.env.j2.
+    github_runner_review_slots: "{{ github_runner_pool_replicas if github_runner_pool.kind == 'review' else 0 }}"
+    github_runner_slot: "{{ github_runner_pool_slot }}"
+    github_runner_labels_extra: "{{ github_runner_pool.labels | default('') }}"
+  no_log: true
+  notify: Restart pool github runners
+
+# Whether a slot mounts anything from the host follows the same slot rule as
+# its labels: a review slot mounts nothing, a general slot keeps the main
+# pool's mounts (its _diag and tool cache directories, the Docker group and
+# socket).
+- name: Deploy pool runner host mounts files
+  ansible.builtin.template:
+    src: runner-mounts.env.j2
+    dest: >-
+      {{ github_runner_env_file }}-{{ github_runner_pool.kind }}-{{
+      github_runner_pool.org }}-{{ github_runner_pool_slot }}.mounts
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ range(1, github_runner_pool_replicas | int + 1) | list }}"
+  loop_control:
+    loop_var: github_runner_pool_slot
+  vars:
+    github_runner_review_slots: "{{ github_runner_pool_replicas if github_runner_pool.kind == 'review' else 0 }}"
+    github_runner_slot: "{{ github_runner_pool_slot }}"
+    # The same per-slot directories the unit task below names.
+    github_runner_unit_diag_dir: >-
+      {{ github_runner_diag_host_dir }}/{{ github_runner_pool.kind }}-{{
+      github_runner_pool.org }}-%i
+    github_runner_unit_tool_cache_dir: >-
+      {{ github_runner_tool_cache_host_dir }}/{{ github_runner_pool.kind }}-{{
+      github_runner_pool.org }}-%i
+  notify: Restart pool github runners
+
+- name: Deploy the pool runner systemd unit template
+  ansible.builtin.template:
+    src: github-runner@.service.j2
+    dest: >-
+      /etc/systemd/system/github-runner-{{ github_runner_pool.kind }}-{{
+      github_runner_pool.org }}@.service
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    github_runner_replicas: "{{ github_runner_pool_replicas }}"
+    github_runner_container_prefix: >-
+      github-runner-{{ github_runner_pool.kind }}-{{ github_runner_pool.org }}
+    github_runner_name_prefix: "{{ github_runner_pool.kind }}-{{ github_runner_pool.org }}"
+    github_runner_cpu_limit: "{{ github_runner_pool_cpu_limit }}"
+    github_runner_memory_limit: "{{ github_runner_pool_memory_limit }}"
+    github_runner_unit_env_file: >-
+      {{ github_runner_env_file }}-{{ github_runner_pool.kind }}-{{
+      github_runner_pool.org }}
+    github_runner_unit_token_env_file: >-
+      {{ (github_runner_token_env_file | dirname) ~ '/access-token-'
+         ~ github_runner_pool.org ~ '.env' }}
+    github_runner_unit_diag_dir: >-
+      {{ github_runner_diag_host_dir }}/{{ github_runner_pool.kind }}-{{
+      github_runner_pool.org }}-%i
+    github_runner_unit_tool_cache_dir: >-
+      {{ github_runner_tool_cache_host_dir }}/{{ github_runner_pool.kind }}-{{
+      github_runner_pool.org }}-%i
+  notify: Restart pool github runners

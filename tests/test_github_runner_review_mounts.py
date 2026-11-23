@@ -62,8 +62,8 @@ def test_every_pool_renders_the_mounts_file_the_unit_reads():
     wiring = {
         "main.yml": "{{ github_runner_env_file }}-{{ github_runner_slot }}.mounts",
         "deploy_heavy_pool.yml": "{{ github_runner_env_file }}-heavy-{{ github_runner_heavy_slot }}.mounts",
-        "deploy_review_pool.yml": (
-            "{{ github_runner_env_file }}-review-{{ github_runner_review_pool.org }}-{{ github_runner_review_slot }}.mounts"
+        "deploy_pool.yml": (
+            "{{ github_runner_env_file }}-{{ github_runner_pool.kind }}-{{ github_runner_pool.org }}-{{ github_runner_pool_slot }}.mounts"
         ),
     }
     for file, dest in wiring.items():
