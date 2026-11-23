@@ -25,20 +25,23 @@
                'memory_limit': github_runner_heavy_pool_memory_limit | string}]
              if github_runner_heavy_pool_enabled | bool else [] ) }}
 
-- name: Add each selected review pool's capacity inputs
+- name: Add each selected per-org pool's capacity inputs
   ansible.builtin.set_fact:
     github_runner_capacity_pools: >-
       {{ github_runner_capacity_pools
-         + [{'name': 'review-' ~ github_runner_review_pool.org,
-             'replicas': github_runner_review_pool.replicas | default(2) | int,
-             'cpu_limit': (github_runner_review_pool.cpu_limit
+         + [{'name': github_runner_pool.kind ~ '-' ~ github_runner_pool.org,
+             'replicas': (github_runner_pool.replicas
+                          | default(2 if github_runner_pool.kind == 'review' else 1)) | int,
+             'cpu_limit': (github_runner_pool.cpu_limit
                            | default(github_runner_cpu_limit)) | string,
-             'memory_limit': (github_runner_review_pool.memory_limit
+             'memory_limit': (github_runner_pool.memory_limit
                               | default(github_runner_memory_limit)) | string}] }}
-  loop: "{{ github_runner_active_review_orgs | default([]) }}"
+  loop: "{{ github_runner_active_pools | default([]) }}"
   loop_control:
-    loop_var: github_runner_review_pool
-    label: "{{ github_runner_review_pool.org | default('(invalid entry)') }}"
+    loop_var: github_runner_pool
+    label: >-
+      {{ github_runner_pool.kind | default('invalid') }}-{{
+      github_runner_pool.org | default('(invalid entry)') }}
 
 - name: Validate the declared pool limits are parseable
   ansible.builtin.assert:

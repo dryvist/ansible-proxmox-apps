@@ -18,7 +18,8 @@ Role defaults live under `defaults/main/`; override them in inventory group
 variables. The rendered configuration comes from `templates/config.yml.j2`.
 
 Narrow a run with `--skip-tags` on `vikunja_operator_access`,
-`vikunja_agent_access` or `vikunja_openhands_trigger`, and limit the token
+`vikunja_agent_access`, `vikunja_mcp_read_access` or
+`vikunja_openhands_trigger`, and limit the token
 loop to named identities with
 `-e '{"vikunja_mcp_token_only_users": ["svc-mcp-clerk"]}'` (empty means all).
 
@@ -37,6 +38,17 @@ never by this role; the share is made as the automation account that owns the
 project. The project is matched by
 `vikunja_openhands_project_id` (set it to empty to skip the share), the
 labels by title.
+
+## Read-only tracker account
+
+The role shares every project the read-write automation account owns with the
+read-only tracker service account at Read permission. The project list is
+derived at converge time from the owner's own project pages, never pinned by
+id, so a project moved between parents keeps its explicit grant where an
+inherited one would vanish. The share is additive: the owning account keeps
+ownership, and no share is ever revoked. The share runs independently of the
+operator block, so the tracker keeps its reads even when the human operator
+account is not provisioned.
 
 ## Outgoing requests
 

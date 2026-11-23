@@ -1,4 +1,4 @@
-"""Runner review pools come only from the env document key, never public inventory."""
+"""Runner pools come only from the env document keys, never public inventory."""
 
 from pathlib import Path
 import re
@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCKER_VMS = ROOT / "inventory" / "group_vars" / "docker_vms.yml"
 LOAD_PLAY = ROOT / "playbooks" / "site" / "00-load-and-telemetry.yml"
 POOLS = [{"org": "example-org", "replicas": 1, "group": "example-group"}]
+EXTRA_POOLS = [{"org": "example-other", "replicas": 1, "group": "Default"}]
 
 
 def _expression(name="github_runner_review_orgs"):
@@ -48,11 +49,22 @@ class RunnerReviewOrgsSource(unittest.TestCase):
         self.assertEqual(_with_doc({}), [])
         self.assertEqual(_with_doc({"GITHUB_RUNNER_REVIEW_ORGS": ""}), [])
         self.assertEqual(_render(_expression(), {"hostvars": {"localhost": {}}}), [])
+        self.assertEqual(
+            _render(_expression("github_runner_extra_orgs"), {"hostvars": {"localhost": {}}}), [])
+        self.assertEqual(_with_doc({"GITHUB_RUNNER_EXTRA_ORGS": ""}), [])
 
     def test_json_list_in_the_env_document_becomes_the_pool_list(self):
         self.assertEqual(_with_doc({"GITHUB_RUNNER_REVIEW_ORGS": '[{"org": "example-org", '
                                     '"replicas": 1, "group": "example-group"}]'}), POOLS)
         self.assertEqual(_with_doc({"GITHUB_RUNNER_REVIEW_ORGS": POOLS}), POOLS)
+
+    def test_extra_org_json_list_in_the_env_document_becomes_the_pool_list(self):
+        self.assertEqual(
+            _render(_expression("github_runner_extra_orgs"),
+                    {"hostvars": {"localhost": {"openbao_platform_env_doc":
+                     {"GITHUB_RUNNER_EXTRA_ORGS": '[{"org": "example-other", '
+                      '"replicas": 1, "group": "Default"}]'}}}}),
+            EXTRA_POOLS)
 
     def test_load_play_keeps_the_key_from_the_env_document(self):
         plays = yaml.safe_load(LOAD_PLAY.read_text(encoding="utf-8"))
@@ -64,7 +76,9 @@ class RunnerReviewOrgsSource(unittest.TestCase):
         )
         pattern = keep["vars"]["_kept_keys"].strip()
         self.assertRegex("GITHUB_RUNNER_REVIEW_ORGS", pattern)
+        self.assertRegex("GITHUB_RUNNER_EXTRA_ORGS", pattern)
         self.assertIsNone(re.match(pattern, "GITHUB_RUNNER_REVIEW_ORGS_EXTRA"))
+        self.assertIsNone(re.match(pattern, "GITHUB_RUNNER_EXTRA_ORGS_EXTRA"))
 
     def test_register_owners_survive_the_load_play(self):
         raw = {"OPENBAO_GITHUB_RUNNER_REGISTER_OWNERS": " example-org, example-other ",

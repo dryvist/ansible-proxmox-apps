@@ -6,6 +6,8 @@
       - github_runner_group | length > 0
       - github_runner_review_orgs is sequence
       - github_runner_review_orgs is not string
+      - github_runner_extra_orgs is sequence
+      - github_runner_extra_orgs is not string
       # 0 is a supported state — a host being torn down (github_runner_plane_hosts)
       # or never enrolled. The role must still run at 0: that is what stops
       # and deregisters units a previous nonzero converge already started,
@@ -29,8 +31,8 @@
       is checked here rather than with `mandatory`, which cannot see it: an env
       lookup yields an empty string, not Undefined.
 
-- name: Validate and select the optional review runner pools
-  ansible.builtin.include_tasks: review_pools.yml
+- name: Validate and select the optional review and extra-org runner pools
+  ansible.builtin.include_tasks: pools.yml
 
 # Before anything is rendered or restarted: an over-committed host must fail
 # at the first tasks of the converge, not after units have been replaced.
@@ -166,8 +168,8 @@
 - name: Deploy the OpenBao Agent configuration
   ansible.builtin.template:
     src: >-
-      {{ 'openbao-agent-review-orgs.hcl.j2'
-         if (github_runner_active_review_orgs | length > 0)
+      {{ 'openbao-agent-pools.hcl.j2'
+         if (github_runner_active_pools | length > 0)
          else 'openbao-agent.hcl.j2' }}
     dest: "{{ github_runner_agent_config }}"
     owner: root
@@ -214,14 +216,14 @@
     search_regex: "ACCESS_TOKEN=."
     timeout: 60
 
-- name: Wait for the agent to render each review registration token
+- name: Wait for the agent to render each pool registration token
   ansible.builtin.wait_for:
     path: "{{ github_runner_token_env_file | dirname }}/access-token-{{ item.org }}.env"
     search_regex: "ACCESS_TOKEN=."
     timeout: 60
-  loop: "{{ github_runner_active_review_orgs }}"
+  loop: "{{ github_runner_active_pools }}"
   loop_control:
-    label: "{{ item.org }}"
+    label: "{{ item.kind }}-{{ item.org }}"
 
 # `docker run --env-file` refuses a missing file, and the agent writes this
 # one only once it can read the Splunk bucket. An empty placeholder keeps the
