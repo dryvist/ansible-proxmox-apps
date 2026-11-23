@@ -1,0 +1,118 @@
+---
+# Mirrors reconcile_runner_units.yml for the per-org pools of both kinds
+# (review and general extra-org), and like it runs on EVERY converge: an
+# organization removed from either pool list must have its units stopped and
+# deregistered, its unit template and token file removed, not left running
+# and registered forever.
+- name: Reset the pooled runner instance and template names
+  ansible.builtin.set_fact:
+    github_runner_pool_wanted_units: []
+    github_runner_pool_wanted_templates: []
+    github_runner_pool_wanted_token_files: []
+
+- name: Add desired pooled runner instances and templates
+  ansible.builtin.set_fact:
+    github_runner_pool_wanted_units: >-
+      {{ github_runner_pool_wanted_units
+         + (range(1, (github_runner_pool.replicas
+                      | default(2 if github_runner_pool.kind == 'review' else 1)) | int + 1)
+            | map('string')
+            | map('regex_replace', '^',
+                  'github-runner-' ~ github_runner_pool.kind ~ '-' ~ github_runner_pool.org ~ '@')
+            | map('regex_replace', '$', '.service')
+            | list) }}
+    github_runner_pool_wanted_templates: >-
+      {{ github_runner_pool_wanted_templates
+         + ['/etc/systemd/system/github-runner-'
+            ~ github_runner_pool.kind ~ '-' ~ github_runner_pool.org ~ '@.service'] }}
+    github_runner_pool_wanted_token_files: >-
+      {{ github_runner_pool_wanted_token_files
+         + [(github_runner_token_env_file | dirname)
+            ~ '/access-token-' ~ github_runner_pool.org ~ '.env'] }}
+  loop: "{{ github_runner_active_pools }}"
+  loop_control:
+    loop_var: github_runner_pool
+    label: "{{ github_runner_pool.kind }}-{{ github_runner_pool.org }}"
+
+- name: List every pool runner instance systemd currently knows about  # noqa command-instead-of-module
+  ansible.builtin.command:
+    # One glob per kind, never a shared `github-runner-*@*`: that would also
+    # match the heavy pool's units and stop them here.
+    cmd: >-
+      systemctl list-units --all --plain --no-legend
+      "github-runner-review-*@*.service" "github-runner-general-*@*.service"
+  changed_when: false
+  register: github_runner_installed_pool_units
+
+- name: Stop pool runners removed from the configured pools
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop: >-
+    {{ github_runner_installed_pool_units.stdout_lines | map('trim')
+       | map('regex_replace', ' .*$', '')
+       | difference(github_runner_pool_wanted_units) | list }}
+
+- name: Find deployed pool runner unit templates
+  ansible.builtin.find:
+    paths: /etc/systemd/system
+    patterns:
+      - "github-runner-review-*@.service"
+      - "github-runner-general-*@.service"
+    file_type: file
+  register: github_runner_pool_unit_files
+
+- name: Name pool runner unit templates removed from inventory
+  ansible.builtin.set_fact:
+    github_runner_stale_pool_unit_files: >-
+      {{ github_runner_pool_unit_files.files | map(attribute='path') | list
+         | difference(github_runner_pool_wanted_templates) }}
+
+- name: Remove pool runner unit templates no longer configured
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ github_runner_stale_pool_unit_files }}"
+
+- name: Reload systemd after removing pool runner unit templates
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: github_runner_stale_pool_unit_files | length > 0
+
+- name: Find deployed pool registration-token files
+  ansible.builtin.find:
+    paths: "{{ github_runner_token_env_file | dirname }}"
+    patterns: "access-token-*.env"
+    file_type: file
+  register: github_runner_pool_token_files
+
+- name: Name pool registration-token files removed from inventory
+  ansible.builtin.set_fact:
+    github_runner_stale_pool_token_files: >-
+      {{ github_runner_pool_token_files.files | map(attribute='path') | list
+         | difference(github_runner_pool_wanted_token_files) }}
+
+- name: Remove pool registration-token files no longer configured
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ github_runner_stale_pool_token_files }}"
+
+- name: Enable and start the configured pool runners
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop: "{{ github_runner_pool_wanted_units }}"
+  when: >-
+    not ansible_check_mode or
+    (github_runner_pool_unit_file_checks.results | default([])
+     | selectattr('stat.exists') | list | length)
+    == (github_runner_active_pools | length)
+
+- name: Include pool units in the runner health check
+  ansible.builtin.set_fact:
+    github_runner_all_wanted_units: >-
+      {{ github_runner_wanted_units + github_runner_pool_wanted_units }}
