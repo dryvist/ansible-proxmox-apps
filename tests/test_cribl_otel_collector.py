@@ -35,6 +35,7 @@ def context(enabled=False, namespace=""):
         "cribl_stream_hec_namespace": namespace,
         "cribl_stream_per_index_indexes": ["llm", "ai_usage", "otel_traces"],
         "cribl_stream_clickhouse_url": "",
+        "cribl_stream_unifi_insights_syslog_host": "",
         "cribl_stream_base_pipelines": yaml.safe_load(
             (ROLE / "defaults/main/00-install.yml").read_text())["cribl_stream_base_pipelines"],
     })
