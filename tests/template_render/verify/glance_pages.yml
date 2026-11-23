@@ -177,6 +177,33 @@
              | selectattr('title', 'defined')
              | selectattr('title', 'equalto', 'Mac memory') | list }}
 
+    # With no grafana-tagged container the tile is omitted and the page still renders.
+    - name: Render generated-services.yml without a metrics store
+      ansible.builtin.template:
+        src: "../../../roles/glance/templates/generated-services.yml.j2"
+        dest: "{{ render_tmp }}/glance-generated-services-no-metrics.yml"
+        mode: "0600"
+      vars:
+        tofu_data:
+          containers: {}
+          constants:
+            service_ports:
+              victoriametrics: 8428
+
+    - name: Read back the page rendered without a metrics store
+      ansible.builtin.slurp:
+        src: "{{ render_tmp }}/glance-generated-services-no-metrics.yml"
+      register: _glance_no_metrics_raw
+
+    - name: Assert the Mac memory tile is omitted without a grafana-tagged container
+      ansible.builtin.assert:
+        that:
+          - "'Mac memory' not in (_glance_no_metrics_raw.content | b64decode)"
+          - _glance_no_metrics_pages | length == 1
+        fail_msg: "the Mac memory tile rendered without a grafana-tagged container, or the page no longer parses"
+      vars:
+        _glance_no_metrics_pages: "{{ _glance_no_metrics_raw.content | b64decode | from_yaml }}"
+
     - name: Render generated-services.yml with the LLM profile widget enabled
       ansible.builtin.template:
         src: "../../../roles/glance/templates/generated-services.yml.j2"
