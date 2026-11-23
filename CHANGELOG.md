@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.80.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.79.1...v5.80.0) (2026-11-23)
+
+
+### Features
+
+* **zammad:** zammad-triage and zammad-clerk service users and tokens ([#3932](https://github.com/dryvist/ansible-proxmox-apps/issues/3932)) ([8853996](https://github.com/dryvist/ansible-proxmox-apps/commit/8853996fde4929ae7906bc884770d1efbabbf3d1))
+
 ## [5.79.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.79.0...v5.79.1) (2026-11-23)
 
 

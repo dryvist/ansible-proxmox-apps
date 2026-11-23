@@ -83,6 +83,8 @@ service_users = [
   [ntfy_email, 'ntfy', 'Alerting', ntfy_roles],
   [cribl_email, 'Cribl', 'Alerting', cribl_roles],
   [agent_write_email, 'Service', 'Agent Write', agent_role],
+  [triage_email, 'Zammad', 'Triage', agent_role],
+  [clerk_email, 'Zammad', 'Clerk', agent_role],
 ].map do |email, first, last, desired_roles|
   u = User.find_by(email: email.downcase)
   if u.nil?

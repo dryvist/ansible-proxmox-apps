@@ -34,7 +34,7 @@ def test_zammad_agent_write_identity_uses_its_generated_token_and_publisher():
     assert "['agent-write', agent_write_user, agent_write_api_token, agent_write_prefs]" in ruby
     assert "agent_write_prefs = { 'permission' => %w[ticket.agent] }" in ruby
     assert "agent_role_permission_names = %w[ticket.agent knowledge_base.editor]" in ruby
-    assert "([admin] + service_users).reject { |u| u.id == agent_write_user.id }.each do |u|" in ruby
+    assert "([admin] + service_users).reject { |u| scoped_user_ids.include?(u.id) }.each do |u|" in ruby
 
     role_tasks = _yaml("roles/zammad/tasks/main.yml")
     publish = _task(role_tasks, "Publish svc-agent-write Zammad connection to OpenBao")
