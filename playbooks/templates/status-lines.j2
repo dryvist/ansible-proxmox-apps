@@ -1,0 +1,70 @@
+{#-
+ status_line(row, value, history, dashboard_base=''): one status-post line,
+   <mark> <component> <label> <value><unit>[ <sparkline> <arrow>][ <base/d/uid|dashboard>]
+ row keys: component, label, unit (optional suffix), green and yellow (optional
+ thresholds), higher_is_better (default true), decimals (optional), sparkline,
+ dashboard (optional Grafana dashboard uid).
+ value is a number, a numeric string, or none when unmeasured. history is the
+ Prometheus query_range values ([time, "value"] pairs) or plain numbers,
+ oldest first.
+
+ The mark always comes from the unrounded value. Higher is better: green at or
+ above green, yellow at or above yellow, else red; lower is better mirrors it
+ with "at or below". No thresholds: green when measured. Unmeasured: red.
+ Without decimals, a whole value prints as a whole number, anything else with
+ one decimal; decimals rounds the printed number only. A sparkline scales from
+ its own minimum to its own maximum, except a row with unit '%', which scales
+ from 0 to 100.
+ When the row carries a dashboard uid and dashboard_base is non-empty, the
+ line ends with a mrkdwn link to <dashboard_base>/d/<dashboard>, after the
+ arrow when there is one; without either the line is unchanged.
+-#}
+{%- macro status_number(number, decimals) -%}
+{%- if decimals is not none -%}
+{{ number | round(decimals | int) | int if decimals | int == 0 else number | round(decimals | int) }}
+{%- elif number == number | round -%}
+{{ number | int }}
+{%- else -%}
+{{ number | round(1) }}
+{%- endif -%}
+{%- endmacro -%}
+
+{%- macro status_line(row, value, history, dashboard_base='') -%}
+{%- set name = ([row.component | default('')] + [row.label | default('')]) | reject('equalto', '') | join(' ') -%}
+{%- if value is none or value | string | length == 0 -%}
+🔴 {{ name }} unmeasured
+{%- else -%}
+{%- set number = value | float -%}
+{%- set decimals = row.decimals | default(none) -%}
+{%- if row.green is defined and row.yellow is defined -%}
+{%- if row.higher_is_better | default(true) -%}
+{%- set mark = '🟢' if number >= row.green | float else ('🟡' if number >= row.yellow | float else '🔴') -%}
+{%- else -%}
+{%- set mark = '🟢' if number <= row.green | float else ('🟡' if number <= row.yellow | float else '🔴') -%}
+{%- endif -%}
+{%- else -%}
+{%- set mark = '🟢' -%}
+{%- endif -%}
+{{ mark }} {{ name }} {{ status_number(number, decimals) }}{{ row.unit | default('') }}
+{%- if row.sparkline | default(false) and history | length > 1 -%}
+{%- set ns = namespace(points=[], bars='') -%}
+{%- for point in history[-12:] -%}
+{%- set ns.points = ns.points + [(point[1] if point is sequence and point is not string else point) | float] -%}
+{%- endfor -%}
+{#- A percent row draws against 0 to 100, so a lane near 0% stays flat instead of stretching its own noise. -#}
+{%- set percent = row.unit | default('') == '%' -%}
+{%- set low = 0 if percent else ns.points | min -%}
+{%- set high = ([100] + ns.points) | max if percent else ns.points | max -%}
+{%- for point in ns.points -%}
+{%- set ns.bars = ns.bars ~ '▁▂▃▄▅▆▇█'[0 if high == low else ((point - low) / (high - low) * 7) | round | int] -%}
+{%- endfor -%}
+{#- With decimals, the arrow compares the printed numbers, so a change that rounds away prints →. -#}
+{%- set change = (ns.points[-1] | round(decimals | int)) - (ns.points[-2] | round(decimals | int))
+    if decimals is not none else ns.points[-1] - ns.points[-2] -%}
+{{ ' ' ~ ns.bars ~ ' ' }}{% if change > 0 %}↑{{ status_number(change, decimals) }}{% elif change < 0 %}↓{{ status_number(-change, decimals) }}{% else %}→{% endif %}
+{%- endif -%}
+{%- endif -%}
+{%- if dashboard_base and row.dashboard | default('') -%}
+{{ ' <' ~ dashboard_base ~ '/d/' ~ row.dashboard ~ '|dashboard>' }}
+{%- endif -%}
+{%- endmacro -%}

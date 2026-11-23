@@ -40,9 +40,12 @@
   become_user: "{{ nautobot_user }}"
   no_log: true
 
+# Check mode skips the bootstrap above, so there is no token to extract or
+# publish; the report below names what a real run would publish instead.
 - name: Extract the read-only token from the bootstrap output
   ansible.builtin.set_fact:
     nautobot_mcp_token: "{{ (nautobot_mcp_token_run.stdout | regex_search('MCP_TOKEN=(\\S+)', '\\1')) | first }}"
+  when: not ansible_check_mode
   no_log: true
 
 - name: Read current OpenBao secret at {{ nautobot_mcp_token_openbao_path }}
@@ -54,6 +57,8 @@
     validate_certs: false
     status_code: [200, 404]
   register: nautobot_mcp_bao_current
+  # A read, safe in check mode; it lets the check report the missing keys.
+  check_mode: false
   delegate_to: localhost
   connection: local
   become: false
@@ -65,6 +70,14 @@
   ansible.builtin.set_fact:
     nautobot_mcp_bao_data: "{{ (nautobot_mcp_bao_current.json | default({}, true)).get('data', {}).get('data', {}) }}"
   no_log: true
+
+- name: Report the MCP connection keys a real run would publish
+  ansible.builtin.debug:
+    msg: >-
+      {{ nautobot_mcp_token_openbao_path }} lacks:
+      {{ [nautobot_mcp_token_openbao_url_key, nautobot_mcp_token_openbao_token_key]
+         | reject('in', nautobot_mcp_bao_data.keys() | list) | list }}
+  when: ansible_check_mode
 
 # KV v2 replaces the whole secret, so merge the read-only URL + token over the
 # current data to preserve any sibling fields. Guarded on an actual delta so
@@ -88,7 +101,9 @@
   become: false
   vars:
     ansible_become: false
-  when: >-
-    nautobot_mcp_bao_data.get(nautobot_mcp_token_openbao_token_key) != nautobot_mcp_token
-    or nautobot_mcp_bao_data.get(nautobot_mcp_token_openbao_url_key) != nautobot_mcp_url
+  when:
+    - not ansible_check_mode
+    - >-
+      nautobot_mcp_bao_data.get(nautobot_mcp_token_openbao_token_key) != nautobot_mcp_token
+      or nautobot_mcp_bao_data.get(nautobot_mcp_token_openbao_url_key) != nautobot_mcp_url
   no_log: true

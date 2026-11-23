@@ -47,8 +47,9 @@ postgres_archive_timeout: 60
 # The repo path is the in-bucket prefix, so objects land at
 # s3://<bucket>/postgres/<stanza>/... — one prefix per cluster.
 #
-# The bucket name is identical on RustFS and Backblaze B2 — B2's namespace is
-# global, so one globally-unique name satisfies the 1:1 RustFS<->B2 parity rule.
+# repo1 and repo2 use separate buckets. repo1's name is the BUCKET field
+# of the postgres_backup_s3 credential record; repo2's comes from the
+# POSTGRES_BACKUP_REPO2_S3_BUCKET environment key.
 #
 # Patroni mode has no fixed "primary" host — leadership moves — so the stanza
 # there is postgres_ha_scope (the cluster name, 03-patroni.yml), keyed to the
@@ -60,13 +61,15 @@ postgres_pgbackrest_stanza: >-
   {{ postgres_ha_scope
      if (postgres_ha_manager == 'patroni')
      else (postgres_primary_host if (postgres_primary_host | length > 0) else inventory_hostname) }}
-postgres_backup_s3_bucket: dryvist-homelab-backups
+postgres_backup_s3_bucket: "{{ bao_postgres_backup_s3_secrets.BUCKET | default('', true) }}"
 postgres_pgbackrest_repo_path: "/postgres/{{ postgres_pgbackrest_stanza }}"
 
 # S3-compatible endpoint + credentials from the postgres_backup_s3 OpenBao
-# domain. Empty values keep pgBackRest inert until the optional domain is
-# readable. RustFS ignores the region but the AWS SDK pgBackRest embeds
-# requires a non-empty value, and they need path-style URIs (bucket in path).
+# domain. Enabled hosts assert the record is readable and all five required
+# fields are non-empty strings before PostgreSQL configuration changes. Empty
+# defaults support hosts where pgBackRest is disabled. RustFS ignores the
+# region but the AWS SDK pgBackRest embeds requires a non-empty value, and they
+# need path-style URIs (bucket in path).
 postgres_backup_s3_endpoint: "{{ bao_postgres_backup_s3_secrets.AWS_ENDPOINT_URL | default('', true) }}"
 postgres_backup_s3_region: "{{ bao_postgres_backup_s3_secrets.AWS_REGION | default('us-east-1', true) }}"
 postgres_backup_s3_uri_style: path
@@ -74,8 +77,8 @@ postgres_backup_s3_access_key_id: "{{ bao_postgres_backup_s3_secrets.AWS_ACCESS_
 postgres_backup_s3_secret_access_key: "{{ bao_postgres_backup_s3_secrets.AWS_SECRET_ACCESS_KEY | default('', true) }}"
 
 # Offsite repo (repo2). pgBackRest writes every backup and WAL segment to both
-# repos itself, which is what makes the 1:1 parity rule structural instead of
-# aspirational: there is no out-of-band mirror to drift, truncate, or silently
+# repos itself, each into its own bucket, so both repos hold the same backups
+# by construction: there is no out-of-band mirror to drift, truncate, or silently
 # copy a subset (#1027). Restores read it with `--repo=2`, and `check` validates
 # archiving against every configured repo.
 #
@@ -103,7 +106,8 @@ postgres_backup_s3_secret_access_key: "{{ bao_postgres_backup_s3_secrets.AWS_SEC
 # tasks/pgbackrest.yml is satisfiable the first time it runs.
 postgres_pgbackrest_repo2_enabled: false
 postgres_pgbackrest_repo2_path: "{{ postgres_pgbackrest_repo_path }}"
-postgres_backup_repo2_s3_bucket: "{{ postgres_backup_s3_bucket }}"
+postgres_backup_repo2_s3_bucket: >-
+  {{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_BUCKET') | default('example-pgbackrest-repo2', true) }}
 postgres_backup_repo2_s3_endpoint: "{{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_ENDPOINT') | default('', true) }}"
 # Backblaze's S3 endpoint embeds its region (s3.<region>.backblazeb2.com), so
 # derive it rather than making the operator restate it in a second variable.

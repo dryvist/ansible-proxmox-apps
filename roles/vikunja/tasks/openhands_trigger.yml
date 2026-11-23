@@ -5,10 +5,10 @@
 # published separately, by tasks/mcp_tokens.yml from the row in
 # vikunja_openhands_token_users.
 #
-# The trigger project and the `openhands` trigger label are created by hand
-# under the operator's account — this role never creates either. Sharing
-# reuses operator_access_one.yml verbatim (the shared reconciler), acting as
-# the operator because only a project's owner or admin may share it.
+# The trigger project and the `openhands` trigger label are created by hand —
+# this role never creates either. Sharing reuses operator_access_one.yml
+# verbatim (the shared reconciler), acting as the automation account that owns
+# the project, because only a project's owner or admin may share it.
 #
 # ansible.builtin.uri has no check-mode support, so every request below is
 # skipped in check mode; the notes say so instead of half-evaluating the
@@ -53,14 +53,22 @@
   when: vikunja_openhands_project_id | string | length == 0
   no_log: true
 
-# The operator's daily account owns the hand-created trigger project, so it is
-# the only sharing owner here — deliberately not
-# vikunja_operator_share_owner_usernames, whose members own the automation
-# projects instead. operator_access_one.yml reads the owner's owned projects
-# and reconciles the share only on the one allowlisted id.
+# Loaded here as well, so the share works when operator_access is skipped.
+- name: Build the owner credential map for the trigger share
+  ansible.builtin.include_tasks: project_share_owner_password_map.yml
+  when:
+    - not ansible_check_mode
+    - vikunja_openhands_project_id | string | length > 0
+  no_log: true
+
+# The trigger project is owned by an automation account, so the share is driven
+# from each automation owner, as operator_access.yml does.
+# operator_access_one.yml reads the owner's owned projects and reconciles the
+# share only on the one allowlisted id, taking the owner's password from
+# vikunja_project_share_owner_password_map.
 - name: Share the OpenHands trigger project with the openhands bot
   ansible.builtin.include_tasks: operator_access_one.yml
-  loop: "{{ [vikunja_operator_username] }}"
+  loop: "{{ vikunja_operator_share_owner_usernames }}"
   loop_control:
     loop_var: vikunja_share_owner
     label: "{{ vikunja_share_owner }}"
@@ -68,14 +76,13 @@
     vikunja_share_grantee_username: openhands
     vikunja_share_permission: "{{ vikunja_openhands_permission }}"
     vikunja_share_project_ids: "{{ [vikunja_openhands_project_id] }}"
-    # The operator is not in the automation owner password map.
-    vikunja_share_owner_password: "{{ vikunja_operator_password }}"
   when:
     - not ansible_check_mode
     - vikunja_openhands_project_id | string | length > 0
     - vikunja_openhands_user.get('password', '') | length > 0
-    - vikunja_operator_username | length > 0
-    - vikunja_operator_password | default('', true) | length > 0
+    - >-
+      vikunja_project_share_owner_password_map.get(vikunja_share_owner, '')
+      | default('', true) | length > 0
   no_log: true
 
 - name: Log in to Vikunja as the openhands bot

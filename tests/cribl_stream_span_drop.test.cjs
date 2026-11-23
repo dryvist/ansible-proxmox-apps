@@ -32,9 +32,11 @@ function compileFilter(template, emptyPrefixes = false) {
     .replace(/^ *filter: '/, '')
     .replace(/'$/, '')
     .replace('{{ cribl_stream_otel_drop_span_names | to_json }}', () => JSON.stringify(dropNames))
-    .replace('{{ cribl_stream_otel_drop_span_prefixes | to_json }}', () =>
-      JSON.stringify(emptyPrefixes ? [] : dropPrefixes));
+    .replace('{% for _prefix in cribl_stream_otel_drop_span_prefixes %} || String(name).startsWith({{ _prefix | to_json }}){% endfor %}',
+      () => (emptyPrefixes ? [] : dropPrefixes).map((p) => ` || String(name).startsWith(${JSON.stringify(p)})`).join(''));
   assert.ok(!rendered.includes('{{'), 'default values resolve every template expression');
+  // Cribl refuses any declaration in an expression, arrow-function parameters included.
+  assert.ok(!/=>|\bfunction\b|\b(?:let|const|var)\s/.test(rendered), 'the filter declares nothing');
   return rendered;
 }
 

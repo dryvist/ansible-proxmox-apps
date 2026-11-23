@@ -162,6 +162,7 @@ def test_vikunja_clerk_tokens_use_the_shared_idempotent_publisher():
     assert defaults["vikunja_token_openbao_path"] == "ai/mcp/vikunja"
     assert defaults["vikunja_clerk_task_permissions"] == {
         "labels": ["read_all"],
+        "projects": ["read_all"],
         "tasks": ["create", "read_all", "read_one", "update"],
         "tasks_comments": ["create"],
         "tasks_labels": ["create"],
@@ -281,6 +282,23 @@ def test_vikunja_clerk_scope_adds_but_never_deletes():
     assert not any("delete" in actions for actions in permissions.values())
 
 
+def test_vikunja_write_tier_token_keeps_every_action_but_delete():
+    defaults = _vikunja_defaults()
+    write_row = next(row for row in defaults["vikunja_agent_tiers"] if row["id"] == "vikunja-write")
+    assert write_row["permissions"] == "{{ vikunja_agent_write_permissions }}"
+    rw = {
+        "tasks": ["read_all", "read_one", "create", "update", "delete", "delete_bulk"],
+        "tasks_comments": ["create", "read_all", "delete"],
+        "tasks_assignees": ["delete"],
+    }
+    permissions = _render(defaults["vikunja_agent_write_permissions"], {"vikunja_rw_permissions": rw})
+    assert permissions == {
+        "tasks": ["read_all", "read_one", "create", "update"],
+        "tasks_comments": ["create", "read_all"],
+    }
+    assert _render(defaults["vikunja_agent_write_permissions"], {}) == {}
+
+
 def test_vikunja_token_set_facts_never_read_a_key_they_set():
     # set_fact renders every key before it sets any: a sibling reference is
     # undefined for the first identity and the previous identity's value after.
@@ -289,3 +307,38 @@ def test_vikunja_token_set_facts_never_read_a_key_they_set():
         for key, expression in facts.items():
             siblings = [other for other in facts if other != key and re.search(rf"\b{other}\b", str(expression))]
             assert not siblings, f"{task['name']}: {key} reads {siblings}"
+
+
+def test_inventory_enables_the_vikunja_and_zammad_agent_token_publishers():
+    assert _yaml("inventory/group_vars/vikunja_group.yml")["vikunja_token_publish_openbao"] is True
+    zammad = _yaml("inventory/group_vars/zammad_group.yml")
+    assert zammad["zammad_agent_token_publish_openbao"] is True
+    assert "zammad_token_publish_openbao" not in zammad
+
+
+def test_zammad_agent_token_gate_covers_only_the_agent_tier_publish():
+    defaults = _yaml("roles/zammad/defaults/main/02-smtp-signing-health.yml")
+    assert defaults["zammad_token_publish_openbao"] is False
+    assert defaults["zammad_agent_token_publish_openbao"] == "{{ zammad_token_publish_openbao }}"
+    tasks = _yaml("roles/zammad/tasks/main.yml")
+    gates = {
+        "Publish Zammad MCP connection to OpenBao": "zammad_token_publish_openbao | bool",
+        "Publish svc-splunk Zammad connection to OpenBao": "zammad_token_publish_openbao | bool",
+        "Publish svc-agent-write Zammad connection to OpenBao": "zammad_agent_token_publish_openbao | bool",
+    }
+    for name, when in gates.items():
+        assert _task(tasks, name)["when"] == when
+
+
+def test_vikunja_token_tasks_run_after_user_creation_and_before_share_reconciles():
+    tasks = _yaml("roles/vikunja/tasks/main.yml")
+
+    def position(name):
+        return tasks.index(_task(tasks, name))
+
+    tokens = position("Validate MCP API token scopes and publish when enabled")
+    assert position("Create Vikunja service users (idempotent — skipped if already present)") < tokens
+    assert position("Create Vikunja app-agent users (idempotent — skipped if already present)") < tokens
+    assert tokens < position("Note MCP token minting is deferred")
+    assert tokens < position("Reconcile app-agent Vikunja project access")
+    assert tokens < position("Grant the operator access to the automation-owned projects")

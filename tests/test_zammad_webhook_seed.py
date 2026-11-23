@@ -20,7 +20,7 @@ import pytest
 import yaml
 from ansible.errors import AnsibleError
 
-from app_agent_helpers import ROOT, _render, _task, _yaml
+from app_agent_helpers import ROOT, _render, _task, _task_tree, _yaml
 
 BOOTSTRAP_TASKS = "roles/zammad/tasks/main/nginx_and_bootstrap.yml"
 FRAGMENT = "roles/zammad/files/zammad_bootstrap/55-webhooks-and-triggers.rb"
@@ -228,7 +228,7 @@ def test_bootstrap_fragments_are_valid_ruby():
 
 def test_stale_staged_fragments_are_removed():
     tasks = _bootstrap_tasks()
-    task_names = [task.get("name") for task in tasks]
+    task_names = [task.get("name") for task in _task_tree(tasks)]
 
     shipped_task = _task(tasks, "Record the bootstrap fragments the role ships")
     shipped_expression = shipped_task["ansible.builtin.set_fact"]["zammad_bootstrap_shipped_fragments"]

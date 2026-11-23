@@ -40,6 +40,18 @@
 # Runs before anything touches Docker: the migration stops and restarts the
 # daemon, and the converge-time assertion must fail before runners are started
 # onto a boot disk that is about to fill.
+# Play tags reach these tasks too, so `never` alone would not keep them out of
+# a `--tags github_runner` converge; the run-tags test does.
+- name: Reclaim the Docker data disk when the run asks for runner_prune_now
+  ansible.builtin.import_tasks: prune_now.yml
+  when: "'runner_prune_now' in ansible_run_tags"
+  tags: [never, runner_prune_now]
+
+- name: Remove the containers the run names when it asks for runner_remove_containers
+  ansible.builtin.import_tasks: remove_containers.yml
+  when: "'runner_remove_containers' in ansible_run_tags"
+  tags: [never, runner_remove_containers]
+
 - name: Place /var/lib/docker on the dedicated data disk
   ansible.builtin.include_tasks: data_disk.yml
 
@@ -335,5 +347,21 @@
   no_log: true
   notify: Restart github runners
 
+- name: Deploy the runner host mounts file
+  ansible.builtin.template:
+    src: runner-mounts.env.j2
+    dest: "{{ github_runner_env_file }}-{{ github_runner_slot }}.mounts"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ range(1, github_runner_replicas | int + 1) | list }}"
+  loop_control:
+    loop_var: github_runner_slot
+  notify: Restart github runners
+
 - name: Reconcile the runner systemd units
   ansible.builtin.include_tasks: reconcile_service_units.yml
+
+- name: Audit the runner host's containers
+  ansible.builtin.import_tasks: container_audit.yml
+  tags: [runner_container_audit]

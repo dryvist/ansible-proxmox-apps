@@ -1,0 +1,79 @@
+---
+# One declared project webhook, acting as its owner via a password JWT (the
+# same login operator_access_one.yml uses). Matched by target_url.
+
+- name: "Log in to Vikunja as {{ vikunja_task_webhook.owner }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/login"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ vikunja_task_webhook.owner }}"
+      password: "{{ vikunja_project_share_owner_password_map.get(vikunja_task_webhook.owner, '') }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_task_webhook_login
+  check_mode: false
+  no_log: true
+
+- name: "Read the webhooks on project {{ vikunja_task_webhook.project_id }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_task_webhook.project_id }}/webhooks"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_task_webhook_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_task_webhook_current
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: "Create the absent webhook on project {{ vikunja_task_webhook.project_id }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_task_webhook.project_id }}/webhooks"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ vikunja_task_webhook_login.json.token }}"
+    body_format: json
+    body:
+      target_url: "{{ vikunja_task_webhook.target_url }}"
+      events: "{{ vikunja_task_webhook.events }}"
+      secret: "{{ vikunja_task_webhook_secret }}"
+    status_code: [200, 201]
+    timeout: "{{ vikunja_api_timeout }}"
+  when: >-
+    vikunja_task_webhook.target_url not in
+    (vikunja_task_webhook_current.json | default([], true) | map(attribute='target_url') | list)
+  changed_when: true
+  no_log: true
+
+# Readback: the API never returns the secret, so the proof is the target and
+# its events. Skipped in check mode only when the create above was skipped.
+- name: "Read back the webhooks on project {{ vikunja_task_webhook.project_id }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_task_webhook.project_id }}/webhooks"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_task_webhook_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_task_webhook_readback
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: "Assert the declared webhook is on project {{ vikunja_task_webhook.project_id }}"
+  ansible.builtin.assert:
+    that:
+      - _matches | length == 1
+      - (_matches | first).events | sort == vikunja_task_webhook.events | sort
+    fail_msg: >-
+      Project {{ vikunja_task_webhook.project_id }} has {{ _matches | length }} webhook(s) for the
+      declared target; events must equal {{ vikunja_task_webhook.events | sort }}.
+    quiet: true
+  vars:
+    _matches: >-
+      {{ vikunja_task_webhook_readback.json | default([], true)
+         | selectattr('target_url', 'equalto', vikunja_task_webhook.target_url) | list }}
+  when: not ansible_check_mode

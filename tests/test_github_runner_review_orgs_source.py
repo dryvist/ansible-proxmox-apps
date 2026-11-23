@@ -72,6 +72,12 @@ class RunnerReviewOrgsSource(unittest.TestCase):
         self.assertEqual(_owners_after_load(raw), ["example-org", "example-other"])
         self.assertIsNone(re.match(_kept_keys(), "OPENBAO_GITHUB_RUNNER_REGISTER_OWNERS_EXTRA"))
 
+    def test_pr_reconcile_inputs_survive_the_load_play(self):
+        for key in ("OPENBAO_GITHUB_PR_RECONCILE_REPOSITORY", "OPENBAO_GITHUB_PR_RECONCILE_OWNERS",
+                    "OPENBAO_GITHUB_PR_RECONCILE_CALLER_OWNERS"):
+            self.assertRegex(key, _kept_keys())
+            self.assertIsNone(re.match(_kept_keys(), key + "_EXTRA"))
+
     def test_unset_register_owners_gives_an_empty_list(self):
         self.assertEqual(_owners_after_load({}), [])
         self.assertEqual(_owners_after_load({"OPENBAO_GITHUB_RUNNER_REGISTER_OWNERS": ""}), [])

@@ -39,8 +39,6 @@
     github_runner_inventory_mount: /opt/e2e/tofu_inventory.json
     github_runner_apt_proxy_url: ""
     github_runner_bao_addr: "https://openbao.example.invalid"
-    _heavy_diag_mount_flag: >-
-      --volume\s+{{ github_runner_diag_host_dir }}/heavy-%i:/actions-runner/_diag
 
   tasks:
     - name: Read fixture identity values from the render directory
@@ -122,11 +120,13 @@
           - _heavy_unit | select('search', '(^|\\s)--name github-runner-heavy-%i(\\s|$)') | length > 0
           - _heavy_unit | select('search', '--env-file\\s+/etc/github-runner/runner\\.env-heavy-%i(\\s|$)') | length > 0
           - _heavy_unit | select('search', 'RUNNER_NAME_PREFIX=heavy-%i') | length > 0
-          - _heavy_unit | select('search', _heavy_diag_mount_flag) | length > 0
+          - >-
+            _heavy_unit | select('search', '^EnvironmentFile=/etc/github-runner/runner\\.env-heavy-%i\\.mounts$')
+            | length > 0
         fail_msg: >-
           The heavy pool's unit must run one runner with the pool's own
-          limits, container name, env file, runner name prefix and _diag
-          directory, all distinct from the standard pool's.
+          limits, container name, env file, runner name prefix and host
+          mounts file, all distinct from the standard pool's.
 
     - name: Assert the heavy labels replace the pool label
       ansible.builtin.assert:
@@ -191,7 +191,8 @@
         that:
           - _overridden_unit | select('search', '(^|\\s)--cpus 0\\.5(\\s|$)') | length > 0
           - _overridden_unit | select('search', '(^|\\s)--memory 2g(\\s|$)') | length > 0
-          - "'LABELS=self-hosted,Linux,X64,review,gpu' in _overridden_env"
+          - "'LABELS=Linux,X64,review,gpu' in _overridden_env"
+          - "'NO_DEFAULT_LABELS=true' in _overridden_env"
         fail_msg: >-
           A pool that sets cpu_limit, memory_limit and labels must render
           those values, and its extra labels must be appended after the

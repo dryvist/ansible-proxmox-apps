@@ -159,7 +159,7 @@ def test_the_template_names_each_series_by_accelerator_label_and_sorts_by_lane()
     assert "s.metric.get('accelerator')" in text
     assert "'unknown lane'" in text
     assert "sort(attribute='lane')" in text
-    assert "r.busy | round | int" in text
+    assert "'decimals': 0" in text  # whole percent through status_line
     assert "busy, 4 h:" in text
 
 
@@ -191,7 +191,7 @@ def test_no_estate_specific_values_are_baked_in():
 def _render(context):
     # ansible's template lookup environment: trim_blocks on, the jinja defaults
     # for everything else this template uses.
-    environment = jinja2.Environment(trim_blocks=True)
+    environment = jinja2.Environment(trim_blocks=True, loader=jinja2.FileSystemLoader(str(TEMPLATE.parent)))
     return environment.from_string(TEMPLATE.read_text(encoding="utf-8")).render(context)
 
 
@@ -212,7 +212,7 @@ def test_the_message_is_all_green_when_every_figure_is_on_target():
         f"{GREEN} open pull requests: 12\n"
         f"{GREEN} merged in the last hour: 3\n"
         f"{GREEN} lane-a busy, 4 h: 62%\n"
-        f"{GREEN} jobs: 5"
+        f"{GREEN} Hermes cron runs, last hour: 5"
     )
 
 
@@ -236,7 +236,7 @@ def test_the_accelerator_lines_name_each_lane_in_lane_order_with_whole_percents(
         f"{GREEN} merged in the last hour: 3\n"
         f"{RED} lane-a busy, 4 h: 16%\n"
         f"{GREEN} lane-b busy, 4 h: 83%\n"
-        f"{GREEN} jobs: 5"
+        f"{GREEN} Hermes cron runs, last hour: 5"
     )
     busy_lines = [line for line in text.splitlines() if "busy, 4 h:" in line]
     assert len(busy_lines) == 2
@@ -246,6 +246,18 @@ def test_the_accelerator_lines_name_each_lane_in_lane_order_with_whole_percents(
         whole_percent = line.split("busy, 4 h: ")[1]
         assert whole_percent == f"{round(value)}%"  # whole number, then %
         assert "." not in line  # no fraction anywhere on the line
+
+
+def test_a_busy_lane_just_under_fifty_stays_yellow_and_prints_fifty():
+    text = _render({
+        "pr_status_generated_utc": "2026-01-01 12:00 UTC",
+        "pr_status_open_total": 12,
+        "pr_status_merged_total": 3,
+        "pr_status_busy_series": [{"metric": {"accelerator": "lane-a"}, "value": [1767000000, "49.6"]}],
+        "pr_status_jobs_measured": True,
+        "pr_status_jobs_text": "5",
+    })
+    assert f"{YELLOW} lane-a busy, 4 h: 50%" in text.splitlines()
 
 
 def test_the_message_turns_yellow_at_thirty_five_open_pull_requests():
@@ -264,7 +276,7 @@ def test_the_message_turns_yellow_at_thirty_five_open_pull_requests():
         f"{YELLOW} open pull requests: 35\n"
         f"{GREEN} merged in the last hour: 1\n"
         f"{YELLOW} unknown lane busy, 4 h: 30%\n"  # series carries no accelerator label
-        f"{GREEN} jobs: 7"
+        f"{GREEN} Hermes cron runs, last hour: 7"
     )
 
 
@@ -282,5 +294,14 @@ def test_the_message_reports_unmeasured_when_the_metrics_query_fails():
         f"{GREEN} open pull requests: 12\n"
         f"{GREEN} merged in the last hour: 0\n"
         f"{RED} busy percent: unmeasured\n"
-        f"{RED} jobs: unmeasured"
+        f"{RED} Hermes cron runs, last hour: unmeasured"
     )
+
+
+def test_open_pull_requests_are_green_at_30_and_yellow_from_31():
+    def mark(total):
+        text = _render({"pr_status_generated_utc": "t", "pr_status_open_total": total, "pr_status_merged_total": 0,
+                        "pr_status_busy_series": [], "pr_status_jobs_measured": False})
+        return next(line for line in text.splitlines() if "open pull requests:" in line)[0]
+
+    assert [mark(total) for total in (30, 31, 40, 41)] == [GREEN, YELLOW, YELLOW, RED]

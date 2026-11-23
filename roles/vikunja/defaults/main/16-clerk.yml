@@ -3,9 +3,10 @@
 # direct API and HTTP gateway use. Stable titles let the shared task reuse a
 # matching token and replace it only if its permission scope has drifted.
 # No delete action in any group: the clerk adds labels, relations and comments
-# and never removes anything.
+# and never removes anything. Projects read lets it resolve a project by name.
 vikunja_clerk_task_permissions:
   labels: [read_all]
+  projects: [read_all]
   tasks: [create, read_all, read_one, update]
   tasks_comments: [create]
   tasks_labels: [create]
@@ -20,3 +21,18 @@ vikunja_clerk_token_users:
     title: mcp-vikunja-clerk-http
     permissions: "{{ vikunja_clerk_task_permissions }}"
     kv_field: VIKUNJA_MCP_HTTP_TOKEN_VIKUNJA_CLERK
+
+# Share-only tier: exact direct shares for the clerk's service user on the same allowed
+# list the Dify clerk enforces. No token or leaf; the tokens above cover the clerk.
+# An empty list leaves the clerk's shares untouched.
+vikunja_clerk_share_password: >-
+  {{ (vikunja_service_users | selectattr('username', 'equalto', 'svc-mcp-clerk')
+      | first | default({})).password | default('', true) }}
+vikunja_share_only_tiers:
+  - id: vikunja-clerk
+    username: svc-mcp-clerk
+    password_field: vikunja_clerk_share_password
+    share_permission: 1
+    project_allowlist: >-
+      {{ lookup('env', 'DIFY_VIKUNJA_CLERK_ALLOWED_PROJECTS') | default('[]', true)
+         | from_json | map('int') | list }}
