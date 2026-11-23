@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.82.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.81.0...v5.82.0) (2026-11-23)
+
+
+### Features
+
+* **github_runner:** general pools for extra organizations ([#3995](https://github.com/dryvist/ansible-proxmox-apps/issues/3995)) ([2eb868f](https://github.com/dryvist/ansible-proxmox-apps/commit/2eb868f799cfadce80ea485915081d72cdbb0613))
+
+
+### Bug Fixes
+
+* **vikunja:** read share for the read-only service account on every owned project ([#3994](https://github.com/dryvist/ansible-proxmox-apps/issues/3994)) ([fe83991](https://github.com/dryvist/ansible-proxmox-apps/commit/fe83991af6acaa42a5889ccacda66b284b832a1d))
+
 ## [5.81.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.80.0...v5.81.0) (2026-11-23)
 
 
