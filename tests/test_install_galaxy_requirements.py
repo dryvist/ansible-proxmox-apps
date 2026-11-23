@@ -88,6 +88,11 @@ class GitPinDecisionTest(unittest.TestCase):
         self.assertFalse(self._current({"name": URL_A}))
         self.assertFalse(self._current({"name": URL_A, "version": ""}))
 
+    def test_branch_ref_never_skips(self):
+        self._write_pins({URL_A: _entry("develop", FQCN_A)})
+        _install_dir(self.root, FQCN_A).mkdir(parents=True)
+        self.assertFalse(self._current({"name": URL_A, "version": "develop"}))
+
     def test_corrupt_pins_file_is_treated_as_cold(self):
         self.pins_path.write_text("{not json", encoding="utf-8")
         self.assertEqual(installer._load_git_pins(self.pins_path), {})
