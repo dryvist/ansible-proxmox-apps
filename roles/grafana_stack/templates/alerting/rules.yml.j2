@@ -151,7 +151,10 @@ groups:
         annotations:
           summary: "WAN ICMP latency to {{ '{{' }} $labels.instance {{ '}}' }} averaged above {{ grafana_stack_alert_wan_latency_seconds }}s over 5m."
 
+{% set _disk_selector = 'job=~"pve_node_exporter|guest_node_exporter", fstype!~"tmpfs|overlay", mountpoint!~"' ~ grafana_stack_alert_disk_exclude_mountpoints ~ '"' %}
+{# Bands are exclusive: a disk fires only its highest level, not all three at once. #}
 {% for disk in grafana_stack_alert_disk_levels %}
+{% set _next = grafana_stack_alert_disk_levels[loop.index] if not loop.last else none %}
       - uid: {{ disk.uid }}
         title: {{ disk.title }}
         condition: B
@@ -161,8 +164,8 @@ groups:
             datasourceUid: prometheus
             model:
               expr: >-
-                100 * (1 - node_filesystem_avail_bytes{job=~"pve_node_exporter|guest_node_exporter", fstype!~"tmpfs|overlay"}
-                / node_filesystem_size_bytes{job=~"pve_node_exporter|guest_node_exporter", fstype!~"tmpfs|overlay"})
+                100 * (1 - node_filesystem_avail_bytes{{ '{' }}{{ _disk_selector }}{{ '}' }}
+                / node_filesystem_size_bytes{{ '{' }}{{ _disk_selector }}{{ '}' }})
               instant: true
               refId: A
           - refId: B
@@ -172,7 +175,11 @@ groups:
               type: threshold
               expression: A
               conditions:
+{% if _next %}
+                - evaluator: {type: within_range, params: [{{ disk.pct }}, {{ _next.pct }}]}
+{% else %}
                 - evaluator: {type: gt, params: [{{ disk.pct }}]}
+{% endif %}
               refId: B
         for: 15m
         noDataState: OK
