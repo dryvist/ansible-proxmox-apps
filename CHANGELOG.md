@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.79.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.78.0...v5.79.0) (2026-11-23)
+
+
+### Features
+
+* track ansible-secrets-management at its develop branch ([#3982](https://github.com/dryvist/ansible-proxmox-apps/issues/3982)) ([59b71e2](https://github.com/dryvist/ansible-proxmox-apps/commit/59b71e2c89f8ab79addee88142f79cc2a94832cc))
+
 ## [5.78.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.77.1...v5.78.0) (2026-11-23)
 
 
