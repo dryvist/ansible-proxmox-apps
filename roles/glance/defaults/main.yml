@@ -78,3 +78,41 @@ glance_llm_profile_bearer_token: >-
 glance_llm_profile_router_base_url: >-
   {{ (dashboard_catalog_services | selectattr('name', 'equalto', 'llm')
       | map(attribute='probe_url') | first | default('', true)) }}
+
+# Mac memory tile: RAM percent, memory pressure and loaded local models per Mac,
+# read from the metrics store the wall also reads. That store is the VictoriaMetrics
+# instance co-located with Grafana: the container carrying the `grafana` tag. It is
+# addressed by its hostname under the ingress zone, and its port comes from the
+# published constants.
+glance_mac_memory_enabled: true
+glance_metrics_port: >-
+  {{ tofu_data.constants.service_ports.victoriametrics
+     | mandatory('tofu_data.constants.service_ports.victoriametrics missing — regenerate the published inventory') }}
+glance_metrics_host: >-
+  {{ (tofu_data['containers'] | default({}) | dict2items
+      | selectattr('value.tags', 'defined')
+      | selectattr('value.tags', 'contains', 'grafana')
+      | map(attribute='value.hostname', default='') | reject('equalto', '')
+      | list | first) | default('', true) }}
+glance_metrics_base_url: "http://{{ glance_metrics_host }}.{{ ingress_domain }}:{{ glance_metrics_port }}"
+# The tile is omitted, and the converge logs a skip, when no grafana-tagged container exists.
+glance_mac_memory_active: "{{ (glance_mac_memory_enabled | bool) and (glance_metrics_host | length > 0) }}"
+# Grafana is fronted under the ingress zone like every other service.
+glance_grafana_base_url: "https://grafana.{{ ingress_domain }}"
+# One row per Mac. Each query labels its rows with the short host name (the instance
+# label up to its first dot), so the three series join on that label.
+glance_mac_ram_percent_query: >-
+  label_replace(100 * max by (instance) (macmon_memory_ram_used_bytes)
+  / max by (instance) (macmon_memory_ram_total_bytes), "host", "$1", "instance", "([^:.]+).*")
+glance_mac_pressure_query: >-
+  label_replace(max by (instance) (macmon_memory_pressure_percent), "host", "$1", "instance", "([^:.]+).*")
+# Physical footprint of each loaded model's serving process, in GB. Process series already
+# carry the short host name in `host`. The model label is read directly; the command line
+# is parsed only for series that lack it.
+glance_mac_model_memory_query: >-
+  (
+  sum by (host, model) (process_phys_footprint_bytes{model!~"|unknown"})
+  or sum by (host, model) (label_replace(
+  process_phys_footprint_bytes{process_cmdline=~".*mlx-lm-launch.*--model.*"},
+  "model", "$1", "process_cmdline", ".*--model ([^ ]+).*"))
+  ) / 1e9
