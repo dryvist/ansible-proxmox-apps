@@ -1,0 +1,113 @@
+---
+# pgBackRest exporter: install, enable, or stop it with the backup tier.
+# Statically imported from tasks/main/pitr_and_dr.yml, so tags behave like inline tasks.
+- name: Assert the pgBackRest exporter release supports this host
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['architecture'] in postgres_pgbackrest_exporter_sha256sums
+      - postgres_pgbackrest_exporter_sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      The pgBackRest exporter release has no checksum pin for this host
+      architecture.
+    quiet: true
+  when: postgres_pgbackrest_enabled | bool
+
+- name: Record this host's pgBackRest exporter package for staging
+  ansible.builtin.set_fact:
+    postgres_pgbackrest_exporter_stage_item:
+      filename: "{{ postgres_pgbackrest_exporter_filename }}"
+      url: "{{ postgres_pgbackrest_exporter_download_url }}"
+      sha256: "{{ postgres_pgbackrest_exporter_sha256 }}"
+  when: postgres_pgbackrest_enabled | bool
+
+# Release assets are fetched once on the controller, where GitHub is reachable,
+# then copied to each PostgreSQL guest for local apt installation.
+- name: Stage the checksum-pinned pgBackRest exporter DEB on the controller
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "/tmp/{{ item.filename }}"
+    checksum: "sha256:{{ item.sha256 }}"
+    mode: "0644"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+  check_mode: false
+  loop: >-
+    {{ ansible_play_hosts
+       | map('extract', hostvars, 'postgres_pgbackrest_exporter_stage_item')
+       | select('defined')
+       | unique(attribute='filename')
+       | list }}
+  loop_control:
+    label: "{{ item.filename }}"
+
+- name: Install and enable the pgBackRest exporter
+  when: postgres_pgbackrest_enabled | bool
+  block:
+    - name: Copy the staged pgBackRest exporter DEB to the host
+      ansible.builtin.copy:
+        src: "/tmp/{{ postgres_pgbackrest_exporter_filename }}"
+        dest: "/tmp/{{ postgres_pgbackrest_exporter_filename }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Check for the staged pgBackRest exporter DEB in check mode
+      ansible.builtin.stat:
+        path: "/tmp/{{ postgres_pgbackrest_exporter_filename }}"
+      register: postgres_pgbackrest_exporter_deb_file
+      when: ansible_check_mode
+
+    - name: Install the pgBackRest exporter DEB
+      ansible.builtin.apt:
+        deb: "/tmp/{{ postgres_pgbackrest_exporter_filename }}"
+        state: present
+      notify: Restart pgbackrest_exporter
+      when: >-
+        not ansible_check_mode or
+        postgres_pgbackrest_exporter_deb_file.stat.exists
+
+    - name: Configure pgBackRest exporter flags through its environment file
+      ansible.builtin.copy:
+        content: >-
+          ARGS="--backrest.config={{ postgres_pgbackrest_exporter_config_path }}
+          --web.listen-address={{ postgres_pgbackrest_exporter_listen_address }}"
+        dest: /etc/default/pgbackrest_exporter
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart pgbackrest_exporter
+
+    - name: Check for the pgBackRest exporter systemd unit in check mode
+      ansible.builtin.stat:
+        path: /etc/systemd/system/pgbackrest_exporter.service
+      register: postgres_pgbackrest_exporter_unit_file
+      when: ansible_check_mode
+
+    - name: Enable and start pgBackRest exporter
+      ansible.builtin.systemd_service:
+        name: pgbackrest_exporter.service
+        daemon_reload: true
+        state: started
+        enabled: true
+      when: >-
+        not ansible_check_mode or
+        postgres_pgbackrest_exporter_unit_file.stat.exists
+
+- name: Check for a previously installed pgBackRest exporter when backups are disabled
+  ansible.builtin.stat:
+    path: /etc/systemd/system/pgbackrest_exporter.service
+  register: postgres_pgbackrest_exporter_disabled_unit_file
+  when: not (postgres_pgbackrest_enabled | bool)
+
+- name: Stop and disable pgBackRest exporter when backups are disabled
+  ansible.builtin.systemd_service:
+    name: pgbackrest_exporter.service
+    state: stopped
+    enabled: false
+  when:
+    - not (postgres_pgbackrest_enabled | bool)
+    - postgres_pgbackrest_exporter_disabled_unit_file.stat.exists | default(false)

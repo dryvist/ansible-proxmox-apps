@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.83.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.82.0...v5.83.0) (2026-11-23)
+
+
+### Features
+
+* **postgres:** run the pgBackRest exporter and scrape it ([#3931](https://github.com/dryvist/ansible-proxmox-apps/issues/3931)) ([08b0d7e](https://github.com/dryvist/ansible-proxmox-apps/commit/08b0d7e3f2bd71a33d507d3dd7bf477c30b37511))
+
 ## [5.82.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.81.0...v5.82.0) (2026-11-23)
 
 
