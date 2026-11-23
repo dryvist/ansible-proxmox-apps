@@ -247,3 +247,12 @@ def test_the_daily_post_reads_a_24_hour_window():
     spec = yaml.safe_load((ROOT / "playbooks/vars/status-posts/gpu.yml").read_text(encoding="utf-8"))
     assert all("[24h]" in row["query"] and "24 h" in row["label"] for row in spec["status_post_rows"])
     assert "timestamp() - 86400" in (ROOT / "playbooks/status-post.yml").read_text(encoding="utf-8")
+
+
+def test_the_sparkline_draws_every_point_of_the_range_read():
+    # The range read alone sets the window; the macro must not drop its oldest points.
+    row = {"component": "lane", "label": "tokens:", "unit": "%", "decimals": 0, "sparkline": True}
+    history = [[i, str(i * 4)] for i in range(13)]
+    bars = _line(row, 48, history).split(" ")[-2]
+    assert len(bars) == 13
+    assert "step=7200" in (ROOT / "playbooks/status-post.yml").read_text(encoding="utf-8")
