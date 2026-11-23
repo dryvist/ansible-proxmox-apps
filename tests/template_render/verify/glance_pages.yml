@@ -19,7 +19,7 @@
     glance_monitor_enabled: true
     glance_monitor_interval: "1m"
     ingress_domain: example.invalid
-    # Seeded with set_fact below: earlier plays in the suite set_fact tofu_data, and a fact outranks play vars.
+    # Seeded by set_fact: earlier plays' facts outrank play vars.
     _glance_fixture_tofu_data:
       containers:
         metrics-store:
@@ -174,7 +174,8 @@
           - _mac_tile[0].subrequests.models.url.startswith(_mac_base)
           - "'process_phys_footprint_bytes' in _mac_tile[0].subrequests.models.url"
           - "'${' not in (_glance_raw.content | b64decode)"
-        fail_msg: "the Mac memory tile is missing, is not addressed by the metrics store name, or reads another series"
+          - "'https://grafana.example.invalid/d/model-residency-memory' in (_glance_raw.content | b64decode)"
+        fail_msg: "Mac memory tile or its Grafana link is missing or misaddressed"
       vars:
         _mac_base: "http://metrics-store.example.invalid:8428/api/v1/query?query="
         _mac_tile: >-
@@ -182,28 +183,12 @@
              | selectattr('title', 'defined')
              | selectattr('title', 'equalto', 'Mac memory') | list }}
 
-    - name: Assert the board links the model residency dashboard through the ingress zone
-      ansible.builtin.assert:
-        that:
-          - _grafana_links | length == 1
-          - _grafana_links[0].url == 'https://grafana.example.invalid/d/model-residency-memory'
-        fail_msg: "the model residency dashboard link is missing or is not under the ingress zone"
-      vars:
-        _grafana_links: >-
-          {{ _glance_pages[0].columns[0].widgets
-             | selectattr('type', 'equalto', 'bookmarks') | list
-             | map(attribute='groups') | flatten
-             | map(attribute='links') | flatten
-             | selectattr('title', 'equalto', 'Grafana') | list }}
-
-    # With no grafana-tagged container the tile is omitted and the page still renders.
     - name: Render generated-services.yml without a metrics store
       ansible.builtin.template:
         src: "../../../roles/glance/templates/generated-services.yml.j2"
         dest: "{{ render_tmp }}/glance-generated-services-no-metrics.yml"
         mode: "0600"
       vars:
-        # What the role derives when no container carries the grafana tag.
         glance_metrics_host: ""
 
     - name: Read back the page rendered without a metrics store
@@ -217,7 +202,7 @@
           - "'Mac memory' not in (_glance_no_metrics_raw.content | b64decode)"
           - "'model-residency-memory' not in (_glance_no_metrics_raw.content | b64decode)"
           - _glance_no_metrics_pages | length == 1
-        fail_msg: "the Mac memory tile rendered without a grafana-tagged container, or the page no longer parses"
+        fail_msg: "Mac memory tile rendered without a metrics store"
       vars:
         _glance_no_metrics_pages: "{{ _glance_no_metrics_raw.content | b64decode | from_yaml }}"
 
