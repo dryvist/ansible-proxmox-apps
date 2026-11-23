@@ -94,7 +94,8 @@ def test_zammad_agent_write_defaults_and_exact_access_are_single_sourced():
     defaults = _defaults("zammad")
     assert defaults["zammad_agent_write_groups"] == ["{{ zammad_groups[0] }}"]
     bootstrap = (ROOT / "roles/zammad/files/zammad_bootstrap/20-groups-and-tokens.rb").read_text()
-    assert "reject { |u| u.id == agent_write_user.id }" in bootstrap
+    assert "scoped_user_ids = [agent_write_user.id, triage_user.id, clerk_user.id]" in bootstrap
+    assert "reject { |u| scoped_user_ids.include?(u.id) }" in bootstrap
     assert "JSON.parse(ENV.fetch('ZAMMAD_AGENT_WRITE_GROUPS'))" in bootstrap
     assert "%w[create change read]" in bootstrap
     assert "group_names_access_map = agent_write_access" in bootstrap
@@ -135,3 +136,18 @@ def test_every_token_or_password_variable_in_app_tasks_is_no_log():
                             f"{path.relative_to(ROOT)} task {task_index}: {task.get('name', '')}"
                         )
     assert not offenders, "token/password-bearing tasks need no_log: true: " + "; ".join(offenders)
+
+
+def test_zammad_tracker_agents_get_their_own_users_tokens_and_exact_group_access():
+    defaults = _defaults("zammad")
+    assert defaults["zammad_clerk_groups"] == ["{{ zammad_groups[0] }}"]
+    assert defaults["zammad_triage_api_token"] == "{{ lookup('env', 'ZAMMAD_TRIAGE_API_TOKEN') }}"
+    assert defaults["zammad_clerk_api_token"] == "{{ lookup('env', 'ZAMMAD_CLERK_API_TOKEN') }}"
+    users = (ROOT / "roles/zammad/files/zammad_bootstrap/10-admin-and-users.rb").read_text()
+    assert "[triage_email, 'Zammad', 'Triage', agent_role]" in users
+    assert "[clerk_email, 'Zammad', 'Clerk', agent_role]" in users
+    bootstrap = (ROOT / "roles/zammad/files/zammad_bootstrap/20-groups-and-tokens.rb").read_text()
+    assert "triage_user => groups.to_h { |group_name| [Group.find_by!(name: group_name).name, %w[read]] }" in bootstrap
+    assert "JSON.parse(ENV.fetch('ZAMMAD_CLERK_GROUPS'))" in bootstrap
+    assert "['zammad-triage', triage_user, triage_api_token" in bootstrap
+    assert "['zammad-clerk', clerk_user, clerk_api_token" in bootstrap
