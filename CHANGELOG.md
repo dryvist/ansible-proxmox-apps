@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.83.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.83.1...v5.83.2) (2026-11-24)
+
+
+### Bug Fixes
+
+* **vikunja:** fail the webhook readback assert cleanly when no webhook matches ([#4003](https://github.com/dryvist/ansible-proxmox-apps/issues/4003)) ([2d9a1f7](https://github.com/dryvist/ansible-proxmox-apps/commit/2d9a1f70242efee3cdeb9f66dfde5ce944ab9dff))
+
 ## [5.83.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.83.0...v5.83.1) (2026-11-23)
 
 
