@@ -37,7 +37,10 @@
           - "'node_filesystem_size_bytes' in _disk_rules[0].data[0].model.expr"
           - "'fstype!~' in _disk_rules[0].data[0].model.expr"
           - "'tmpfs|overlay' in _disk_rules[0].data[0].model.expr"
-          - "'mountpoint' not in _disk_rules[0].data[0].model.expr"
+          - >-
+            _disk_rules | map(attribute='data') | map('first') | map(attribute='model.expr')
+            | map('regex_findall', 'mountpoint[!=~]+"[^"]*"') | map('unique') | map('list') | unique | list
+            == [['mountpoint!~"/bulk/replica(/.*)?"']]
           - >-
             _disk_rules | map(attribute='data') | map('last') | map(attribute='model')
             | map(attribute='conditions') | map('first') | map(attribute='evaluator')
@@ -45,7 +48,8 @@
         fail_msg: >-
           Disk alerts must cover real filesystems from both exporter jobs at
           80/90/95 percent with info/warning/critical escalation, keep every
-          mountpoint, and fire only the highest band with no gap at a boundary.
+          mountpoint except the quota-bound replica trees, and fire only the
+          highest band with no gap at a boundary.
         success_msg: Three disk alert levels cover PVE and guest filesystems.
       vars:
         _disk_rules: >-
