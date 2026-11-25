@@ -3,7 +3,8 @@
 This role preserves selected YouTrack Hub settings through the Hub REST API.
 It runs from the Ansible controller and does not enter the YouTrack container.
 Read requests run during check mode; writes are limited to detected drift and
-check mode reports drift without sending writes.
+check mode reports drift without sending writes. Agent-token publication is a
+separate opt-in task and uses the converge identity for its OpenBao writes.
 
 The `Configure YouTrack Hub settings` play in
 `playbooks/site/04e-youtrack.yml` runs on `localhost` with a local
@@ -30,6 +31,11 @@ ansible-playbook -i inventory/hosts.yml playbooks/site.yml --tags youtrack
   state. The desired scope is `openid profile email`; it does not include
   `groups`.
 - Adds the configured Authelia identity link to existing Hub users when absent.
+- When `youtrack_agent_token_publish_openbao` is enabled, ensures the named
+  permanent token exists for the existing service user and publishes a newly
+  minted value to its agent-tier leaf. KV siblings are preserved. If the token already
+  exists but its tier field is empty, the task fails and names the re-mint
+  switch needed to recover.
 
 The Hub owner account and the OAuth module's client secret are created and
 maintained outside this role. The module must already exist; the role does not
@@ -45,6 +51,21 @@ create it or manage its client secret.
 | `youtrack_hub_auth_module_name` | `Authelia` | Existing Hub auth module to manage |
 | `youtrack_hub_auth_module_fields` | See `defaults/main.yml` | Desired managed module fields |
 | `youtrack_hub_identity_links` | `DEFAULT_USERNAME` for both login and identifier | Hub logins and matching provider usernames to link |
+| `youtrack_validate_certs` | `true` | TLS validation for the service-token collection role |
+| `youtrack_agent_token_publish_openbao` | `false` | Enables the opt-in agent-token publisher |
+| `youtrack_agent_write_login` | `svc-ai` | Existing YouTrack service-user login for the token |
+| `youtrack_agent_write_token_name` | `agent-tier-youtrack-write` | Permanent YouTrack token name |
+| `youtrack_agent_write_token_remint` | `false` | Deletes and re-creates the named token when explicitly enabled |
+| `youtrack_agent_write_openbao_mount` | `agent-tier` | KV mount for the agent token |
+| `youtrack_agent_write_openbao_path` | `youtrack-write` | Agent-token KV leaf path |
+| `youtrack_agent_write_openbao_field` | `YOUTRACK_AGENT_WRITE_TOKEN` | Agent-token KV field |
+| `youtrack_openbao_addr` | `BAO_ADDR` controller environment variable | OpenBao API address for publication |
+| `youtrack_openbao_token` | `BAO_TOKEN` controller environment variable | Converge identity token for publication |
+
+The publication task runs with the role under `--tags youtrack` and requires
+`-e youtrack_agent_token_publish_openbao=true`. To recover a token that exists
+in Hub while its agent-tier field is empty, run once with
+`-e youtrack_agent_write_token_remint=true`.
 
 An empty `DEFAULT_USERNAME` skips the default identity link. Supply an explicit
 `youtrack_hub_identity_links` list to manage other Hub users.
