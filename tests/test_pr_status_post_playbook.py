@@ -1,4 +1,4 @@
-"""Hourly status playbook contracts: env gate, token masking, fail-open metrics, chat publish, message marks."""
+"""Daily pull-request status playbook contracts: env gate, token masking, fail-open metrics, chat publish, message marks."""
 
 from pathlib import Path
 
@@ -134,33 +134,34 @@ def test_authenticated_searches_never_follow_redirects():
         assert uri["unredirected_headers"] == ["Authorization"]
 
 
-def test_metrics_reads_and_the_jobs_query_fail_open():
+def test_the_jobs_query_fails_open():
     reads = [task for _, task in _task_list()
-             if task.get("name", "").startswith("Read the per-lane accelerator")
-             or task.get("name", "").startswith("Read the jobs query verbatim")]
-    assert len(reads) == 2
-    for task in reads:
-        uri = task["ansible.builtin.uri"]
-        assert uri["url"].startswith("{{ pr_status_post_metrics_url }}/api/v1/query?query=")
-        assert task["failed_when"] is False
-        assert task.get("no_log") is True
-    jobs_read = reads[1]
-    assert "pr_status_jobs_terms | length > 0" in str(jobs_read.get("when"))
-    series = next(task for _, task in _task_list()
-                  if task.get("name", "").startswith("Resolve the per-lane busy series"))
-    assert "pr_status_busy_read.status" in _fields(series)
+             if task.get("name", "").startswith("Read the jobs query verbatim")]
+    assert len(reads) == 1
+    uri = reads[0]["ansible.builtin.uri"]
+    assert uri["url"].startswith("{{ pr_status_post_metrics_url }}/api/v1/query?query=")
+    assert reads[0]["failed_when"] is False
+    assert reads[0].get("no_log") is True
+    assert "pr_status_jobs_terms | length > 0" in str(reads[0].get("when"))
     jobs = next(task for _, task in _task_list() if task.get("name", "").startswith("Resolve the jobs figure"))
     assert "unmeasured" in _fields(jobs)
     assert "pr_status_jobs_read.status" in _fields(jobs)
 
 
-def test_the_template_names_each_series_by_accelerator_label_and_sorts_by_lane():
+def test_lane_utilization_is_left_to_the_gpu_post():
+    # The gpu status post reports each lane; repeating it here would post the
+    # same red lane twice a day.
+    playbook = PLAYBOOK.read_text(encoding="utf-8")
     text = TEMPLATE.read_text(encoding="utf-8")
-    assert "s.metric.get('accelerator')" in text
-    assert "'unknown lane'" in text
-    assert "sort(attribute='lane')" in text
-    assert "'decimals': 0" in text  # whole percent through status_line
-    assert "busy, 4 h:" in text
+    assert "busy" not in text
+    assert all("accelerator" not in str(task) for _, task in _task_list())
+    assert "busy" not in playbook
+
+
+def test_merged_counts_cover_the_last_24_hours():
+    since = next(task for _, task in _task_list()
+                 if "pr_status_merged_since" in task.get("ansible.builtin.set_fact", {}))
+    assert "- 86400" in since["ansible.builtin.set_fact"]["pr_status_merged_since"]
 
 
 def test_the_post_reuses_the_alert_hub_publish():
@@ -174,7 +175,7 @@ def test_the_post_reuses_the_alert_hub_publish():
     uri = post["ansible.builtin.uri"]
     assert uri["url"] == "https://ntfy.{{ pr_status_post_ingress_domain }}/{{ pr_status_post_channel }}"
     assert uri["method"] == "POST"
-    assert uri["headers"]["Title"] == "Pull-request and lane status"
+    assert uri["headers"]["Title"] == "Pull-request status"
     assert uri["body"] == "{{ pr_status_message }}"
     channel_fact = next(task for _, task in _task_list()
                         if task.get("name", "").startswith("Split the census owners"))
@@ -200,64 +201,15 @@ def test_the_message_is_all_green_when_every_figure_is_on_target():
         "pr_status_generated_utc": "2026-01-01 12:00 UTC",
         "pr_status_open_total": 12,
         "pr_status_merged_total": 3,
-        "pr_status_busy_series": [
-            {"metric": {"accelerator": "lane-a", "__name__": "accelerator:busy_percent:avg5m"},
-             "value": [1767000000, "62.4"]},
-        ],
         "pr_status_jobs_measured": True,
         "pr_status_jobs_text": "5",
     })
     assert text == (
-        "2026-01-01 12:00 UTC pull-request and lane status\n"
+        "2026-01-01 12:00 UTC pull-request status\n"
         f"{GREEN} open pull requests: 12\n"
-        f"{GREEN} merged in the last hour: 3\n"
-        f"{GREEN} lane-a busy, 4 h: 62%\n"
+        f"{GREEN} merged in the last 24 h: 3\n"
         f"{GREEN} Hermes cron runs, last hour: 5"
     )
-
-
-def test_the_accelerator_lines_name_each_lane_in_lane_order_with_whole_percents():
-    text = _render({
-        "pr_status_generated_utc": "2026-01-01 12:00 UTC",
-        "pr_status_open_total": 12,
-        "pr_status_merged_total": 3,
-        "pr_status_busy_series": [
-            {"metric": {"accelerator": "lane-b", "__name__": "accelerator:busy_percent:avg5m"},
-             "value": [1767000000, "82.58"]},
-            {"metric": {"accelerator": "lane-a"},
-             "value": [1767000000, "15.79"]},
-        ],
-        "pr_status_jobs_measured": True,
-        "pr_status_jobs_text": "5",
-    })
-    assert text == (
-        "2026-01-01 12:00 UTC pull-request and lane status\n"
-        f"{GREEN} open pull requests: 12\n"
-        f"{GREEN} merged in the last hour: 3\n"
-        f"{RED} lane-a busy, 4 h: 16%\n"
-        f"{GREEN} lane-b busy, 4 h: 83%\n"
-        f"{GREEN} Hermes cron runs, last hour: 5"
-    )
-    busy_lines = [line for line in text.splitlines() if "busy, 4 h:" in line]
-    assert len(busy_lines) == 2
-    assert [line.split(" ", 2)[1] for line in busy_lines] == ["lane-a", "lane-b"]  # lane order
-    for line, (mark, value) in zip(busy_lines, ((RED, 15.79), (GREEN, 82.58))):
-        assert line.startswith(mark)  # green at 50+, yellow 25 to 49, red below 25
-        whole_percent = line.split("busy, 4 h: ")[1]
-        assert whole_percent == f"{round(value)}%"  # whole number, then %
-        assert "." not in line  # no fraction anywhere on the line
-
-
-def test_a_busy_lane_just_under_fifty_stays_yellow_and_prints_fifty():
-    text = _render({
-        "pr_status_generated_utc": "2026-01-01 12:00 UTC",
-        "pr_status_open_total": 12,
-        "pr_status_merged_total": 3,
-        "pr_status_busy_series": [{"metric": {"accelerator": "lane-a"}, "value": [1767000000, "49.6"]}],
-        "pr_status_jobs_measured": True,
-        "pr_status_jobs_text": "5",
-    })
-    assert f"{YELLOW} lane-a busy, 4 h: 50%" in text.splitlines()
 
 
 def test_the_message_turns_yellow_at_thirty_five_open_pull_requests():
@@ -265,35 +217,29 @@ def test_the_message_turns_yellow_at_thirty_five_open_pull_requests():
         "pr_status_generated_utc": "2026-01-01 13:00 UTC",
         "pr_status_open_total": 35,
         "pr_status_merged_total": 1,
-        "pr_status_busy_series": [
-            {"metric": {"job": "lane-b"}, "value": [1767000000, "30.0"]},
-        ],
         "pr_status_jobs_measured": True,
         "pr_status_jobs_text": "7",
     })
     assert text == (
-        "2026-01-01 13:00 UTC pull-request and lane status\n"
+        "2026-01-01 13:00 UTC pull-request status\n"
         f"{YELLOW} open pull requests: 35\n"
-        f"{GREEN} merged in the last hour: 1\n"
-        f"{YELLOW} unknown lane busy, 4 h: 30%\n"  # series carries no accelerator label
+        f"{GREEN} merged in the last 24 h: 1\n"
         f"{GREEN} Hermes cron runs, last hour: 7"
     )
 
 
-def test_the_message_reports_unmeasured_when_the_metrics_query_fails():
+def test_the_message_reports_unmeasured_when_the_jobs_query_fails():
     text = _render({
         "pr_status_generated_utc": "2026-01-01 14:00 UTC",
         "pr_status_open_total": 12,
         "pr_status_merged_total": 0,
-        "pr_status_busy_series": [],
         "pr_status_jobs_measured": False,
         "pr_status_jobs_text": "unmeasured",
     })
     assert text == (
-        "2026-01-01 14:00 UTC pull-request and lane status\n"
+        "2026-01-01 14:00 UTC pull-request status\n"
         f"{GREEN} open pull requests: 12\n"
-        f"{GREEN} merged in the last hour: 0\n"
-        f"{RED} busy percent: unmeasured\n"
+        f"{GREEN} merged in the last 24 h: 0\n"
         f"{RED} Hermes cron runs, last hour: unmeasured"
     )
 
@@ -301,7 +247,7 @@ def test_the_message_reports_unmeasured_when_the_metrics_query_fails():
 def test_open_pull_requests_are_green_at_30_and_yellow_from_31():
     def mark(total):
         text = _render({"pr_status_generated_utc": "t", "pr_status_open_total": total, "pr_status_merged_total": 0,
-                        "pr_status_busy_series": [], "pr_status_jobs_measured": False})
+                        "pr_status_jobs_measured": False})
         return next(line for line in text.splitlines() if "open pull requests:" in line)[0]
 
     assert [mark(total) for total in (30, 31, 40, 41)] == [GREEN, YELLOW, YELLOW, RED]
