@@ -1,0 +1,85 @@
+---
+- name: Require OpenBao write credentials for YouTrack publication
+  ansible.builtin.assert:
+    that:
+      - youtrack_openbao_addr | length > 0
+      - youtrack_openbao_token | length > 0
+    fail_msg: >-
+      YouTrack agent-token publication is enabled but BAO_ADDR/BAO_TOKEN are
+      unavailable to the controller.
+    quiet: true
+  no_log: true
+
+- name: Ensure the YouTrack agent token exists for its service user
+  ansible.builtin.include_role:
+    name: jpe_ansible.youtrack.service_tokens
+    apply:
+      no_log: true
+  vars:
+    youtrack_url: "{{ youtrack_hub_base_url }}"
+    youtrack_api_key: "{{ youtrack_hub_admin_token }}"
+    service_tokens_declared:
+      - login: "{{ youtrack_agent_write_login }}"
+        name: "{{ youtrack_agent_write_token_name }}"
+    service_tokens_remint: >-
+      {{ [youtrack_agent_write_token_name]
+         if youtrack_agent_write_token_remint | bool else [] }}
+  no_log: true
+
+- name: Read the YouTrack agent-tier OpenBao leaf
+  ansible.builtin.uri:
+    url: >-
+      {{ youtrack_openbao_addr
+         ~ '/v1/'
+         ~ youtrack_agent_write_openbao_mount
+         ~ '/data/'
+         ~ youtrack_agent_write_openbao_path }}
+    method: GET
+    headers:
+      X-Vault-Token: "{{ youtrack_openbao_token }}"
+    ca_path: "{{ openbao_ca_path }}"
+    status_code: [200, 404]
+  register: youtrack_agent_write_openbao_read
+  changed_when: false
+  check_mode: false
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+
+- name: Require an existing YouTrack token value or a newly minted token
+  ansible.builtin.assert:
+    that:
+      - >-
+        youtrack_agent_write_token_name in
+        (service_tokens_minted | default({}, true))
+        or (youtrack_agent_write_openbao_read.json | default({}, true))
+          .get('data', {}).get('data', {})
+          .get(youtrack_agent_write_openbao_field, '') | string | trim | length > 0
+    fail_msg: >-
+      YouTrack token "{{ youtrack_agent_write_token_name }}" already exists,
+      but {{ youtrack_agent_write_openbao_mount }}/{{ youtrack_agent_write_openbao_path }}
+      has no {{ youtrack_agent_write_openbao_field }}. Run once with
+      -e youtrack_agent_write_token_remint=true to add this token name to
+      service_tokens_remint and publish its new value.
+    quiet: true
+  when: not ansible_check_mode
+  no_log: true
+
+- name: Publish a newly minted YouTrack agent token through the shared OpenBao publisher
+  ansible.builtin.include_tasks:
+    file: "{{ role_path | dirname }}/zammad/tasks/publish_mcp.yml"
+    apply:
+      no_log: true
+  vars:
+    zammad_token_openbao_addr: "{{ youtrack_openbao_addr }}"
+    zammad_token_openbao_token: "{{ youtrack_openbao_token }}"
+    zammad_token_openbao_mount: "{{ youtrack_agent_write_openbao_mount }}"
+    zammad_token_openbao_path: "{{ youtrack_agent_write_openbao_path }}"
+    zammad_token_openbao_key: "{{ youtrack_agent_write_openbao_field }}"
+    zammad_publish_url: false
+    zammad_publish_token: "{{ service_tokens_minted[youtrack_agent_write_token_name] }}"
+  when: youtrack_agent_write_token_name in (service_tokens_minted | default({}, true))
+  no_log: true
