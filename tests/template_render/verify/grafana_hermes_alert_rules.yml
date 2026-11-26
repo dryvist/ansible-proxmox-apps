@@ -1,0 +1,150 @@
+---
+# Renders roles/grafana_stack/templates/alerting/rules-hermes.yml.j2 with the
+# role defaults and checks the Hermes Agent gateway/cron alert rules.
+- name: Render and verify the Grafana Hermes alert rules
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../../roles/grafana_stack/defaults/main.yml
+  vars:
+    ansible_become: false
+    _rules_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/rules-hermes.yml.j2"
+    _expected_uids:
+      - hermes-gateway-down
+      - hermes-metrics-absent
+      - hermes-cron-scheduler-stalled
+      - hermes-cron-store-unwritable
+      - hermes-cron-jobs-overdue
+      - hermes-cron-no-recent-success
+      - hermes-cron-skipped-runs
+      - hermes-gateway-restart-pending
+      - hermes-cron-run-failures
+  tasks:
+    - name: Render the Hermes alert rules
+      ansible.builtin.set_fact:
+        _hermes_alert_document: "{{ lookup('ansible.builtin.template', _rules_template) | from_yaml }}"
+      vars:
+        grafana_stack_prometheus_url: http://prometheus.example.test:9090
+
+    - name: Assert the Hermes rules render one group with the contracted uids
+      ansible.builtin.assert:
+        that:
+          - _hermes_alert_document.groups | map(attribute='name') | list == ['hermes-agent']
+          - _hermes_rules | length == 9
+          - _hermes_rules | map(attribute='uid') | list == _expected_uids
+          - (_hermes_rules | map(attribute='uid') | list) | unique | list | length == 9
+          - (_hermes_rules | map(attribute='labels.severity') | reject('in', ['critical', 'warning']) | list) == []
+          - _hermes_rules | map(attribute='annotations.summary')
+            | select('search', 'Hermes cron output channel') | list | length == 9
+          - "'prometheus' in (_hermes_rules | map(attribute='data.0.datasourceUid') | join(' '))"
+          - "'__expr__' in (_hermes_rules | map(attribute='data.1.datasourceUid') | join(' '))"
+          - >-
+            (_hermes_rules | map(attribute='data.1.model.type') | reject('equalto', 'threshold') | list) == []
+        fail_msg: >-
+          rules-hermes.yml.j2 rendered an unexpected rule set:
+          {{ _hermes_rules | map(attribute='uid') | list }}
+      vars:
+        _hermes_rules: "{{ _hermes_alert_document.groups[0].rules }}"
+
+    - name: Assert each Hermes rule matches its contracted expression and threshold
+      ansible.builtin.assert:
+        that:
+          - "'min(hermes_gateway_up)' in _gateway_down_expr"
+          - _gateway_down_rule.data[1].model.conditions[0].evaluator.params
+            == [grafana_stack_alert_hermes_gateway_min_up]
+          - _gateway_down_rule.for == '5m'
+          - _gateway_down_rule.noDataState == 'NoData'
+          - _gateway_down_rule.labels.severity == 'critical'
+          - "'count(hermes_gateway_up)' in _metrics_absent_expr"
+          - _metrics_absent_rule.data[0].relativeTimeRange.from == 900
+          - _metrics_absent_rule.for == '15m'
+          - _metrics_absent_rule.noDataState == 'Alerting'
+          - _metrics_absent_rule.labels.severity == 'critical'
+          - "'max(hermes_cron_scheduler_heartbeat_age_seconds)' in _stalled_expr"
+          - _stalled_rule.data[1].model.conditions[0].evaluator.params
+            == [grafana_stack_alert_hermes_scheduler_max_heartbeat_age_seconds]
+          - _stalled_rule.for == '10m'
+          - _stalled_rule.labels.severity == 'critical'
+          - "'min(hermes_cron_store_writable)' in _unwritable_expr"
+          - _unwritable_rule.data[1].model.conditions[0].evaluator.params
+            == [grafana_stack_alert_hermes_store_min_writable]
+          - _unwritable_rule.for == '5m'
+          - _unwritable_rule.labels.severity == 'critical'
+          - "'max(hermes_cron_jobs_overdue)' in _overdue_expr"
+          - _overdue_rule.data[1].model.conditions[0].evaluator.params
+            == [grafana_stack_alert_hermes_max_overdue_jobs]
+          - _overdue_rule.for == '30m'
+          - _overdue_rule.labels.severity == 'warning'
+          - "'max(hermes_cron_scheduler_last_success_age_seconds)' in _success_expr"
+          - _success_rule.data[1].model.conditions[0].evaluator.params
+            == [grafana_stack_alert_hermes_max_last_success_age_seconds]
+          - _success_rule.for == '15m'
+          - _success_rule.labels.severity == 'warning'
+          - "'delta(hermes_cron_store_skipped_runs[1h])' in _skipped_expr"
+          - "'increase(' not in _skipped_expr"
+          - _skipped_rule.data[0].relativeTimeRange.from == 3600
+          - _skipped_rule.labels.severity == 'warning'
+          - "'max(hermes_gateway_restart_requested)' in _restart_expr"
+          - _restart_rule.data[1].model.conditions[0].evaluator.params
+            == [grafana_stack_alert_hermes_max_restart_requested]
+          - _restart_rule.for == '15m'
+          - _restart_rule.labels.severity == 'warning'
+          - "'count(hermes_cron_run_outcome{outcome=\"failed\"})' in _failures_expr"
+          - _failures_rule.data[1].model.conditions[0].evaluator.params
+            == [grafana_stack_alert_hermes_max_failed_run_series]
+          - _failures_rule.for == '10m'
+          - _failures_rule.labels.severity == 'warning'
+      vars:
+        _hermes_rules: "{{ _hermes_alert_document.groups[0].rules }}"
+        _gateway_down_rule: "{{ _hermes_rules | selectattr('uid', 'equalto', 'hermes-gateway-down') | first }}"
+        _gateway_down_expr: "{{ _gateway_down_rule.data[0].model.expr }}"
+        _metrics_absent_rule: "{{ _hermes_rules | selectattr('uid', 'equalto', 'hermes-metrics-absent') | first }}"
+        _metrics_absent_expr: "{{ _metrics_absent_rule.data[0].model.expr }}"
+        _stalled_rule: >-
+          {{ _hermes_rules | selectattr('uid', 'equalto', 'hermes-cron-scheduler-stalled') | first }}
+        _stalled_expr: "{{ _stalled_rule.data[0].model.expr }}"
+        _unwritable_rule: >-
+          {{ _hermes_rules | selectattr('uid', 'equalto', 'hermes-cron-store-unwritable') | first }}
+        _unwritable_expr: "{{ _unwritable_rule.data[0].model.expr }}"
+        _overdue_rule: >-
+          {{ _hermes_rules | selectattr('uid', 'equalto', 'hermes-cron-jobs-overdue') | first }}
+        _overdue_expr: "{{ _overdue_rule.data[0].model.expr }}"
+        _success_rule: >-
+          {{ _hermes_rules | selectattr('uid', 'equalto', 'hermes-cron-no-recent-success') | first }}
+        _success_expr: "{{ _success_rule.data[0].model.expr }}"
+        _skipped_rule: >-
+          {{ _hermes_rules | selectattr('uid', 'equalto', 'hermes-cron-skipped-runs') | first }}
+        _skipped_expr: "{{ _skipped_rule.data[0].model.expr }}"
+        _restart_rule: >-
+          {{ _hermes_rules | selectattr('uid', 'equalto', 'hermes-gateway-restart-pending') | first }}
+        _restart_expr: "{{ _restart_rule.data[0].model.expr }}"
+        _failures_rule: >-
+          {{ _hermes_rules | selectattr('uid', 'equalto', 'hermes-cron-run-failures') | first }}
+        _failures_expr: "{{ _failures_rule.data[0].model.expr }}"
+
+    - name: Assert the rule file is wired into grafana provisioning
+      ansible.builtin.assert:
+        that:
+          - "'rules-hermes' in _provisioning_loop"
+      vars:
+        _provisioning_tasks: >-
+          {{ lookup('ansible.builtin.file',
+             playbook_dir ~ '/../../../roles/grafana_stack/tasks/provisioning.yml') | from_yaml }}
+        _render_task: >-
+          {{ _provisioning_tasks
+             | selectattr('name', 'equalto', 'Render grafana unified-alerting provisioning')
+             | first }}
+        _provisioning_loop: "{{ _render_task.loop }}"
+
+    - name: Render without a Prometheus datasource
+      ansible.builtin.set_fact:
+        _hermes_alert_document_no_prom: >-
+          {{ lookup('ansible.builtin.template', _rules_template) | from_yaml }}
+      vars:
+        grafana_stack_prometheus_url: ""
+
+    - name: Assert the no-datasource render contains no Hermes alert groups
+      ansible.builtin.assert:
+        that:
+          - _hermes_alert_document_no_prom.groups | default([], true) | length == 0
