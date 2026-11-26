@@ -18,7 +18,9 @@
       get-bucket-lifecycle-configuration --bucket {{ item.name }}
   loop: >-
     {{ (object_storage_default_buckets | selectattr('versioning', 'defined') | selectattr('versioning') | list
-        + object_storage_default_buckets | selectattr('prefix_lifecycle_rules', 'defined') | list) | unique }}
+        + object_storage_default_buckets | selectattr('prefix_lifecycle_rules', 'defined') | list
+        + object_storage_default_buckets | selectattr('lifecycle_enabled', 'defined')
+          | rejectattr('lifecycle_enabled') | list) | unique }}
   loop_control:
     label: "{{ item.name }}"
   environment: "{{ object_storage_aws_env }}"
@@ -59,6 +61,17 @@
   loop: "{{ object_storage_default_buckets | subelements('prefix_lifecycle_rules', skip_missing=true) }}"
   loop_control:
     label: "{{ item.0.name }}"
+  when: item.0.lifecycle_enabled | default(true) | bool
+
+- name: Remove stale rendered lifecycle documents for opted-out buckets
+  ansible.builtin.file:
+    path: "{{ object_storage_config_dir }}/lifecycle-{{ item.name }}.json"
+    state: absent
+  loop: >-
+    {{ object_storage_default_buckets | selectattr('lifecycle_enabled', 'defined')
+       | rejectattr('lifecycle_enabled') | list }}
+  loop_control:
+    label: "{{ item.name }}"
 
 - name: Render lifecycle configuration documents
   ansible.builtin.template:
@@ -72,6 +85,7 @@
         + object_storage_default_buckets | selectattr('prefix_lifecycle_rules', 'defined') | list) | unique }}
   loop_control:
     label: "{{ item.name }}"
+  when: item.lifecycle_enabled | default(true) | bool
 
 # The S3 put replaces the entire lifecycle document. Refuse to discard rules
 # that this bucket declaration does not render, even when another rule differs.
@@ -98,6 +112,7 @@
   loop: "{{ object_storage_lifecycle_current.results }}"
   loop_control:
     label: "{{ item.item.name }}"
+  when: item.item.lifecycle_enabled | default(true) | bool
 
 - name: Report apply lifecycle expiration rules (check mode)
   ansible.builtin.debug:
@@ -107,6 +122,7 @@
     label: "{{ item.item.name }}"
   when:
     - ansible_check_mode
+    - item.item.lifecycle_enabled | default(true) | bool
     - >-
         item.rc != 0 or
         (item.stdout | default('')) is not search('NoncurrentVersionExpiration') or
@@ -172,6 +188,34 @@
         )
   changed_when: true
 
+- name: Report remove lifecycle configuration for opted-out buckets (check mode)
+  ansible.builtin.debug:
+    msg: "Check mode: would remove lifecycle configuration from bucket {{ item.item.name }}"
+  loop: "{{ object_storage_lifecycle_current.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - ansible_check_mode
+    - not (item.item.lifecycle_enabled | default(true) | bool)
+    - item.rc == 0
+  changed_when: true
+
+- name: Remove lifecycle configuration from opted-out buckets
+  ansible.builtin.command:
+    cmd: >-
+      aws --endpoint-url {{ object_storage_endpoint }} s3api delete-bucket-lifecycle
+      --bucket {{ item.item.name }}
+  loop: "{{ object_storage_lifecycle_current.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  when:
+    - not ansible_check_mode
+    - not (item.item.lifecycle_enabled | default(true) | bool)
+    - item.rc == 0
+  changed_when: true
+  no_log: true
+
 - name: Apply lifecycle expiration rules
   ansible.builtin.command:
     cmd: >-
@@ -183,6 +227,7 @@
     label: "{{ item.item.name }}"
   environment: "{{ object_storage_aws_env }}"
   when: >-
+    (item.item.lifecycle_enabled | default(true) | bool) and (
     item.rc != 0 or
     (item.stdout | default('')) is not search('NoncurrentVersionExpiration') or
     (
@@ -244,6 +289,6 @@
         | zip(item.item.prefix_lifecycle_rules | default([]) | selectattr('expiration_days', 'defined')
               | map(attribute='expiration_days')) | sort
       )
-    )
+    ))
   changed_when: true
   no_log: true
