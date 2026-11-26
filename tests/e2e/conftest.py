@@ -142,10 +142,22 @@ def splunk_host(tofu_inventory):
     return tofu_inventory["splunk_vm"]["splunk"]["ip"]
 
 
+def _ingress_domain():
+    """Return the domain fronted services are published under.
+
+    Same source as the Ansible ``ingress_domain`` variable (PROXMOX_SUBDOMAIN).
+    The inventory ``domain`` is the apex, where fronted names do not resolve.
+    """
+    domain = os.environ.get("PROXMOX_SUBDOMAIN", "").strip()
+    if not domain:
+        pytest.skip("PROXMOX_SUBDOMAIN environment variable not set")
+    return domain
+
+
 @pytest.fixture(scope="session")
-def ingress_domain(tofu_inventory):
-    """Return the inventory domain used to build proxied service FQDNs."""
-    return tofu_inventory["domain"]
+def ingress_domain():
+    """Return the ingress domain for proxied service FQDNs."""
+    return _ingress_domain()
 
 
 @pytest.fixture(scope="session")
@@ -155,7 +167,7 @@ def splunk_web_url(ingress_domain):
 
 
 @pytest.fixture(scope="session")
-def splunk_creds(tofu_inventory, ingress_domain):
+def splunk_creds(tofu_inventory):
     """Return Splunk credentials as (mgmt_url, user, password).
 
     The default management URL uses the TLS proxy FQDN. The password comes
@@ -164,7 +176,7 @@ def splunk_creds(tofu_inventory, ingress_domain):
     raw_password = os.environ.get("SPLUNK_PASSWORD")
     if not raw_password:
         pytest.skip("SPLUNK_PASSWORD environment variable not set")
-    mgmt_url = os.environ.get("SPLUNK_MGMT_URL", f"https://splunk-mgmt.{ingress_domain}")
+    mgmt_url = os.environ.get("SPLUNK_MGMT_URL") or f"https://splunk-mgmt.{_ingress_domain()}"
     return SplunkCredentials(mgmt_url, "admin", SecretValue(raw_password))
 
 

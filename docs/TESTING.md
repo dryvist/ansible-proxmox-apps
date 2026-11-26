@@ -163,6 +163,10 @@ Optional pytest overrides:
 | `PIPELINE_POLL_TIMEOUT_SECONDS` | Override sentinel search timeout, default `120` |
 | `PIPELINE_POLL_INTERVAL_SECONDS` | Override sentinel search interval, default `10` |
 
+The Splunk Web and management proxy URLs are built from `PROXMOX_SUBDOMAIN`,
+the same ingress domain the Ansible `ingress_domain` variable reads. Tests
+that need them skip when it is unset and no override is given.
+
 #### Non-secret configuration
 
 The following variables are required by `validate-pipeline.yml` and any
