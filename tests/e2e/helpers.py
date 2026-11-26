@@ -60,7 +60,7 @@ def query_splunk(
     """Execute a Splunk search/export query and return result rows.
 
     Args:
-        mgmt_url: Splunk management URL (e.g., https://192.168.0.200:8089).
+        mgmt_url: Splunk management base URL from ``splunk_mgmt_base_url``.
         user: Splunk username.
         password: Splunk password.
         search_str: SPL search string with or without leading 'search'.

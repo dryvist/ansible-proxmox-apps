@@ -143,19 +143,28 @@ def splunk_host(tofu_inventory):
 
 
 @pytest.fixture(scope="session")
-def splunk_creds(tofu_inventory, constants):
+def ingress_domain(tofu_inventory):
+    """Return the inventory domain used to build proxied service FQDNs."""
+    return tofu_inventory["domain"]
+
+
+@pytest.fixture(scope="session")
+def splunk_web_url(ingress_domain):
+    """Return the portless Splunk Web URL through the TLS proxy."""
+    return f"https://splunk.{ingress_domain}/"
+
+
+@pytest.fixture(scope="session")
+def splunk_creds(tofu_inventory, ingress_domain):
     """Return Splunk credentials as (mgmt_url, user, password).
 
-    The management URL is built from the Splunk VM IP and the splunk_mgmt
-    port in tofu constants. The password comes from the SPLUNK_PASSWORD
-    environment variable.
+    The default management URL uses the TLS proxy FQDN. The password comes
+    from the SPLUNK_PASSWORD environment variable.
     """
-    splunk_ip = tofu_inventory["splunk_vm"]["splunk"]["ip"]
-    mgmt_port = constants["service_ports"]["splunk_mgmt"]
     raw_password = os.environ.get("SPLUNK_PASSWORD")
     if not raw_password:
         pytest.skip("SPLUNK_PASSWORD environment variable not set")
-    mgmt_url = os.environ.get("SPLUNK_MGMT_URL", f"https://{splunk_ip}:{mgmt_port}")
+    mgmt_url = os.environ.get("SPLUNK_MGMT_URL", f"https://splunk-mgmt.{ingress_domain}")
     return SplunkCredentials(mgmt_url, "admin", SecretValue(raw_password))
 
 
