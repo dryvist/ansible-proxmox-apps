@@ -114,7 +114,8 @@ def test_pipeline_is_native_and_exports_only_the_contract_labels():
     assert profile["conf"]["fields"] == [
         {"inFieldName": "hermes_info_value", "outFieldExpr": "'hermes_cron_job_profile'", "metricType": "gauge"}
     ]
-    assert profile["conf"]["dimensions"] == ["agent", "job_id", "profile"]
+    assert profile["conf"]["dimensions"] == ["agent", "job", "profile"]
+    assert outcome["conf"]["dimensions"] == profile["conf"]["dimensions"][:2] + ["outcome"]
 
 
 def test_sanitized_hermes_lines_produce_contract_events_after_native_suppress():
@@ -152,6 +153,7 @@ def test_sanitized_hermes_lines_produce_contract_events_after_native_suppress():
         ("hermes-example/root", "def012345678", "silent"): 1,
         ("hermes-example/unknown", "ef0123456789", "silent"): 1,
         ("hermes-example/unknown", "f0123456789a", "undeliverable"): 1,
+        ("hermes-example/unknown", "bcdef0123456", "delivered"): 1,
         ("hermes-example/profile-example", "0123456789ab", "delivered"): 1,
         ("hermes-example/root", "job-example", "failed"): 1,
         ("hermes-example/root", "job-idle-example", "failed"): 1,
@@ -168,7 +170,7 @@ def test_sanitized_hermes_lines_produce_contract_events_after_native_suppress():
         ("hermes-example/root", "job-blocked-example", "failed"): 1,
         ("hermes-example/root", "job-scanner-example", "failed"): 1,
     }
-    assert len(outcomes) == 19
+    assert len(outcomes) == 20
     assert len(starts) == 2
     assert {
         (event["agent"], event["job_id"], event["job_name"])
@@ -192,6 +194,10 @@ def test_sanitized_hermes_lines_produce_contract_events_after_native_suppress():
         ("hermes-example/root", "abcdef012345", "root"),
         ("hermes-example/profile-example", "bcdef0123456", "profile-example"),
     }
+    # Both series publish the job under the same label, so a profile joins to its runs:
+    # the health job's profile event and its delivered outcome share job bcdef0123456.
+    assert all(event["job"] == event["job_id"] for event in profiles)
+    assert {event["job"] for event in outcomes} & {event["job"] for event in profiles} == {"bcdef0123456"}
     assert all(event["hermes_info_value"] == 1 for event in profile_copies)
 
     ignored = [
