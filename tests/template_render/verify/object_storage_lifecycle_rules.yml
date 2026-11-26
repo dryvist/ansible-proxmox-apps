@@ -66,6 +66,9 @@
         _langfuse_bucket: >-
           {{ _object_storage_defaults.object_storage_default_buckets
              | selectattr('name', 'equalto', 'langfuse') | first }}
+        _splunk_addons_bucket: >-
+          {{ _object_storage_defaults.object_storage_default_buckets
+             | selectattr('name', 'equalto', 'splunk-addons') | first }}
 
     - name: Render the lifecycle document for a bucket without prefix rules
       ansible.builtin.template:
@@ -117,10 +120,24 @@
         item: "{{ _langfuse_bucket }}"
         object_storage_noncurrent_expiration_days: 3650
 
+    - name: Render the lifecycle document from the opted-out Splunk addons bucket
+      ansible.builtin.template:
+        src: "{{ _lifecycle_template }}"
+        dest: "{{ _fixture_dir }}/lifecycle-splunk-addons.json"
+        mode: "0644"
+      vars:
+        item: "{{ _splunk_addons_bucket }}"
+        object_storage_noncurrent_expiration_days: 3650
+
     - name: Read the rendered Langfuse lifecycle document
       ansible.builtin.slurp:
         src: "{{ _fixture_dir }}/lifecycle-langfuse.json"
       register: _rendered_langfuse
+
+    - name: Read the rendered opt-out lifecycle document
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/lifecycle-splunk-addons.json"
+      register: _rendered_splunk_addons
 
     - name: Assert Langfuse renders exactly the base cleanup and current event expiry
       vars:
@@ -138,6 +155,13 @@
         that:
           - (_rendered_langfuse.content | b64decode | from_json) == {'Rules':_expected_rules}
           - _langfuse_bucket.versioning is undefined
+
+    - name: Assert the opt-out bucket renders no lifecycle document
+      ansible.builtin.assert:
+        that:
+          - _splunk_addons_bucket.lifecycle_enabled is false
+          - _rendered_splunk_addons.content | b64decode == ''
+        fail_msg: "The splunk-addons lifecycle opt-out changed unexpectedly."
 
     # from_json in every assertion here is also the valid-JSON check.
     - name: Assert a bucket without prefix rules renders the historical document

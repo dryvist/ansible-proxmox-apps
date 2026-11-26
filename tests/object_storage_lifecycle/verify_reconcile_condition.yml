@@ -179,6 +179,19 @@
       - name: no-such-lifecycle-configuration
         item: {rc: 255, stdout: "", stderr: NoSuchLifecycleConfiguration, item: {name: a}}
         expect: true
+    removal_cases:
+      - name: opted-out-with-existing-config
+        item: {rc: 0, stdout: "{{ live_30 }}", item: {name: splunk-addons, lifecycle_enabled: false}}
+        expect: true
+      - name: opted-out-without-config
+        item: {rc: 255, stdout: "", item: {name: splunk-addons, lifecycle_enabled: false}}
+        expect: false
+      - name: default-enabled-with-existing-config
+        item: {rc: 0, stdout: "{{ live_30 }}", item: {name: artifacts}}
+        expect: false
+      - name: explicitly-enabled-with-existing-config
+        item: {rc: 0, stdout: "{{ live_30 }}", item: {name: artifacts, lifecycle_enabled: true}}
+        expect: false
   tasks:
     - name: Load the object-storage role defaults
       ansible.builtin.include_vars:
@@ -191,6 +204,38 @@
           {{ _object_storage_defaults.object_storage_default_buckets
              | selectattr('name', 'equalto', 'langfuse') | first }}
         object_storage_bucket_credentials: {}
+
+    - name: Load the lifecycle role task definitions
+      ansible.builtin.set_fact:
+        _lifecycle_tasks: >-
+          {{ lookup('file', playbook_dir ~ '/../../roles/object_storage/tasks/lifecycle.yml')
+             | from_yaml }}
+
+    - name: Assert lifecycle removal uses the existing S3 client and narrow conditions
+      vars:
+        _remove_lifecycle_task: >-
+          {{ _lifecycle_tasks
+             | selectattr('name', 'equalto', 'Remove lifecycle configuration from opted-out buckets') | first }}
+      ansible.builtin.assert:
+        that:
+          - "'s3api delete-bucket-lifecycle' in _remove_lifecycle_task['ansible.builtin.command']['cmd']"
+          - >-
+            _remove_lifecycle_task.when == ['not ansible_check_mode',
+            'not (item.item.lifecycle_enabled | default(true) | bool)', 'item.rc == 0']
+
+    - name: Evaluate the lifecycle removal condition for each case
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              not (item.item.item.lifecycle_enabled | default(true) | bool) and
+              item.item.rc == 0
+            ) == item.expect
+        fail_msg: "case {{ item.name }}: expected removal={{ item.expect }}"
+        success_msg: "case {{ item.name }}: OK (removal={{ item.expect }})"
+      loop: "{{ removal_cases }}"
+      loop_control:
+        label: "{{ item.name }}"
 
     - name: Exercise the empty IAM role loop without credentials or network
       ansible.builtin.include_tasks: ../../roles/object_storage/tasks/iam_bucket.yml
