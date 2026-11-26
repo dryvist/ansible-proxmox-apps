@@ -209,6 +209,24 @@ class PolicyResourceScoping(unittest.TestCase):
                         )
 
 
+class RawEventArchiveIAM(unittest.TestCase):
+    def test_raw_event_archive_has_scoped_ro_and_rw_identities(self):
+        bucket = next(
+            b for b in _defaults()["object_storage_default_buckets"] if b["name"] == "raw-event-archive"
+        )
+        self.assertEqual(bucket["iam_roles"], ["ro", "rw"])
+
+        actions = _defaults()["object_storage_iam_policy_actions"]
+        for role in bucket["iam_roles"]:
+            with self.subTest(role=role):
+                policy = _render_policy(bucket["name"], role, actions)
+                resources = policy["Statement"][0]["Resource"]
+                self.assertEqual(
+                    resources,
+                    ["arn:aws:s3:::raw-event-archive", "arn:aws:s3:::raw-event-archive/*"],
+                )
+
+
 class SystemOneBucketContract(unittest.TestCase):
     def test_system1_is_versioned_and_its_ro_policy_is_read_only(self):
         bucket = next(b for b in _defaults()["object_storage_default_buckets"] if b["name"] == "system1")
