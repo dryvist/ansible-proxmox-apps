@@ -16,7 +16,12 @@ from ansible.template import Templar, trust_as_template
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tests.hermes_cron_pipeline_samples import SAMPLES  # noqa: E402
+from tests.hermes_cron_pipeline_samples import (  # noqa: E402
+    BASE_OUTCOMES,
+    FAILED_OUTCOMES,
+    FAILED_SAMPLES,
+    SAMPLES,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 PIPELINE_TEMPLATE = (
@@ -42,6 +47,11 @@ for (const event of accepted) {
   seen.add(key);
   unique.push(event);
 }
+"""
+
+# The dedupe and second suppress run after the eval/drop stages, so they live in a
+# second literal to keep this module under the per-file token budget.
+NODE_TAIL = r"""
 // Second suppress: one outcome per host, job and outcome inside its window.
 const seenOutcomes = new Set();
 const perRun = unique.filter(event => {
@@ -131,8 +141,8 @@ def test_sanitized_hermes_lines_produce_contract_events_after_native_suppress():
         [
             node,
             "-e",
-            NODE_EVAL,
-            json.dumps({"evalAdds": eval_adds, "dropFilter": pipeline["functions"][3]["filter"], "samples": SAMPLES}),
+            NODE_EVAL + NODE_TAIL,
+            json.dumps({"evalAdds": eval_adds, "dropFilter": pipeline["functions"][3]["filter"], "samples": SAMPLES + FAILED_SAMPLES}),
         ],
         capture_output=True,
         text=True,
@@ -145,27 +155,9 @@ def test_sanitized_hermes_lines_produce_contract_events_after_native_suppress():
     profiles = [event for event in unique if event["hermes_metric_event"] == "profile"]
     profile_copies = [event for event in output["events"] if event["hermes_metric_event"] == "profile"]
 
-    assert Counter((event["agent"], event["job"], event["outcome"]) for event in outcomes) == {
-        ("hermes-example/root", "cdef01234567", "delivered"): 1,
-        ("hermes-example/root", "def012345678", "silent"): 1,
-        ("hermes-example/unknown", "ef0123456789", "silent"): 1,
-        ("hermes-example/unknown", "f0123456789a", "undeliverable"): 1,
-        ("hermes-example/profile-example", "0123456789ab", "delivered"): 1,
-        ("hermes-example/root", "job-example", "failed"): 1,
-        ("hermes-example/root", "job-idle-example", "failed"): 1,
-        ("hermes-example/root", "111111111111", "failed"): 1,
-        ("hermes-example/root", "222222222222", "failed"): 1,
-        ("hermes-example/root", "333333333333", "failed"): 1,
-        ("hermes-example/root", "444444444444", "failed"): 1,
-        ("hermes-example/root", "555555555555", "failed"): 1,
-        ("hermes-example/root", "666666666666", "failed"): 1,
-        ("hermes-example/root", "777777777777", "failed"): 1,
-        ("hermes-example/root", "888888888888", "failed"): 1,
-        ("hermes-example/root", "999999999999", "failed"): 1,
-        ("hermes-example/root", "aaaaaaaaaaaa", "failed"): 1,
-        ("hermes-example/root", "job-blocked-example", "failed"): 1,
-        ("hermes-example/root", "job-scanner-example", "failed"): 1,
-    }
+    # All 19 expected outcomes live in the samples module so this assertion stays
+    # inside the per-file token budget.
+    assert Counter((event["agent"], event["job"], event["outcome"]) for event in outcomes) == BASE_OUTCOMES + FAILED_OUTCOMES
     assert len(outcomes) == 19
     assert len(starts) == 2
     assert {

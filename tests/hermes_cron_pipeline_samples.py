@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import Counter
+
 SAMPLES = [
     "<133>Nov 20 00:20:38 hermes-example hermes-file 2026-11-20 00:20:37,472 INFO cron.scheduler: Running job 'job-example' (ID: abcdef012345)",
     "<133>Nov 20 00:20:38 hermes-example hermes-profile 2026-11-20 00:20:37,472 INFO cron.scheduler: Running job 'job-example' (ID: abcdef012345)",
@@ -21,7 +23,11 @@ SAMPLES = [
     "<133>Nov 20 00:13:40 hermes-example hermes-profile 2026-11-20 00:13:40,222 WARNING cron.scheduler: Job 'f0123456789a': platform 'slack' not configured/enabled",
     "<30>Nov 20 00:20:38 hermes-example hermes[123456]: 2026-11-20 00:20:37,688 ERROR cron.scheduler: Job 'job-example' failed: TypeError: helper() missing 1 required positional argument: 'job_name'",
     "<133>Nov 20 00:20:38 hermes-example hermes-file 2026-11-20 00:20:37,688 ERROR cron.scheduler: Job 'job-example' failed: TypeError: helper() missing 1 required positional argument: 'job_name'",
-    # Upstream v0.23.0 failure messages that must also count as failed (one sample each).
+]
+
+# Upstream v0.23.0 failure messages that must also count as failed (one sample each); the
+# contract test appends these lines to SAMPLES, and FAILED_OUTCOMES carries their expectations.
+FAILED_SAMPLES = [
     "<133>Nov 20 01:00:00 hermes-example hermes-file 2026-11-20 01:00:00,000 ERROR cron.scheduler: Job 'job-idle-example' idle for 600s (inactivity limit 600s) | last_activity=tool call | iteration=3/25 | tool=bash",
     "<133>Nov 20 01:01:00 hermes-example hermes-file 2026-11-20 01:01:00,000 ERROR cron.scheduler: Error processing job 111111111111: RuntimeError: agent crashed",
     "<133>Nov 20 01:02:00 hermes-example hermes-file 2026-11-20 01:02:00,000 ERROR cron.scheduler: Job '222222222222': Restart-safe cron worker dispatch failed: FileNotFoundError: worker binary missing",
@@ -44,3 +50,30 @@ SAMPLES = [
     "<133>Nov 20 00:20:38 hermes-example hermes-file 2026-11-20 00:20:37,692 ERROR cron.scheduler: Traceback (most recent call last):",
     "<133>Nov 20 00:20:38 hermes-example hermes-file 2026-11-20 00:20:37,693 ERROR __main__: RuntimeError: TypeError: timeout configuration failed",
 ]
+
+# The per-job expectations for the upstream v0.23.0 failure variants (agent, job, outcome)
+# each appearing exactly once after the per-run suppress.
+BASE_OUTCOMES = Counter([
+    ("hermes-example/root", "cdef01234567", "delivered"),
+    ("hermes-example/root", "def012345678", "silent"),
+    ("hermes-example/unknown", "ef0123456789", "silent"),
+    ("hermes-example/unknown", "f0123456789a", "undeliverable"),
+    ("hermes-example/profile-example", "0123456789ab", "delivered"),
+    ("hermes-example/root", "job-example", "failed"),
+])
+
+FAILED_OUTCOMES = Counter([
+    ("hermes-example/root", "job-idle-example", "failed"),
+    ("hermes-example/root", "111111111111", "failed"),
+    ("hermes-example/root", "222222222222", "failed"),
+    ("hermes-example/root", "333333333333", "failed"),
+    ("hermes-example/root", "444444444444", "failed"),
+    ("hermes-example/root", "555555555555", "failed"),
+    ("hermes-example/root", "666666666666", "failed"),
+    ("hermes-example/root", "777777777777", "failed"),
+    ("hermes-example/root", "888888888888", "failed"),
+    ("hermes-example/root", "999999999999", "failed"),
+    ("hermes-example/root", "aaaaaaaaaaaa", "failed"),
+    ("hermes-example/root", "job-blocked-example", "failed"),
+    ("hermes-example/root", "job-scanner-example", "failed"),
+])
