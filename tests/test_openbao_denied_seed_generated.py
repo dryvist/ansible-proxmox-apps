@@ -1,8 +1,9 @@
 """A denied read must not mint fresh values over live credentials.
 
-Checked against the shared dryvist.homelab.openbao_secrets seed_generated.yml,
-which the app-secret seeding calls. Its stored-secret read is a uri task, and the
-local-values fallback block it routes to must never write to OpenBao.
+Checked against the shared openbao_secrets seed_generated.yml (the homelab
+collection), which the app-secret seeding calls. Its stored-secret read is a
+uri task, and the local-values fallback block it routes to must never write
+to OpenBao.
 """
 
 import unittest
