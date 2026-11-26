@@ -37,6 +37,23 @@ SAMPLES = [
     "<133>Nov 20 00:13:40 hermes-example hermes-profile 2026-11-20 00:13:40,222 WARNING cron.scheduler: Job 'f0123456789a': platform 'slack' not configured/enabled",
     "<30>Nov 20 00:20:38 hermes-example hermes[123456]: 2026-11-20 00:20:37,688 ERROR cron.scheduler: Job 'job-example' failed: TypeError: helper() missing 1 required positional argument: 'job_name'",
     "<133>Nov 20 00:20:38 hermes-example hermes-file 2026-11-20 00:20:37,688 ERROR cron.scheduler: Job 'job-example' failed: TypeError: helper() missing 1 required positional argument: 'job_name'",
+    # Upstream v0.23.0 failure messages that must also count as failed (one sample each).
+    "<133>Nov 20 01:00:00 hermes-example hermes-file 2026-11-20 01:00:00,000 ERROR cron.scheduler: Job 'job-idle-example' idle for 600s (inactivity limit 600s) | last_activity=tool call | iteration=3/25 | tool=bash",
+    "<133>Nov 20 01:01:00 hermes-example hermes-file 2026-11-20 01:01:00,000 ERROR cron.scheduler: Error processing job 111111111111: RuntimeError: agent crashed",
+    "<133>Nov 20 01:02:00 hermes-example hermes-file 2026-11-20 01:02:00,000 ERROR cron.scheduler: Job '222222222222': Restart-safe cron worker dispatch failed: FileNotFoundError: worker binary missing",
+    "<133>Nov 20 01:03:00 hermes-example hermes-file 2026-11-20 01:03:00,000 ERROR cron.scheduler: Job '333333333333': Restart-safe cron worker failed after handoff: ConnectionError: handoff lost",
+    "<133>Nov 20 01:04:00 hermes-example hermes-file 2026-11-20 01:04:00,000 ERROR cron.scheduler: Job '444444444444': Restart-safe cron worker exited with status 1 after adopting this execution, without writing a durable terminal state; whether side effects ran is unknown.",
+    "<133>Nov 20 01:05:00 hermes-example hermes-file 2026-11-20 01:05:00,000 ERROR cron.scheduler: Job '555555555555': script execution raised unexpectedly",
+    "<133>Nov 20 01:06:00 hermes-example hermes-file 2026-11-20 01:06:00,000 ERROR cron.scheduler: Job '666666666666': refusing to run — InvalidUserConfigError: config.yaml is not valid YAML",
+    "<133>Nov 20 01:07:00 hermes-example hermes-file 2026-11-20 01:07:00,000 ERROR cron.scheduler: Job '777777777777': refusing to run — unsafe provider/base_url pair could exfiltrate a stored credential: base_url points to an untrusted host",
+    "<133>Nov 20 01:08:00 hermes-example hermes-file 2026-11-20 01:08:00,000 ERROR cron.scheduler: Job '888888888888': monitor source failed: HTTPError: 503 Server Error",
+    "<133>Nov 20 01:09:00 hermes-example hermes-file 2026-11-20 01:09:00,000 ERROR cron.scheduler: Job '999999999999': Cron job has nothing to run: the prompt is blank and no script or skill(s) are set. Provide a prompt, a script, or at least one skill.",
+    "<133>Nov 20 01:10:00 hermes-example hermes-file 2026-11-20 01:10:00,000 ERROR cron.scheduler: Job 'aaaaaaaaaaaa': no_agent=True requires a script — with no agent and no script there is nothing for the job to run.",
+    "<133>Nov 20 01:11:00 hermes-example hermes-file 2026-11-20 01:11:00,000 WARNING cron.scheduler: Job 'job-blocked-example' (ID: bbbbbbbbbbbb): BLOCKED by pre-dispatch config validation — provider 'example' is not configured (no LLM call was made)",
+    # The injection scanner logs the assembled-prompt line and the job line for one run; both must
+    # carry the same job label so the per-run suppress folds them into a single failed sample.
+    "<133>Nov 20 01:12:00 hermes-example hermes-file 2026-11-20 01:12:00,000 WARNING cron.scheduler: Cron job 'job-scanner-example': assembled prompt blocked by injection scanner — detected instruction override",
+    "<133>Nov 20 01:12:00 hermes-example hermes-file 2026-11-20 01:12:00,001 WARNING cron.scheduler: Job 'job-scanner-example' (ID: cccccccccccc): blocked by prompt-injection scanner — detected instruction override",
     "<133>Nov 20 00:20:38 hermes-example hermes-file 2026-11-20 00:20:37,689 INFO cron.scheduler: Job 'job-example' completed successfully",
     "<133>Nov 20 00:20:38 hermes-example hermes-file 2026-11-20 00:20:37,690 ERROR cron.scheduler: Job 'job-example' session ended without a final assistant message (lifecycle=empty) — booking run as cron_incomplete_no_delivery",
     "<133>Nov 20 00:20:38 hermes-example hermes-file 2026-11-20 00:20:37,691 INFO cron.scheduler: Cron job 'job-example' handed to restart-safe worker pid=1234 execution=abcdef012345 dispatch=scoped",
@@ -173,8 +190,21 @@ def test_sanitized_hermes_lines_produce_contract_events_after_native_suppress():
         ("hermes-example/unknown", "f0123456789a", "undeliverable"): 1,
         ("hermes-example/profile-example", "0123456789ab", "delivered"): 1,
         ("hermes-example/root", "job-example", "failed"): 1,
+        ("hermes-example/root", "job-idle-example", "failed"): 1,
+        ("hermes-example/root", "111111111111", "failed"): 1,
+        ("hermes-example/root", "222222222222", "failed"): 1,
+        ("hermes-example/root", "333333333333", "failed"): 1,
+        ("hermes-example/root", "444444444444", "failed"): 1,
+        ("hermes-example/root", "555555555555", "failed"): 1,
+        ("hermes-example/root", "666666666666", "failed"): 1,
+        ("hermes-example/root", "777777777777", "failed"): 1,
+        ("hermes-example/root", "888888888888", "failed"): 1,
+        ("hermes-example/root", "999999999999", "failed"): 1,
+        ("hermes-example/root", "aaaaaaaaaaaa", "failed"): 1,
+        ("hermes-example/root", "job-blocked-example", "failed"): 1,
+        ("hermes-example/root", "job-scanner-example", "failed"): 1,
     }
-    assert len(outcomes) == 6
+    assert len(outcomes) == 19
     assert len(starts) == 2
     assert {
         (event["agent"], event["job_id"], event["job_name"])
