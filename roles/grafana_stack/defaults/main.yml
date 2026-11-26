@@ -176,35 +176,26 @@ grafana_stack_release_alert_rule_files:
   - tracker-exporter-health.yml
   - postgres-resilience.yml
 
-# Community dashboards fetched from grafana.com by ID at a PINNED revision.
-# Only dashboards whose metrics are already scraped are listed — importing one
-# with no matching exporter yields a dashboard of empty panels that reports a
-# successful import, which is worse than not having it.
-#
-# `revision` is pinned deliberately: "latest" would let an upstream edit change
-# what is deployed with no diff and no review. Bump it consciously; renovate can
-# track these the same way it tracks image pins.
-#
-# Popularity is the selection criterion the operator asked for, measured by
-# grafana.com download count rather than impression (checked 2026-08-31):
-#   1860  143.3M  Node Exporter Full        <- the de facto standard
-#   13659  51.4M  Blackbox Exporter (HTTP prober)
-#    7587  18.3M  Prometheus Blackbox Exporter
-#   17346   2.1M  Traefik Official Standalone
-# Note 14523 "Blackbox Exporter Node" is frequently suggested but has only ~3k
-# downloads; 13659 and 7587 are the ones the community actually uses.
 grafana_stack_community_dashboards:
-  - {id: 1860, revision: 45, file: node-exporter-full.json}
-  - {id: 13659, revision: 1, file: blackbox-http-prober.json}
-  - {id: 7587, revision: 3, file: blackbox-exporter.json}
-  - {id: 25591, revision: 1, file: llama-cpp-monitoring.json}
-  - {id: 17346, revision: 9, file: traefik-official.json}
-
-# Community dashboards ship a `${DS_PROMETHEUS}` input placeholder for the UI
-# import wizard. File provisioning has no wizard, so the placeholder is replaced
-# with the datasource uid provisioned above or every panel queries a datasource
-# that does not exist.
-grafana_stack_community_datasource_uid: prometheus
+  - dashboard: "7242"
+    name: "LLM Spans (Grafana)"
+    title: "LLM spans"
+    folder: "AI Observability"
+    overwrite: true
+    tags: []
+  - dashboard: "21029"
+    name: "LiteLLM (LiteLLM)"
+    title: "LLM proxy (LiteLLM)"
+    folder: "AI Observability"
+    overwrite: true
+    tags: []
+# Datasource the community dashboards import against. The public LLM
+# dashboards query the LLM-proxy metrics, so they point at this stack's
+# own VictoriaMetrics rather than the prometheus_stack datasource above.
+# The uid is a fixed constant — a role-level var, not an Ansible variable,
+# so the community-datasource render task and the import task that rewrites
+# the datasource id agree without a lookup.
+grafana_stack_community_datasource_uid: grafana-stack-prometheus
 
 # --- Unified alerting (file-provisioned) -------------------------------------
 # Contact point, notification policy and alert rules under
@@ -245,48 +236,5 @@ grafana_stack_alert_repeat_interval: 24h
 grafana_stack_alert_warning_repeat_interval: 24h
 grafana_stack_alert_critical_repeat_interval: 4h
 
-# Thresholds — declared once here, never as a magic number in the rule file.
-grafana_stack_alert_wan_latency_seconds: 0.5
-grafana_stack_alert_disk_levels:
-  - {pct: 80, uid: disk-usage-warning, title: Disk usage warning, severity: info}
-  - {pct: 90, uid: disk-usage-high, title: Disk usage high, severity: warning}
-  - {pct: 95, uid: disk-usage-critical, title: Disk usage critical, severity: critical}
-grafana_stack_alert_secret_age_days: 47
-grafana_stack_alert_workstation_load5: 24
-grafana_stack_alert_pve_load_per_core_ratio: 2.0
-# Last successful Git mirror sync age before a warning fires.
-grafana_stack_alert_git_mirror_max_age_seconds: 1800
-# Expected Hindsight replica count — derived from the hindsight-tagged
-# inventory entries, same tag-filter source prometheus_stack_hindsight_targets
-# uses, so an HA expansion needs no edit here.
-grafana_stack_alert_hindsight_min_replicas: >-
-  {{ tofu_data['containers'] | default({}) | dict2items
-     | selectattr('value.tags', 'defined')
-     | selectattr('value.tags', 'contains', 'hindsight')
-     | list | length }}
-# Oldest Phoenix PostgreSQL transaction age in seconds before a warning fires.
-grafana_stack_alert_phoenix_postgres_max_transaction_seconds: 600
-
-# PVE quorum alerts count commissioned exporter targets from inventory.
-grafana_stack_alert_pve_expected_nodes: >-
-  {{ pve_exporter_scrape_targets
-     | default(undef(), true)
-     | mandatory('PVE exporter targets must derive from commissioned-node inventory')
-     | length }}
-grafana_stack_alert_pve_quorum_for: 2m
-
-# AI alert rules (templates/alerting/rules-ai.yml.j2). Each list renders into
-# a PromQL regex, anchored by the label matcher.
-# Virtual-key aliases whose traffic must stay on zero-data-retention backends.
-grafana_stack_alert_zdr_only_keys:
-  - litellm-local-workstation
-  - hindsight
-# Model groups and models without zero data retention.
-grafana_stack_alert_zdr_false_models:
-  - free-zdrless
-# Hermes virtual-key alias pattern.
-grafana_stack_alert_hermes_key_regex: "hermes-.*"
-# Hermes server errors within 15 minutes before hermes-llm-failures fires.
-grafana_stack_alert_hermes_error_count: 3
-grafana_stack_alert_hermes_scheduler_max_heartbeat_age_seconds: 600
-grafana_stack_alert_hermes_max_last_success_age_seconds: 7200
+# Alert thresholds live in vars/alerts.yml, loaded via vars_files in
+# tasks/provisioning.yml before the alert rule templates render.

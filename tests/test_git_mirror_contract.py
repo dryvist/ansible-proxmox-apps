@@ -73,13 +73,14 @@ class GitMirrorContract(unittest.TestCase):
 
     def test_grafana_git_mirror_alerts_check_freshness_and_sync_status(self):
         defaults = yaml.safe_load((ROOT / "roles/grafana_stack/defaults/main.yml").read_text())
+        alerts = yaml.safe_load((ROOT / "roles/grafana_stack/vars/alerts.yml").read_text())
         template = Environment().from_string(
             (ROOT / "roles/grafana_stack/templates/alerting/rules-git-mirror.yml.j2").read_text()
         )
         render_vars = {
             "grafana_stack_alert_folder": "Alerting",
             "grafana_stack_alert_eval_interval": "1m",
-            "grafana_stack_alert_git_mirror_max_age_seconds": defaults[
+            "grafana_stack_alert_git_mirror_max_age_seconds": alerts[
                 "grafana_stack_alert_git_mirror_max_age_seconds"
             ],
         }
