@@ -38,6 +38,10 @@ for the connection plugin, not the container's IP. To get the actual
 container IP for service testing, use `tofu_data.containers` from the
 resolved inventory.
 
+Splunk Web checks use the proxy URL `https://splunk.{{ ingress_domain }}`.
+Management API checks use the existing `splunk_mgmt_base_url` variable. Keep
+both checks on their proxy URLs; `splunk_host` is for direct HEC traffic.
+
 ### Port Constants
 
 Ports are defined once in tofu-proxmox `locals.tf`
@@ -48,7 +52,6 @@ by `inventory/load_tofu.yml`:
 ```yaml
 # Service ports
 splunk_hec_port: "{{ tofu_data.constants.service_ports.splunk_hec }}"
-splunk_web_port: "{{ tofu_data.constants.service_ports.splunk_web }}"
 
 # Syslog ports (all assigned ports as a list)
 syslog_ports: "{{ tofu_data.constants.syslog_ports.values() | list }}"
@@ -155,10 +158,14 @@ Optional pytest overrides:
 
 | Variable | Purpose |
 | --- | --- |
-| `SPLUNK_MGMT_URL` | Override the Splunk management URL used for export searches |
+| `SPLUNK_MGMT_URL` | Override the default `splunk_mgmt_base_url` used for export searches |
 | `SPLUNK_HEC_URL` | Override the Splunk HEC base URL |
 | `PIPELINE_POLL_TIMEOUT_SECONDS` | Override sentinel search timeout, default `120` |
 | `PIPELINE_POLL_INTERVAL_SECONDS` | Override sentinel search interval, default `10` |
+
+The Splunk Web and management proxy URLs are built from `PROXMOX_SUBDOMAIN`,
+the same ingress domain the Ansible `ingress_domain` variable reads. Tests
+that need them skip when it is unset and no override is given.
 
 #### Non-secret configuration
 
