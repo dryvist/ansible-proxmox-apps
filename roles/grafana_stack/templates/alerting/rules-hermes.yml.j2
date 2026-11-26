@@ -1,0 +1,303 @@
+## Managed by Ansible (grafana_stack role) — do not edit by hand.
+## Grafana unified-alerting file provisioning: Hermes Agent alert rules
+## (cron scheduler and Slack gateway).
+## Split out of rules.yml.j2 to keep that file under its token budget
+## (.token-limits.yaml) — same "prometheus" datasource and gating condition,
+## just a separate rule group in the same alert folder.
+##
+## Metric sources: the gateway exports hermes_gateway_up,
+## hermes_gateway_restart_requested, hermes_cron_scheduler_*,
+## hermes_cron_jobs_* and hermes_cron_store_* through its OpenTelemetry
+## exporter. hermes_cron_run_outcome{agent,job,outcome} is a gauge from the
+## cribl_stream hermes_cron_to_metrics pipeline; its outcome values are
+## delivered, silent, undeliverable and failed, and only "failed" is a
+## failure — silent and undeliverable are expected, handled outcomes.
+##
+## Absence vs. value: hermes-gateway-down uses noDataState NoData, so a
+## vanished hermes_gateway_up series stays quiet there; hermes-metrics-absent
+## is the rule that alerts on absence, via noDataState Alerting on
+## count(hermes_gateway_up) with a 15-minute lookback and a 15-minute for.
+## The remaining rules read live values and use noDataState NoData as well.
+##
+## hermes_cron_store_skipped_runs carries no _total suffix, so the exporter
+## ships it as a gauge rather than a counter: the skipped-runs rule takes
+## delta() over 1h instead of increase().
+apiVersion: 1
+
+groups:
+{% if grafana_stack_prometheus_url | trim | length > 0 %}
+  - orgId: 1
+    name: hermes-agent
+    folder: {{ grafana_stack_alert_folder }}
+    interval: {{ grafana_stack_alert_eval_interval }}
+    rules:
+      - uid: hermes-gateway-down
+        title: Hermes gateway down
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: min(hermes_gateway_up)
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+              refId: B
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        labels: {severity: critical}
+        annotations:
+          summary: >-
+            Hermes gateway reports down: hermes_gateway_up is
+            {{ '{{' }} $values.A {{ '}}' }}. Runbook: check the Hermes cron
+            output channel.
+
+      - uid: hermes-metrics-absent
+        title: Hermes gateway metrics absent
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: count(hermes_gateway_up)
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+              refId: B
+        for: 15m
+        noDataState: Alerting
+        execErrState: Error
+        labels: {severity: critical}
+        annotations:
+          summary: >-
+            No hermes_gateway_up series has been scraped for 15 minutes, so
+            the Hermes gateway is unobservable. Runbook: check the Hermes
+            cron output channel.
+
+      - uid: hermes-cron-scheduler-stalled
+        title: Hermes cron scheduler stalled
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: max(hermes_cron_scheduler_heartbeat_age_seconds)
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [{{ grafana_stack_alert_hermes_scheduler_max_heartbeat_age_seconds }}]}
+              refId: B
+        for: 10m
+        noDataState: NoData
+        execErrState: Error
+        labels: {severity: critical}
+        annotations:
+          summary: >-
+            The Hermes cron scheduler heartbeat is {{ '{{' }} $values.A {{ '}}' }}
+            seconds old (hermes_cron_scheduler_heartbeat_age_seconds), above
+            {{ grafana_stack_alert_hermes_scheduler_max_heartbeat_age_seconds }}.
+            Runbook: check the Hermes cron output channel.
+
+      - uid: hermes-cron-store-unwritable
+        title: Hermes cron store unwritable
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: min(hermes_cron_store_writable)
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+              refId: B
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        labels: {severity: critical}
+        annotations:
+          summary: >-
+            The Hermes cron store is not writable: hermes_cron_store_writable
+            is {{ '{{' }} $values.A {{ '}}' }}. Runbook: check the Hermes cron
+            output channel.
+
+      - uid: hermes-cron-jobs-overdue
+        title: Hermes cron jobs overdue
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: max(hermes_cron_jobs_overdue)
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+              refId: B
+        for: 30m
+        noDataState: NoData
+        execErrState: Error
+        labels: {severity: warning}
+        annotations:
+          summary: >-
+            {{ '{{' }} $values.A {{ '}}' }} Hermes cron job(s) are overdue
+            (hermes_cron_jobs_overdue). Runbook: check the Hermes cron output
+            channel.
+
+      - uid: hermes-cron-no-recent-success
+        title: Hermes cron has no recent success
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: max(hermes_cron_scheduler_last_success_age_seconds)
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [{{ grafana_stack_alert_hermes_max_last_success_age_seconds }}]}
+              refId: B
+        for: 15m
+        noDataState: NoData
+        execErrState: Error
+        labels: {severity: warning}
+        annotations:
+          summary: >-
+            The last successful Hermes cron run was {{ '{{' }} $values.A {{ '}}' }}
+            seconds ago (hermes_cron_scheduler_last_success_age_seconds),
+            above {{ grafana_stack_alert_hermes_max_last_success_age_seconds }}.
+            Runbook: check the Hermes cron output channel.
+
+      - uid: hermes-cron-skipped-runs
+        title: Hermes cron skipped runs rising
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: max(delta(hermes_cron_store_skipped_runs[1h]))
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+              refId: B
+        noDataState: NoData
+        execErrState: Error
+        labels: {severity: warning}
+        annotations:
+          summary: >-
+            hermes_cron_store_skipped_runs rose by {{ '{{' }} $values.A {{ '}}' }}
+            over the last hour. Runbook: check the Hermes cron output channel.
+
+      - uid: hermes-gateway-restart-pending
+        title: Hermes gateway restart pending
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: max(hermes_gateway_restart_requested)
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+              refId: B
+        for: 15m
+        noDataState: NoData
+        execErrState: Error
+        labels: {severity: warning}
+        annotations:
+          summary: >-
+            A Hermes gateway restart has been requested for 15 minutes:
+            hermes_gateway_restart_requested is {{ '{{' }} $values.A {{ '}}' }}.
+            Runbook: check the Hermes cron output channel.
+
+      - uid: hermes-cron-run-failures
+        title: Hermes cron run failures
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: count(hermes_cron_run_outcome{outcome="failed"})
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+              refId: B
+        for: 10m
+        noDataState: NoData
+        execErrState: Error
+        labels: {severity: warning}
+        annotations:
+          summary: >-
+            {{ '{{' }} $values.A {{ '}}' }} Hermes cron run series report
+            outcome="failed" (hermes_cron_run_outcome). Runbook: check the
+            Hermes cron output channel.
+{% endif %}
