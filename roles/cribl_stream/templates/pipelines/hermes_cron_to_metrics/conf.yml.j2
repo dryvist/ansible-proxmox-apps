@@ -40,17 +40,33 @@ functions:
             (hermes_source === 'hermes-file' ? 'root' : 'unknown'))
         - name: job_name
           value: >-
-            ((/^Running job '([^']+)' \(ID: [0-9a-f]{12}\)$/.exec(hermes_message) || [])[1]) || ((/^Job '([^']+)' failed: /.exec(hermes_message) || [])[1]) || ''
+            ((/^Running job '([^']+)' \(ID: [0-9a-f]{12}\)$/.exec(hermes_message) || [])[1]) ||
+            ((/^Job '([^']+)' failed: /.exec(hermes_message) || [])[1]) ||
+            ((/^Job '([^']+)' idle for \d+s \(inactivity limit \d+s\)/.exec(hermes_message) || [])[1]) ||
+            ((/^Job '([^']+)' \(ID: [0-9a-f]{12}\): (?:BLOCKED by pre-dispatch config validation|blocked by prompt-injection scanner) — /.exec(hermes_message) || [])[1]) ||
+            ((/^Cron job '([^']+)': assembled prompt blocked by injection scanner — /.exec(hermes_message) || [])[1]) || ''
         - name: job_id
           value: >-
-            ((/^Running job '[^']+' \(ID: ([0-9a-f]{12})\)$/.exec(hermes_message) || [])[1]) || ((/^Job '([0-9a-f]{12})'(?:\:| \(no_agent\)\:)/.exec(hermes_message) || [])[1]) || ''
+            ((/^Running job '[^']+' \(ID: ([0-9a-f]{12})\)$/.exec(hermes_message) || [])[1]) ||
+            ((/^Job '([0-9a-f]{12})'(?:\:| \(no_agent\)\:)/.exec(hermes_message) || [])[1]) ||
+            ((/^Error processing job ([0-9a-f]{12}): /.exec(hermes_message) || [])[1]) ||
+            ((/^Job '[^']+' \(ID: ([0-9a-f]{12})\): /.exec(hermes_message) || [])[1]) || ''
         - name: outcome
           value: >-
             /^Job '[0-9a-f]{12}': delivered to /.test(hermes_message) ? 'delivered' :
             /^Job '[0-9a-f]{12}': agent returned \[SILENT\] — skipping delivery$/.test(hermes_message) ||
             /^Job '[0-9a-f]{12}' \(no_agent\): empty stdout — silent run$/.test(hermes_message) ? 'silent' :
             /^Job '[0-9a-f]{12}': platform '[^']+' not configured\/enabled$/.test(hermes_message) ? 'undeliverable' :
-            /^Job '[^']+' failed: /.test(hermes_message) ? 'failed' : ''
+            /^Job '[^']+' failed: /.test(hermes_message) ||
+            /^Job '[^']+' idle for \d+s \(inactivity limit \d+s\)/.test(hermes_message) ||
+            /^Error processing job [0-9a-f]{12}: /.test(hermes_message) ||
+            /^Job '[0-9a-f]{12}': Restart-safe cron worker (?:dispatch failed: |failed after handoff: |exited with status -?\d+ after adopting this execution)/.test(hermes_message) ||
+            /^Job '[0-9a-f]{12}': script execution raised unexpectedly$/.test(hermes_message) ||
+            /^Job '[0-9a-f]{12}': refusing to run — /.test(hermes_message) ||
+            /^Job '[0-9a-f]{12}': monitor source failed: /.test(hermes_message) ||
+            /^Job '[0-9a-f]{12}': (?:Cron job has nothing to run: |no_agent=True requires a script — )/.test(hermes_message) ||
+            /^Job '[^']+' \(ID: [0-9a-f]{12}\): (?:BLOCKED by pre-dispatch config validation|blocked by prompt-injection scanner) — /.test(hermes_message) ||
+            /^Cron job '[^']+': assembled prompt blocked by injection scanner — /.test(hermes_message) ? 'failed' : ''
   - id: eval
     filter: "true"
     disabled: false
@@ -63,7 +79,7 @@ functions:
             outcome ? 'outcome' : ''
         - name: job
           value: >-
-            outcome === 'failed' ? job_name : job_id
+            outcome === 'failed' ? (job_name || job_id) : job_id
         - name: hermes_info_value
           value: "1"
   # The journal repeats file lines (WARNING and above), so only the file copies count; Suppress then folds the
