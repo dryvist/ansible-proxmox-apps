@@ -25,5 +25,5 @@ export RUN_ANSIBLE_RECAP_CHECK="${RUN_ANSIBLE_RECAP_CHECK:-1}"
 export RUN_ANSIBLE_LOG_DIR="${RUN_ANSIBLE_LOG_DIR:-$(git rev-parse --show-toplevel)/.ansible-run-logs}"
 
 # renovate: datasource=github-releases depName=jpe-ansible/homelab-contracts
-HOMELAB_CONTRACTS_REF=v5.77.0
+HOMELAB_CONTRACTS_REF=v5.78.0
 exec nix run "github:jpe-ansible/homelab-contracts/${HOMELAB_CONTRACTS_REF}#run-ansible" -- "$@"
