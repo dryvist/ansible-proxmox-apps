@@ -28,7 +28,8 @@
   ansible.builtin.set_fact:
     object_storage_iam_ready: >-
       {{ (object_storage_iam_bao_addr | length > 0)
-         and (lookup('env', 'BAO_TOKEN') | length > 0) }}
+         and (lookup('env', 'BAO_TOKEN') | length > 0)
+         and (tofu_data is defined) }}
 
 - name: WARN -- per-bucket RustFS IAM is not configured, buckets stay on the root credential
   ansible.builtin.debug:
@@ -36,7 +37,26 @@
       BAO_ADDR / BAO_TOKEN are not both set, so no per-bucket
       RustFS IAM user was generated or created this run. Every bucket keeps
       using the shared root credential until this is provided.
-  when: not object_storage_iam_ready
+  when:
+    - not object_storage_iam_ready
+    - tofu_data is defined
+
+# The public machine-S3 endpoint is derived from the tofu-owned ingress
+# table. When the published inventory did not resolve this run (the
+# store-down repair run), that table is absent and composing the endpoint
+# from a guessed hostname would silently point every bucket's credential at
+# a dead or wrong host — so the whole phase skips instead.
+- name: WARN -- per-bucket RustFS IAM skipped, the ingress route cannot be read
+  ansible.builtin.debug:
+    msg: >-
+      The published inventory did not resolve this run, so the ingress route
+      table is not available and the machine-S3 endpoint cannot be derived.
+      No per-bucket RustFS IAM user was generated or created this run; every
+      bucket keeps using the shared root credential until a converge that
+      resolves the published inventory.
+  when:
+    - not object_storage_iam_ready
+    - tofu_data is not defined
 
 - name: Seed each bucket's configured credentials through the shared task
   when: object_storage_iam_ready
