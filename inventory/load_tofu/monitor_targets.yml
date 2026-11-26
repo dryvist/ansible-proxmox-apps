@@ -44,7 +44,6 @@
     monitor_targets_cribl_edge_port: 9420
     monitor_targets_cribl_stream_port: 9000
     monitor_targets_cribl_health_path: "/api/v1/health"
-    monitor_targets_splunk_mgmt_port: 8089
     monitor_targets_splunk_hec_port: 8088
     monitor_targets_hindsight_port: >-
       {{ tofu_data.constants.memory_ports.hindsight_api
@@ -118,13 +117,21 @@
   loop_control:
     label: "{{ item.key }}"
 
-- name: Add Splunk management-port TCP targets when the Splunk VM exists
+- name: Add Splunk management HTTP and HEC TCP targets when the Splunk VM exists
   ansible.builtin.set_fact:
     monitor_targets_tcp: >-
       {{ monitor_targets_tcp | default([]) + [
-           {'name': 'splunk-mgmt', 'fqdn': _fqdn, 'port': monitor_targets_splunk_mgmt_port, 'group': 'service'},
            {'name': 'splunk-hec', 'fqdn': _fqdn, 'port': monitor_targets_splunk_hec_port, 'group': 'service'},
          ] }}
+    monitor_targets_http: >-
+      {{ monitor_targets_http | default([]) + [{
+           'name': 'splunk-mgmt',
+           'fqdn': 'splunk-mgmt.' ~ ingress_domain,
+           'scheme': 'https',
+           'path': '/services/server/info',
+           'expect_status': [401],
+           'group': 'service',
+         }] }}
   vars:
     _fqdn: "{{ tofu_data.splunk_vm.splunk.hostname }}.{{ tofu_data.domain }}"
   when:
