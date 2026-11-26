@@ -333,38 +333,40 @@ class ObjectStorageProbes(unittest.TestCase):
     """head-bucket returns 403 and 404 with no rc-level distinction."""
 
     REL = ROOT / "roles/object_storage/tasks/buckets.yml"
+    LIFECYCLE_REL = ROOT / "roles/object_storage/tasks/lifecycle.yml"
     CASES = [
-        ("Check which default buckets already exist", "object_storage_bucket_check"),
-        ("Read current versioning status", "object_storage_versioning_current"),
+        ("Check which default buckets already exist", "object_storage_bucket_check", REL),
+        ("Read current versioning status", "object_storage_versioning_current", REL),
         (
-            "Read current lifecycle configuration on versioned buckets",
+            "Read current lifecycle configuration on managed buckets",
             "object_storage_lifecycle_current",
+            LIFECYCLE_REL,
         ),
     ]
 
-    def _fails(self, task_name, var, result):
-        return _all(_find(self.REL, task_name)["failed_when"], {var: result})
+    def _fails(self, task_name, var, result, rel):
+        return _all(_find(rel, task_name)["failed_when"], {var: result})
 
     def test_a_DENIED_probe_fails_every_site(self):
-        for task_name, var in self.CASES:
+        for task_name, var, rel in self.CASES:
             with self.subTest(task=task_name):
                 self.assertTrue(
-                    self._fails(task_name, var, _cli(255, "An error occurred (403)"))
+                    self._fails(task_name, var, _cli(255, "An error occurred (403)"), rel)
                 )
 
     def test_a_genuinely_absent_object_does_NOT_fail(self):
-        for task_name, var in self.CASES:
+        for task_name, var, rel in self.CASES:
             with self.subTest(task=task_name):
                 self.assertFalse(
                     self._fails(
-                        task_name, var, _cli(255, "An error occurred (404) Not Found")
+                        task_name, var, _cli(255, "An error occurred (404) Not Found"), rel
                     )
                 )
 
     def test_success_does_NOT_fail(self):
-        for task_name, var in self.CASES:
+        for task_name, var, rel in self.CASES:
             with self.subTest(task=task_name):
-                self.assertFalse(self._fails(task_name, var, _cli(0, "")))
+                self.assertFalse(self._fails(task_name, var, _cli(0, ""), rel))
 
 
 class TechnitiumZoneList(unittest.TestCase):

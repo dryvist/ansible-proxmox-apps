@@ -63,10 +63,10 @@ class BucketRoleSelection(unittest.TestCase):
             "{{ object_storage_iam_bucket_config.iam_roles | default(object_storage_iam_roles) }}",
         )
 
-    def test_only_terrakube_overrides_the_default_roles(self):
+    def test_only_terrakube_and_langfuse_override_the_default_roles(self):
         roles = ["ro", "rw"]
         overrides = [bucket["name"] for bucket in _buckets() if bucket.get("iam_roles", roles) != roles]
-        self.assertEqual(overrides, ["terrakube"])
+        self.assertEqual(overrides, ["terrakube", "langfuse"])
 
 
 if __name__ == "__main__":
