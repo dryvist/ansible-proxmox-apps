@@ -33,17 +33,39 @@
           }
         ]
       }
+    _expected_backups_doc: |
+      {
+        "Rules": [
+          {
+            "ID": "expire-noncurrent",
+            "Status": "Enabled",
+            "Filter": {"Prefix": ""},
+            "NoncurrentVersionExpiration": {"NoncurrentDays": 30},
+            "Expiration": {"ExpiredObjectDeleteMarker": true}
+          },
+          {
+            "ID": "expire-noncurrent-postgres",
+            "Status": "Enabled",
+            "Filter": {"Prefix": "postgres/"},
+            "NoncurrentVersionExpiration": {"NoncurrentDays": 1},
+            "Expiration": {"ExpiredObjectDeleteMarker": true}
+          }
+        ]
+      }
   tasks:
     - name: Load the object-storage role defaults
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../../roles/object_storage/defaults/main/00-core.yml"
         name: _object_storage_defaults
 
-    - name: Publish the backups bucket declaration for this play
+    - name: Publish the bucket declarations for this play
       ansible.builtin.set_fact:
         _backups_bucket: >-
           {{ _object_storage_defaults.object_storage_default_buckets
              | selectattr('name', 'equalto', 'dryvist-homelab-backups') | first }}
+        _langfuse_bucket: >-
+          {{ _object_storage_defaults.object_storage_default_buckets
+             | selectattr('name', 'equalto', 'langfuse') | first }}
 
     - name: Render the lifecycle document for a bucket without prefix rules
       ansible.builtin.template:
@@ -86,6 +108,37 @@
       loop_control:
         label: "{{ item }}"
 
+    - name: Render the lifecycle document from the Langfuse bucket declaration
+      ansible.builtin.template:
+        src: "{{ _lifecycle_template }}"
+        dest: "{{ _fixture_dir }}/lifecycle-langfuse.json"
+        mode: "0644"
+      vars:
+        item: "{{ _langfuse_bucket }}"
+        object_storage_noncurrent_expiration_days: 3650
+
+    - name: Read the rendered Langfuse lifecycle document
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/lifecycle-langfuse.json"
+      register: _rendered_langfuse
+
+    - name: Assert Langfuse renders exactly the base cleanup and current event expiry
+      vars:
+        _expected_rules:
+          - ID: expire-noncurrent
+            Status: Enabled
+            Filter: {Prefix: ""}
+            NoncurrentVersionExpiration: {NoncurrentDays: 1}
+            Expiration: {ExpiredObjectDeleteMarker: true}
+          - ID: expire-current-events
+            Status: Enabled
+            Filter: {Prefix: events/}
+            Expiration: {Days: 90}
+      ansible.builtin.assert:
+        that:
+          - (_rendered_langfuse.content | b64decode | from_json) == {'Rules':_expected_rules}
+          - _langfuse_bucket.versioning is undefined
+
     # from_json in every assertion here is also the valid-JSON check.
     - name: Assert a bucket without prefix rules renders the historical document
       vars:
@@ -103,6 +156,7 @@
         _rules: "{{ _backups.Rules }}"
       ansible.builtin.assert:
         that:
+          - _rendered_docs.results[1].content | b64decode == _expected_backups_doc
           - _rules | length == 2
           - _rules[0].ID == 'expire-noncurrent'
           - _rules[0].NoncurrentVersionExpiration.NoncurrentDays == 30
