@@ -15,6 +15,7 @@
   vars:
     _role_dir: "{{ playbook_dir }}/../../roles/dashboard_catalog_services"
     dashboard_catalog_base_domain: "pve.example.test"
+    splunk_mgmt_base_url: "https://splunk-mgmt.example.test"
     tofu_data:
       constants:
         llm_router_probe_paths:
@@ -75,6 +76,13 @@
           port: 4000
           sso: true
           dashboard: false
+        # Splunk Web is SSO-protected, but its management route has no SSO and
+        # returns 401 through the proxy when Splunk is reachable.
+        - name: splunk
+          group: siem
+          ip: "192.0.2.60"
+          port: 8000
+          sso: true
   tasks:
     - name: Build the catalog
       ansible.builtin.include_role:
@@ -85,11 +93,11 @@
         quiet: true
         that:
           - "'homarr' in (dashboard_catalog_services | map(attribute='name') | list)"
-          - dashboard_catalog_services | length == 6
+          - dashboard_catalog_services | length == 7
         fail_msg: >-
           A fronted service is missing from the catalog — the board would
           silently omit it in the browser while the converge stays green.
-        success_msg: "All six fixture rows are catalogued, homarr included."
+        success_msg: "All seven fixture rows are catalogued."
 
     # The audience split the boards read. openbao is the one ui:false row in
     # this fixture, so the two sides are disjoint and cover every board tile.
@@ -98,8 +106,9 @@
         quiet: true
         that:
           - >-
-            (dashboard_catalog_ui_services | map(attribute='name') | sort | list)
+            (dashboard_catalog_ui_services | map(attribute='name') | reject('equalto', 'splunk') | sort | list)
             == ['hermes-agent', 'homarr', 'llm', 'proxmox', 'vikunja']
+          - "'splunk' in (dashboard_catalog_ui_services | map(attribute='name') | list)"
           - dashboard_catalog_api_services | map(attribute='name') | list == ['openbao']
         fail_msg: >-
           The UI and API sides do not partition the board tiles by ui. A row on the
@@ -158,18 +167,17 @@
         _by_name: "{{ dict(dashboard_catalog_services | map(attribute='name') | zip(dashboard_catalog_services)) }}"
 
     # The distinction the whole probe design rests on.
-    - name: Probes address the guest directly, never the public URL
+    - name: Probes address guests directly except Splunk's management proxy
       ansible.builtin.assert:
         quiet: true
         that:
           - _by_name['vikunja'].probe_url == 'http://10.0.0.10:3456'
           - _by_name['openbao'].probe_url == 'http://10.0.0.30:8200'
-          - dashboard_catalog_services | selectattr('probe_url', 'search', 'pve.example.test') | list | length <= 1
+          - _by_name.splunk.probe_url == (splunk_mgmt_base_url ~ '/services/server/info')
         fail_msg: >-
-          A probe points at the public hostname. It issues an unauthenticated
-          HEAD, so Authelia answers with a login page and EVERY service reports
-          down while the converge stays green.
-        success_msg: "Probes hit the guest; links hit the vhost."
+          Existing guest probes must keep bypassing SSO, while Splunk's
+          unauthenticated management endpoint must pass through its proxy.
+        success_msg: "Guest probes remain direct and the Splunk probe uses its management proxy."
       vars:
         _by_name: "{{ dict(dashboard_catalog_services | map(attribute='name') | zip(dashboard_catalog_services)) }}"
 
@@ -214,7 +222,7 @@
         quiet: true
         that:
           - "'llm-ui-legacy' in (dashboard_catalog_services_monitor | map(attribute='name') | list)"
-          - dashboard_catalog_services_monitor | length == 7
+          - dashboard_catalog_services_monitor | length == 8
         fail_msg: >-
           dashboard=false dropped a route from monitoring, not just board
           tiling — a broken compat redirect would silently go unmonitored
