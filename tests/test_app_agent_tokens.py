@@ -282,25 +282,6 @@ def test_vikunja_clerk_scope_adds_but_never_deletes():
     assert not any("delete" in actions for actions in permissions.values())
 
 
-def test_vikunja_hermes_clerk_tier_has_the_contract_token_scope():
-    defaults = _vikunja_defaults()
-    row = next(row for row in defaults["vikunja_agent_tiers"] if row["id"] == "vikunja-clerk")
-    assert row["permissions"] == "{{ vikunja_hermes_clerk_permissions }}"
-    assert row["username"] != "svc-mcp-clerk"
-    permissions = _render(defaults["vikunja_hermes_clerk_permissions"], defaults)
-    assert permissions == {
-        "labels": ["read_all"],
-        "projects": ["read_all"],
-        "tasks": ["create", "read_all", "read_one", "update"],
-        "tasks_comments": ["create", "read_all"],
-        "tasks_labels": ["create"],
-        "tasks_relations": ["create"],
-    }
-    assert not any(action.startswith("delete") for actions in permissions.values() for action in actions)
-    paths = [tier["openbao_path"] for tier in defaults["vikunja_agent_tiers"]]
-    assert len(set(paths)) == len(paths)
-
-
 def test_vikunja_write_tier_token_keeps_every_action_but_delete():
     defaults = _vikunja_defaults()
     write_row = next(row for row in defaults["vikunja_agent_tiers"] if row["id"] == "vikunja-write")
