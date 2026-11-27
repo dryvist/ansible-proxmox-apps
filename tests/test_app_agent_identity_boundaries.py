@@ -106,7 +106,7 @@ def test_zammad_agent_write_defaults_and_exact_access_are_single_sourced():
 
 def test_tier_readbacks_cover_effective_permission_and_admin_refusal():
     reconcile = _yaml(ROOT / "roles/vikunja/tasks/agent_tier_reconcile.yml")
-    reads = [t for t in reconcile if "/api/v1/projects/{{ item }}" in str(t.get("ansible.builtin.uri", ""))]
+    reads = [t for t in reconcile if "{{ vikunja_mcp_url }}/projects/{{ item }}" in str(t.get("ansible.builtin.uri", ""))]
     assert reads and reads[0].get("no_log") is True
     checks = [t for t in reconcile if "attribute='x_max_permission'" in str(t.get("ansible.builtin.assert", ""))]
     assert checks and "vikunja_agent_tier.share_permission" in str(checks[0])
