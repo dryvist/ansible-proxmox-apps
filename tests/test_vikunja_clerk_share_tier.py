@@ -19,7 +19,8 @@ def test_clerk_share_tier_reuses_the_clerk_identity_and_the_dify_allowed_list():
     assert tier["username"] == "svc-mcp-clerk"
     assert tier["share_permission"] == 1
     assert tier["password_field"] == "vikunja_clerk_share_password"
-    assert "DIFY_VIKUNJA_CLERK_ALLOWED_PROJECTS" in tier["project_allowlist"]
+    assert tier["project_allowlist"] == "{{ vikunja_clerk_project_allowlist }}"
+    assert "DIFY_VIKUNJA_CLERK_ALLOWED_PROJECTS" in CLERK["vikunja_clerk_project_allowlist"]
     assert not {"token_tier", "openbao_path", "openbao_login_path", "token_field"} & set(tier)
 
 
