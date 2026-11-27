@@ -1,5 +1,50 @@
 # Changelog
 
+## [5.84.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.83.2...v5.84.0) (2026-11-27)
+
+
+### Features
+
+* **agent:** opencode-qwen run j-1310ace555eb67eb ([9f9c6da](https://github.com/dryvist/ansible-proxmox-apps/commit/9f9c6da55c9e48a9fcdfbdf74d98bc24d68eb9cf))
+* **agent:** zcode run j-5c952065200a0b21 ([4d5e441](https://github.com/dryvist/ansible-proxmox-apps/commit/4d5e4417874be5d04a6fc8717501358d64132403))
+* **grafana_stack:** add an optional read-only metrics reader to vmauth ([#4042](https://github.com/dryvist/ansible-proxmox-apps/issues/4042)) ([9ddabe8](https://github.com/dryvist/ansible-proxmox-apps/commit/9ddabe8d29e2e063ceeee66f5ccc212dc04c86c7))
+* **grafana_stack:** alert on Hermes gateway and cron scheduler health ([#4025](https://github.com/dryvist/ansible-proxmox-apps/issues/4025)) ([2b50f30](https://github.com/dryvist/ansible-proxmox-apps/commit/2b50f308057af0ccb5cdf25d00b67aba8742ec0f))
+* **object_storage:** expire current versions per prefix and the Langfuse event prefix ([#4022](https://github.com/dryvist/ansible-proxmox-apps/issues/4022)) ([c034479](https://github.com/dryvist/ansible-proxmox-apps/commit/c034479c746b6f6cb2eca55bc62ac19d9eeca01f))
+* **object_storage:** per-bucket lifecycle opt-out and raw event archive bucket ([#4036](https://github.com/dryvist/ansible-proxmox-apps/issues/4036)) ([c0c076c](https://github.com/dryvist/ansible-proxmox-apps/commit/c0c076cbcb4db96e444007e1c5accbcef025c2fb))
+* **observability:** 60-second collection baseline for Prometheus and UniFi Telegraf ([#4039](https://github.com/dryvist/ansible-proxmox-apps/issues/4039)) ([ae2c47d](https://github.com/dryvist/ansible-proxmox-apps/commit/ae2c47dfbca95d8fa0a7ba845ee4f5aed751d57b))
+* **observability:** 60-second collection baseline for Prometheus and UniFi Telegraf ([#4040](https://github.com/dryvist/ansible-proxmox-apps/issues/4040)) ([9f9c6da](https://github.com/dryvist/ansible-proxmox-apps/commit/9f9c6da55c9e48a9fcdfbdf74d98bc24d68eb9cf))
+* **prometheus_stack:** 60 s collection baseline with per-job exceptions ([#4033](https://github.com/dryvist/ansible-proxmox-apps/issues/4033)) ([c9253eb](https://github.com/dryvist/ansible-proxmox-apps/commit/c9253eb0e6b3cd7acf06a28e78d5aabebdd23dfd))
+* **vikunja:** add a dedicated vikunja-clerk agent token tier ([#4041](https://github.com/dryvist/ansible-proxmox-apps/issues/4041)) ([3373670](https://github.com/dryvist/ansible-proxmox-apps/commit/3373670ee0ae779ad9555f12397714447875607e))
+* **youtrack:** publish the agent-tier token to the secret store ([#4016](https://github.com/dryvist/ansible-proxmox-apps/issues/4016)) ([1f9fc98](https://github.com/dryvist/ansible-proxmox-apps/commit/1f9fc98c9165d246492a045f5202da178bca6e48))
+
+
+### Bug Fixes
+
+* **cribl_stream:** attribute each Hermes cron run outcome to its profile ([#4027](https://github.com/dryvist/ansible-proxmox-apps/issues/4027)) ([251ed86](https://github.com/dryvist/ansible-proxmox-apps/commit/251ed863a429a51c0bda9d3955e04fca6a918452))
+* **cribl_stream:** count every failed Hermes cron run as a failed outcome ([#4024](https://github.com/dryvist/ansible-proxmox-apps/issues/4024)) ([30e813f](https://github.com/dryvist/ansible-proxmox-apps/commit/30e813fc2203689511a6c0d475008e51b08e77fc))
+* **cribl_stream:** sample the MLX pack leg to Splunk to one Edge poll per minute ([#4019](https://github.com/dryvist/ansible-proxmox-apps/issues/4019)) ([6c758c6](https://github.com/dryvist/ansible-proxmox-apps/commit/6c758c6b1d29a99dad433bf26b0982883cb6b97d))
+* **cribl_stream:** sample the raw mlx:metrics Splunk copy to one memory event per minute ([#4017](https://github.com/dryvist/ansible-proxmox-apps/issues/4017)) ([f756a76](https://github.com/dryvist/ansible-proxmox-apps/commit/f756a766754a90cdb869118cb10b0971bb9fb0fb))
+* **cribl_stream:** sample traefik 2xx/3xx access lines to 1 in 10 on the Splunk leg ([#4018](https://github.com/dryvist/ansible-proxmox-apps/issues/4018)) ([9b87f19](https://github.com/dryvist/ansible-proxmox-apps/commit/9b87f197ddc2655922aa145a24c1ed8dedd44c42))
+* **cribl_stream:** send Splunk only the metric names its searches read ([#4013](https://github.com/dryvist/ansible-proxmox-apps/issues/4013)) ([d510804](https://github.com/dryvist/ansible-proxmox-apps/commit/d51080403424d41eef274cdf77e7da34defae0e2))
+* **cribl_stream:** send Splunk only the node_exporter series it searches ([#4012](https://github.com/dryvist/ansible-proxmox-apps/issues/4012)) ([ea8f42d](https://github.com/dryvist/ansible-proxmox-apps/commit/ea8f42d81ca5ed77b27ec89b09523151222e5927))
+* **cribl_stream:** test the metric name in _metric on the Splunk metrics leg ([#4015](https://github.com/dryvist/ansible-proxmox-apps/issues/4015)) ([3aacecd](https://github.com/dryvist/ansible-proxmox-apps/commit/3aacecdb9c5a9abcc25a4ea289dfc2be1a3a34dd))
+* **cribl_stream:** thin the raw MLX, UniFi and span legs to Splunk ([#4014](https://github.com/dryvist/ansible-proxmox-apps/issues/4014)) ([6e250be](https://github.com/dryvist/ansible-proxmox-apps/commit/6e250be4e520d0a18a87832b58619edac886a3dd))
+* **deps:** update jpe-ansible/homelab-contracts to v5.79.2 ([#4037](https://github.com/dryvist/ansible-proxmox-apps/issues/4037)) ([610ffdd](https://github.com/dryvist/ansible-proxmox-apps/commit/610ffdd778e6511f3c8edc7a9928de5d4555b185))
+* **grafana_stack:** poll the stack restart instead of blocking past task_timeout ([#4032](https://github.com/dryvist/ansible-proxmox-apps/issues/4032)) ([27bf909](https://github.com/dryvist/ansible-proxmox-apps/commit/27bf909751b772e7e0c93873a117e05c4bb5b209))
+* **grafana:** leave quota-bound replica mounts out of the disk-usage rules ([#4020](https://github.com/dryvist/ansible-proxmox-apps/issues/4020)) ([2dd3ca7](https://github.com/dryvist/ansible-proxmox-apps/commit/2dd3ca70bd20354c3e637f51302405398d14da92))
+* **inventory:** enable the Nautobot inventory plugin in ansible.cfg ([#4030](https://github.com/dryvist/ansible-proxmox-apps/issues/4030)) ([d72c3f0](https://github.com/dryvist/ansible-proxmox-apps/commit/d72c3f0de7b0093385876c0d0cb05a94dc82094e))
+* **object_storage:** let the store's own play run when the published inventory cannot be fetched ([#4028](https://github.com/dryvist/ansible-proxmox-apps/issues/4028)) ([d61095b](https://github.com/dryvist/ansible-proxmox-apps/commit/d61095bf1d640b5f0efc4a9966ffd7162a9b6db8))
+* reach Splunk Web and the management API through the TLS proxy ([#4038](https://github.com/dryvist/ansible-proxmox-apps/issues/4038)) ([6273d0b](https://github.com/dryvist/ansible-proxmox-apps/commit/6273d0bdfe7fb7c9fab220803a4a8cc4b3804d3a))
+* **status_stack:** render accepted status codes as code ranges ([#4043](https://github.com/dryvist/ansible-proxmox-apps/issues/4043)) ([07e4f57](https://github.com/dryvist/ansible-proxmox-apps/commit/07e4f57cb4710d1cdd12e1bd877a624aac1b4905))
+* **status-post:** post once a day over 24 h windows, lanes in one post only ([#4009](https://github.com/dryvist/ansible-proxmox-apps/issues/4009)) ([dd57aac](https://github.com/dryvist/ansible-proxmox-apps/commit/dd57aac8d965ae29dbc593d2f78e2756313b9022))
+* **tests:** reach Splunk HEC through its proxied name ([#4046](https://github.com/dryvist/ansible-proxmox-apps/issues/4046)) ([4d5e441](https://github.com/dryvist/ansible-proxmox-apps/commit/4d5e4417874be5d04a6fc8717501358d64132403))
+* **vikunja:** keep a tier's allowlisted project shares during the reconcile ([#4045](https://github.com/dryvist/ansible-proxmox-apps/issues/4045)) ([dcda6f7](https://github.com/dryvist/ansible-proxmox-apps/commit/dcda6f74f7d8de59252dd526cdf112353b5782a3))
+
+
+### Performance
+
+* **vikunja:** read tier permissions and tier values from the controller ([#4048](https://github.com/dryvist/ansible-proxmox-apps/issues/4048)) ([182ff02](https://github.com/dryvist/ansible-proxmox-apps/commit/182ff02e93294611379bdf8617a174f3db9c8f06))
+
 ## [5.83.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.83.1...v5.83.2) (2026-11-24)
 
 
