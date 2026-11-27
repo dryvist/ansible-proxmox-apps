@@ -45,8 +45,8 @@ def _task_values(value):
 def test_vikunja_tiers_single_source_identity_access_and_publication():
     defaults = _defaults("vikunja")
     tiers = defaults["vikunja_agent_tiers"]
-    assert {tier["id"] for tier in tiers} == {"vikunja-read", "vikunja-write"}
-    assert {tier["username"] for tier in tiers} == {"svc-agent-ro", "svc-agent-rw"}
+    assert {tier["id"] for tier in tiers} == {"vikunja-read", "vikunja-write", "vikunja-clerk"}
+    assert {tier["username"] for tier in tiers} == {"svc-agent-ro", "svc-agent-rw", "svc-agent-clerk"}
     assert all(tier["password_field"] in defaults for tier in tiers)
     assert all(tier["token_tier"] in {"read-only", "read-write"} for tier in tiers)
     assert all(tier["openbao_mount"] == "agent-tier" for tier in tiers)
