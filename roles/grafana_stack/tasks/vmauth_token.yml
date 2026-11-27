@@ -44,6 +44,50 @@
   when: grafana_stack_vmauth_enabled | bool
   no_log: true
 
+# The metrics reader is optional: an absent bucket or empty field renders no
+# reader client, and the quota routes keep working.
+- name: Read the vmauth metrics reader token from OpenBao
+  community.hashi_vault.vault_kv2_get:
+    url: "{{ lookup('env', 'BAO_ADDR') | regex_replace('/+$', '') }}"
+    auth_method: token
+    token: "{{ lookup('env', 'BAO_TOKEN') }}"
+    engine_mount_point: secret
+    path: apps/metrics-reader
+    ca_cert: "{{ openbao_ca_path }}"
+    proxies:
+      http: ""
+      https: ""
+  register: grafana_stack_vmauth_metrics_reader_secret
+  when: grafana_stack_vmauth_enabled | bool
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+
+- name: Reject vmauth metrics reader secret read errors other than an absent bucket
+  ansible.builtin.assert:
+    that:
+      - >-
+        grafana_stack_vmauth_metrics_reader_secret.msg is not defined
+        or grafana_stack_vmauth_metrics_reader_secret.msg is search('^Invalid or missing path')
+    fail_msg: "Reading the vmauth metrics reader token failed; token resolution was refused."
+    quiet: true
+  when: grafana_stack_vmauth_enabled | bool
+  no_log: true
+
+- name: Resolve the vmauth metrics reader token
+  ansible.builtin.set_fact:
+    grafana_stack_vmauth_metrics_reader_token: >-
+      {{ (grafana_stack_vmauth_metrics_reader_secret.secret | default({}))
+         .get('metrics_reader_token', '') }}
+  when: grafana_stack_vmauth_enabled | bool
+  no_log: true
+
 - name: Require the vmauth quota reader token
   ansible.builtin.assert:
     that:
