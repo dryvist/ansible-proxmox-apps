@@ -76,7 +76,7 @@ READS = {
     "playbooks/tasks/hatchet_killtest_start.yml": 1,
     "roles/agent_sandbox/defaults/main/00-runtime.yml": 2,
     "roles/cribl_stream/defaults/main/44-clickhouse-llm.yml": 1,
-    "roles/grafana_stack/defaults/main.yml": 1,
+    "roles/grafana_stack/defaults/main/00-core.yml": 1,
     "roles/haproxy/templates/haproxy.cfg.j2": 6,
     "roles/haproxy/templates/nginx-stream.conf.j2": 3,
     "roles/keepalived/defaults/main.yml": 1,

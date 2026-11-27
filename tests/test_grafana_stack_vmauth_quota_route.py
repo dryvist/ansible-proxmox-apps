@@ -23,7 +23,7 @@ VMAUTH_TOKEN_TASKS = yaml.safe_load((ROLE / "tasks/vmauth_token.yml").read_text(
 
 
 def _defaults():
-    return yaml.safe_load((ROLE / "defaults/main.yml").read_text(encoding="utf-8"))
+    return yaml.safe_load((ROLE / "defaults/main/10-vmauth.yml").read_text(encoding="utf-8"))
 
 
 def _token_task(name):
