@@ -141,7 +141,7 @@ def test_prefetch_orders_scoping_before_reads_and_filtering_before_publication()
 
 
 def _datasource_variables(enabled, prices):
-    defaults = _yaml(ROOT / "roles/grafana_stack/defaults/main.yml")
+    defaults = _yaml(ROOT / "roles/grafana_stack/defaults/main/00-core.yml")
     defaults.update(_yaml(ROOT / "inventory/group_vars/grafana_group.yml"))
     variables = {k: trust_as_template(v) if isinstance(v, str) else v for k, v in defaults.items()}
     variables.update({
@@ -171,7 +171,7 @@ def test_clickhouse_endpoint_uses_the_tagged_guest_name_and_published_port():
             }},
         },
     })
-    defaults = _yaml(ROOT / "roles/grafana_stack/defaults/main.yml")
+    defaults = _yaml(ROOT / "roles/grafana_stack/defaults/main/00-core.yml")
     variables.update({k: trust_as_template(defaults[k]) for k in (
         "grafana_stack_clickhouse_host", "grafana_stack_clickhouse_port",
     )})
@@ -183,7 +183,7 @@ def test_clickhouse_endpoint_uses_the_tagged_guest_name_and_published_port():
 
 def test_clickhouse_endpoint_requires_the_published_guest_domain():
     variables = _datasource_variables(True, True)
-    defaults = _yaml(ROOT / "roles/grafana_stack/defaults/main.yml")
+    defaults = _yaml(ROOT / "roles/grafana_stack/defaults/main/00-core.yml")
     variables["grafana_stack_clickhouse_host"] = trust_as_template(defaults["grafana_stack_clickhouse_host"])
     variables["tofu_data"] = {"containers": {"analytics": {
         "hostname": "analytics", "tags": ["clickhouse"],
@@ -194,7 +194,7 @@ def test_clickhouse_endpoint_requires_the_published_guest_domain():
 
 def test_disabled_clickhouse_renders_with_empty_inventory():
     variables = _datasource_variables(False, True)
-    defaults = _yaml(ROOT / "roles/grafana_stack/defaults/main.yml")
+    defaults = _yaml(ROOT / "roles/grafana_stack/defaults/main/00-core.yml")
     variables.update({k: trust_as_template(defaults[k]) for k in (
         "grafana_stack_clickhouse_host", "grafana_stack_clickhouse_port",
     )})

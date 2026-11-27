@@ -12,6 +12,13 @@ import yaml
 ROLE = Path(__file__).resolve().parents[1] / "roles/grafana_stack"
 
 
+def _defaults():
+    merged = {}
+    for path in sorted((ROLE / "defaults/main").glob("*.yml")):
+        merged.update(yaml.safe_load(path.read_text(encoding="utf-8")))
+    return merged
+
+
 @pytest.mark.parametrize("enabled,root_url,expected", [
     (None, "https://metrics.example.test", False),
     (False, "https://metrics.example.test", False),
@@ -22,7 +29,7 @@ ROLE = Path(__file__).resolve().parents[1] / "roles/grafana_stack"
     (True, "https://wall.example.test:8443", True),
 ])
 def test_embedding_requires_enabled_slides_and_different_origin(enabled, root_url, expected):
-    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    defaults = _defaults()
     env = jinja2.Environment(undefined=jinja2.StrictUndefined)
     env.filters["bool"] = lambda v: v is True or str(v).lower() == "true"
     env.filters["urlsplit"] = lambda value, part: getattr(urlsplit(value), part)
