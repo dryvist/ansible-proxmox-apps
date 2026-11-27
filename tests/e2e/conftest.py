@@ -181,10 +181,9 @@ def splunk_creds(tofu_inventory):
 
 
 @pytest.fixture(scope="session")
-def splunk_hec_url(splunk_host, constants):
-    """Return the Splunk HEC base URL."""
-    port = constants["service_ports"]["splunk_hec"]
-    return os.environ.get("SPLUNK_HEC_URL", f"https://{splunk_host}:{port}")
+def splunk_hec_url():
+    """Return the Splunk HEC base URL through the TLS proxy FQDN."""
+    return os.environ.get("SPLUNK_HEC_URL") or f"https://splunk-hec.{_ingress_domain()}"
 
 
 @pytest.fixture(scope="session")
