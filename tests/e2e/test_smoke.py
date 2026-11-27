@@ -151,15 +151,6 @@ class TestSplunk:
             "expected a 2xx, 3xx, or 401 response"
         )
 
-    def test_splunk_hec(self, splunk_host, constants):
-        """Verify Splunk HEC port is listening."""
-        port = constants["service_ports"]["splunk_hec"]
-        result = check_port_tcp(splunk_host, port)
-        assert result, (
-            f"Splunk HEC port {port} is not accepting "
-            f"connections on {splunk_host}: {result}"
-        )
-
     def test_splunk_hec_health(self, splunk_hec_url):
         """Verify Splunk HEC health endpoint returns HTTP 200.
 
