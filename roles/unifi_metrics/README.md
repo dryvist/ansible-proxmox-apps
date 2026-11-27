@@ -66,5 +66,5 @@ devices within a couple of scrape intervals.
 | `unifi_metrics_controller_verify_ssl` | `false` | UDW ships a self-signed cert |
 | `unifi_metrics_sites` | `["all"]` | Sites to poll |
 | `unifi_metrics_unpoller_port` | `9130` | Prometheus exporter port (local) |
-| `unifi_metrics_telegraf_interval` | `30s` | Scrape + flush interval |
+| `unifi_metrics_telegraf_interval` | `60s` | Scrape + flush interval |
 | `unifi_metrics_hec_url` | derived from `cribl_edge` group | Cribl HEC endpoint |
