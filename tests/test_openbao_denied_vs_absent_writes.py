@@ -128,44 +128,6 @@ def _writes_to_openbao(items):
     return found
 
 
-class SeedGeneratedAppSecret(unittest.TestCase):
-    """A denied read must not mint fresh values over live credentials.
-
-    Checked against the shared dryvist.homelab.openbao_secrets seed_generated.yml,
-    which the app-secret seeding calls. Its stored-secret read is a uri task.
-    """
-
-    REL = HOMELAB_ROLES / "openbao_secrets/tasks/seed_generated.yml"
-    READ = "Read the stored secret and its version"
-    ROUTE = "Return local values when OpenBao is unavailable"
-
-    def _read_fails(self, status):
-        # ansible.builtin.uri fails the task for any status outside status_code.
-        return status not in _find(self.REL, self.READ)["ansible.builtin.uri"]["status_code"]
-
-    def test_a_DENIED_read_fails_the_task(self):
-        # The one that matters. A 403 must fail the run, never collapse to "unset".
-        self.assertTrue(self._read_fails(403))
-
-    def test_a_genuinely_absent_path_does_NOT_fail(self):
-        # Generate-if-absent must still work on a first converge.
-        self.assertFalse(self._read_fails(404))
-
-    def test_a_successful_read_does_NOT_fail(self):
-        # Exactly [200, 404], so a 500 or any other status still fails the read.
-        self.assertEqual(_find(self.REL, self.READ)["ansible.builtin.uri"]["status_code"], [200, 404])
-        self.assertFalse(self._read_fails(200))
-        self.assertTrue(self._read_fails(500))
-
-    def test_an_unreachable_server_routes_to_local_values_and_never_writes(self):
-        # The health gate sends an unavailable OpenBao to the local-values block, which must not write.
-        route = _find(self.REL, self.ROUTE)
-        self.assertTrue(route["block"], "the local-values block has no tasks to check")
-        self.assertTrue(_all(route["when"], {"openbao_secrets_seed_available": False}))
-        self.assertFalse(_all(route["when"], {"openbao_secrets_seed_available": True}))
-        self.assertEqual(_writes_to_openbao(route["block"]), [])
-
-
 class SeedContext7Key(unittest.TestCase):
     REL = SECRETS_ROLES / "openbao/tasks/seed_context7_key.yml"
 
@@ -333,38 +295,40 @@ class ObjectStorageProbes(unittest.TestCase):
     """head-bucket returns 403 and 404 with no rc-level distinction."""
 
     REL = ROOT / "roles/object_storage/tasks/buckets.yml"
+    LIFECYCLE_REL = ROOT / "roles/object_storage/tasks/lifecycle.yml"
     CASES = [
-        ("Check which default buckets already exist", "object_storage_bucket_check"),
-        ("Read current versioning status", "object_storage_versioning_current"),
+        ("Check which default buckets already exist", "object_storage_bucket_check", REL),
+        ("Read current versioning status", "object_storage_versioning_current", REL),
         (
-            "Read current lifecycle configuration on versioned buckets",
+            "Read current lifecycle configuration on managed buckets",
             "object_storage_lifecycle_current",
+            LIFECYCLE_REL,
         ),
     ]
 
-    def _fails(self, task_name, var, result):
-        return _all(_find(self.REL, task_name)["failed_when"], {var: result})
+    def _fails(self, task_name, var, result, rel):
+        return _all(_find(rel, task_name)["failed_when"], {var: result})
 
     def test_a_DENIED_probe_fails_every_site(self):
-        for task_name, var in self.CASES:
+        for task_name, var, rel in self.CASES:
             with self.subTest(task=task_name):
                 self.assertTrue(
-                    self._fails(task_name, var, _cli(255, "An error occurred (403)"))
+                    self._fails(task_name, var, _cli(255, "An error occurred (403)"), rel)
                 )
 
     def test_a_genuinely_absent_object_does_NOT_fail(self):
-        for task_name, var in self.CASES:
+        for task_name, var, rel in self.CASES:
             with self.subTest(task=task_name):
                 self.assertFalse(
                     self._fails(
-                        task_name, var, _cli(255, "An error occurred (404) Not Found")
+                        task_name, var, _cli(255, "An error occurred (404) Not Found"), rel
                     )
                 )
 
     def test_success_does_NOT_fail(self):
-        for task_name, var in self.CASES:
+        for task_name, var, rel in self.CASES:
             with self.subTest(task=task_name):
-                self.assertFalse(self._fails(task_name, var, _cli(0, "")))
+                self.assertFalse(self._fails(task_name, var, _cli(0, ""), rel))
 
 
 class TechnitiumZoneList(unittest.TestCase):

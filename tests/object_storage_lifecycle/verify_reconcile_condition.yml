@@ -1,10 +1,18 @@
 ---
-# Verifies the reconcile condition from roles/object_storage/tasks/buckets.yml.
+# Verifies the reconcile condition from roles/object_storage/tasks/lifecycle.yml.
 # Each case asserts whether the put-bucket-lifecycle-configuration task fires.
 - name: Test lifecycle reconcile condition
   hosts: localhost
   gather_facts: false
   vars:
+    ansible_become: false
+    live_events_90: >-
+      {"Rules":[{"ID":"expire-noncurrent","Status":"Enabled","Filter":{"Prefix":""},
+      "NoncurrentVersionExpiration":{"NoncurrentDays":1},"Expiration":{"ExpiredObjectDeleteMarker":true}},
+      {"ID":"expire-current-events","Status":"Enabled","Filter":{"Prefix":"events/"},"Expiration":{"Days":90}}]}
+    live_events_missing: >-
+      {"Rules":[{"ID":"expire-noncurrent","Status":"Enabled","Filter":{"Prefix":""},
+      "NoncurrentVersionExpiration":{"NoncurrentDays":1},"Expiration":{"ExpiredObjectDeleteMarker":true}}]}
     live_3650: >-
       {"Rules":[{"ID":"expire-noncurrent","Status":"Enabled",
       "NoncurrentVersionExpiration":{"NoncurrentDays":3650}}]}
@@ -48,6 +56,18 @@
       "Filter":{"Prefix":"cribl/"},
       "NoncurrentVersionExpiration":{"NoncurrentDays":14}}]}
     cases:
+      - name: current-prefix-matching-days
+        item: {rc: 0, stdout: "{{ live_events_90 }}", item: "{{ _langfuse_bucket }}"}
+        expect: false
+      - name: current-prefix-different-days
+        item:
+          rc: 0
+          stdout: "{{ live_events_90 | replace('Days\":90', 'Days\":89') }}"
+          item: "{{ _langfuse_bucket }}"
+        expect: true
+      - name: current-prefix-missing-rule
+        item: {rc: 0, stdout: "{{ live_events_missing }}", item: "{{ _langfuse_bucket }}"}
+        expect: true
       # backups bucket declares 30 but live is 3650 -> MUST fire
       - name: declared-30-live-3650
         item: {rc: 0, stdout: "{{ live_3650 }}", item: {name: b, noncurrent_expiration_days: 30}}
@@ -138,15 +158,122 @@
             prefix_lifecycle_rules:
               - {prefix: postgres/, noncurrent_expiration_days: 1, expire_delete_markers: true}
         expect: true
-      # no prefix rules declared -> a live scoped rule is left alone
-      # (add-if-missing, same as hand-tightened retention above)
+      # The reconcile condition does not fire, but the ownership guard below
+      # rejects this undeclared rule before any lifecycle document can be put.
       - name: prefix-undeclared-live-extra-scoped-rule
         item:
           rc: 0
           stdout: "{{ live_extra_scoped_rule }}"
           item: {name: a, noncurrent_expiration_days: 30}
         expect: false
+    guard_cases:
+      - name: declared-current-and-base-ids
+        item: {rc: 0, stdout: "{{ live_events_90 }}", item: "{{ _langfuse_bucket }}"}
+        expect: true
+      - name: foreign-live-rule-id
+        item: {rc: 0, stdout: "{{ live_extra_scoped_rule }}", item: {name: a}}
+        expect: false
+      - name: current-rule-not-declared
+        item: {rc: 0, stdout: "{{ live_events_90 }}", item: {name: a}}
+        expect: false
+      - name: no-such-lifecycle-configuration
+        item: {rc: 255, stdout: "", stderr: NoSuchLifecycleConfiguration, item: {name: a}}
+        expect: true
+    removal_cases:
+      - name: opted-out-with-existing-config
+        item: {rc: 0, stdout: "{{ live_30 }}", item: {name: splunk-addons, lifecycle_enabled: false}}
+        expect: true
+      - name: opted-out-without-config
+        item: {rc: 255, stdout: "", item: {name: splunk-addons, lifecycle_enabled: false}}
+        expect: false
+      - name: default-enabled-with-existing-config
+        item: {rc: 0, stdout: "{{ live_30 }}", item: {name: artifacts}}
+        expect: false
+      - name: explicitly-enabled-with-existing-config
+        item: {rc: 0, stdout: "{{ live_30 }}", item: {name: artifacts, lifecycle_enabled: true}}
+        expect: false
   tasks:
+    - name: Load the object-storage role defaults
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../roles/object_storage/defaults/main/00-core.yml"
+        name: _object_storage_defaults
+
+    - name: Select the Langfuse declaration and reset the offline IAM accumulator
+      ansible.builtin.set_fact:
+        _langfuse_bucket: >-
+          {{ _object_storage_defaults.object_storage_default_buckets
+             | selectattr('name', 'equalto', 'langfuse') | first }}
+        object_storage_bucket_credentials: {}
+
+    - name: Load the lifecycle role task definitions
+      ansible.builtin.set_fact:
+        _lifecycle_tasks: >-
+          {{ lookup('file', playbook_dir ~ '/../../roles/object_storage/tasks/lifecycle.yml')
+             | from_yaml }}
+
+    - name: Assert lifecycle removal uses the existing S3 client and narrow conditions
+      vars:
+        _remove_lifecycle_task: >-
+          {{ _lifecycle_tasks
+             | selectattr('name', 'equalto', 'Remove lifecycle configuration from opted-out buckets') | first }}
+      ansible.builtin.assert:
+        that:
+          - "'s3api delete-bucket-lifecycle' in _remove_lifecycle_task['ansible.builtin.command']['cmd']"
+          - >-
+            _remove_lifecycle_task.when == ['not ansible_check_mode',
+            'not (item.item.lifecycle_enabled | default(true) | bool)', 'item.rc == 0']
+
+    - name: Evaluate the lifecycle removal condition for each case
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              not (item.item.item.lifecycle_enabled | default(true) | bool) and
+              item.item.rc == 0
+            ) == item.expect
+        fail_msg: "case {{ item.name }}: expected removal={{ item.expect }}"
+        success_msg: "case {{ item.name }}: OK (removal={{ item.expect }})"
+      loop: "{{ removal_cases }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Exercise the empty IAM role loop without credentials or network
+      ansible.builtin.include_tasks: ../../roles/object_storage/tasks/iam_bucket.yml
+      vars:
+        object_storage_iam_bucket_config: "{{ _langfuse_bucket }}"
+        object_storage_iam_bucket: "{{ _langfuse_bucket.name }}"
+        object_storage_iam_roles: [ro, rw]
+
+    - name: Assert the IAM opt-out leaves no provisioning work
+      ansible.builtin.assert:
+        that:
+          - _langfuse_bucket.iam_roles == []
+          - object_storage_bucket_credentials == {}
+          - object_storage_bucket_credentials.keys() | list == []
+          - not (object_storage_bucket_credentials | default({}) | length > 0)
+
+    - name: Evaluate the ownership guard for each case
+      vars:
+        _owned_ids: >-
+          {{ ['expire-noncurrent']
+             + (item.item.item.prefix_lifecycle_rules | default([])
+                | selectattr('noncurrent_expiration_days', 'defined')
+                | map(attribute='prefix') | map('replace', '/', '-') | map('trim', '-')
+                | map('regex_replace', '^', 'expire-noncurrent-') | list)
+             + (item.item.item.prefix_lifecycle_rules | default([]) | selectattr('expiration_days', 'defined')
+                | map(attribute='prefix') | map('replace', '/', '-') | map('trim', '-')
+                | map('regex_replace', '^', 'expire-current-') | list) }}
+        _foreign_ids: >-
+          {{ ((item.item.stdout | from_json).Rules | map(attribute='ID', default='(missing ID)')
+              | difference(_owned_ids)) if item.item.rc == 0 else [] }}
+      ansible.builtin.assert:
+        that:
+          - (_foreign_ids | length == 0) == item.expect
+        fail_msg: "case {{ item.name }}: expected guard={{ item.expect }}, foreign IDs={{ _foreign_ids }}"
+      loop: "{{ guard_cases }}"
+      loop_control:
+        label: "{{ item.name }}"
+
     - name: Evaluate the condition for each case
       ansible.builtin.assert:
         that:
@@ -180,6 +307,7 @@
                     | list
                   ) != (
                     item.item.item.prefix_lifecycle_rules
+                    | selectattr('noncurrent_expiration_days', 'defined')
                     | map(attribute='noncurrent_expiration_days')
                     | list
                   ) or
@@ -191,10 +319,26 @@
                     | length
                   ) != (
                     item.item.item.prefix_lifecycle_rules
+                    | selectattr('noncurrent_expiration_days', 'defined')
                     | selectattr('expire_delete_markers', 'defined')
                     | selectattr('expire_delete_markers')
                     | length
                   )
+                )
+              ) or
+              (
+                (
+                  (item.item.stdout | from_json).Rules
+                  | selectattr('Filter.Prefix', 'defined') | selectattr('Expiration.Days', 'defined')
+                  | map(attribute='Filter.Prefix')
+                  | zip((item.item.stdout | from_json).Rules
+                        | selectattr('Filter.Prefix', 'defined') | selectattr('Expiration.Days', 'defined')
+                        | map(attribute='Expiration.Days')) | sort
+                ) != (
+                  item.item.item.prefix_lifecycle_rules | default([]) | selectattr('expiration_days', 'defined')
+                  | map(attribute='prefix')
+                  | zip(item.item.item.prefix_lifecycle_rules | default([]) | selectattr('expiration_days', 'defined')
+                        | map(attribute='expiration_days')) | sort
                 )
               )
             ) == item.expect

@@ -1,4 +1,5 @@
-"""vmauth gives a reader one instant query, a writer one import path, and refuses everything else."""
+"""vmauth gives a reader one instant query, a writer one import path, an optional metrics reader
+read-only query paths, and refuses everything else."""
 
 import json
 from pathlib import Path
@@ -22,7 +23,7 @@ VMAUTH_TOKEN_TASKS = yaml.safe_load((ROLE / "tasks/vmauth_token.yml").read_text(
 
 
 def _defaults():
-    return yaml.safe_load((ROLE / "defaults/main.yml").read_text(encoding="utf-8"))
+    return yaml.safe_load((ROLE / "defaults/main/10-vmauth.yml").read_text(encoding="utf-8"))
 
 
 def _token_task(name):
@@ -187,6 +188,8 @@ def test_vmauth_config_has_two_users_one_query_route_and_one_writer_route():
         "grafana_stack_vmauth_write_token": SAMPLE_WRITE_TOKEN,
         "grafana_stack_vmauth_quota_expr": defaults["grafana_stack_vmauth_quota_expr"],
         "grafana_stack_vmauth_writer_label": defaults["grafana_stack_vmauth_writer_label"],
+        "grafana_stack_vmauth_metrics_reader_token": "",
+        "grafana_stack_vmauth_metrics_reader_paths": defaults["grafana_stack_vmauth_metrics_reader_paths"],
         "grafana_stack_vm_port": 8428,
     }))
     assert list(rendered) == ["users"]
@@ -209,6 +212,81 @@ def test_vmauth_config_has_two_users_one_query_route_and_one_writer_route():
         "src_paths": ["/api/v1/import/prometheus"],
         "url_prefix": "http://127.0.0.1:8428/?extra_label=writer=agent-quota-mac",
     }
+
+
+READER_PATHS = [
+    "/api/v1/query",
+    "/api/v1/query_range",
+    "/api/v1/series",
+    "/api/v1/labels",
+    "/api/v1/label/[^/]+/values",
+]
+SAMPLE_READER_TOKEN = "fixture-metrics-reader-token"
+
+
+def test_metrics_reader_defaults_to_no_token_and_read_only_paths():
+    defaults = _defaults()
+    assert defaults["grafana_stack_vmauth_metrics_reader_token"] == ""
+    assert defaults["grafana_stack_vmauth_metrics_reader_paths"] == READER_PATHS
+
+
+def test_metrics_reader_token_is_optional_and_read_from_its_own_bucket():
+    quota_request = _token_task("Read the vmauth quota tokens from OpenBao")["community.hashi_vault.vault_kv2_get"]
+    read = _token_task("Read the vmauth metrics reader token from OpenBao")
+    assert read["community.hashi_vault.vault_kv2_get"] == {**quota_request, "path": "apps/metrics-reader"}
+    assert read["failed_when"] is False
+    assert read["no_log"] is True
+    resolve = _token_task("Resolve the vmauth metrics reader token")
+    assert set(resolve["ansible.builtin.set_fact"]) == {"grafana_stack_vmauth_metrics_reader_token"}
+    assert resolve["no_log"] is True
+    assert not any("Require the vmauth metrics reader" in task.get("name", "") for task in VMAUTH_TOKEN_TASKS)
+
+
+@pytest.mark.parametrize(
+    "result, accepted",
+    [
+        ({"msg": "Invalid or missing path ['apps/metrics-reader']"}, True),
+        ({"msg": "Forbidden: Permission Denied to path ['apps/metrics-reader']."}, False),
+        ({"secret": {"metrics_reader_token": SAMPLE_READER_TOKEN}}, True),
+    ],
+)
+def test_only_an_absent_metrics_reader_bucket_is_accepted_as_a_read_error(result, accepted):
+    templar = Templar(loader=DataLoader(), variables={"grafana_stack_vmauth_metrics_reader_secret": result})
+    assertion = _token_task(
+        "Reject vmauth metrics reader secret read errors other than an absent bucket"
+    )["ansible.builtin.assert"]
+    assert templar.evaluate_conditional(trust_as_template(assertion["that"][0])) is accepted
+
+
+def _vmauth_users(reader_token):
+    defaults = _defaults()
+    return yaml.safe_load(_render("vmauth.yml.j2", {
+        "grafana_stack_vmauth_quota_token": SAMPLE_TOKEN,
+        "grafana_stack_vmauth_write_token": SAMPLE_WRITE_TOKEN,
+        "grafana_stack_vmauth_quota_expr": defaults["grafana_stack_vmauth_quota_expr"],
+        "grafana_stack_vmauth_writer_label": defaults["grafana_stack_vmauth_writer_label"],
+        "grafana_stack_vmauth_metrics_reader_token": reader_token,
+        "grafana_stack_vmauth_metrics_reader_paths": defaults["grafana_stack_vmauth_metrics_reader_paths"],
+        "grafana_stack_vm_port": 8428,
+    }))["users"]
+
+
+@pytest.mark.parametrize("reader_token", ["", "   "])
+def test_no_metrics_reader_client_without_its_token(reader_token):
+    assert len(_vmauth_users(reader_token)) == 2
+
+
+def test_metrics_reader_client_reaches_only_read_only_query_paths():
+    users = _vmauth_users(SAMPLE_READER_TOKEN)
+    assert len(users) == 3
+    reader = users[2]
+    assert reader["bearer_token"] == SAMPLE_READER_TOKEN
+    assert reader["url_map"] == [{"src_paths": READER_PATHS, "url_prefix": "http://127.0.0.1:8428/"}]
+    for user in users:
+        for route in user["url_map"]:
+            for path in route["src_paths"]:
+                if user is not users[1]:
+                    assert not any(word in path for word in ("import", "delete", "admin", "/api/v1/write"))
 
 
 def test_compose_vmauth_service_renders_only_when_enabled():

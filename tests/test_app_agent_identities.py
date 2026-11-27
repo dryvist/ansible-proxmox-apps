@@ -3,18 +3,31 @@
 from app_agent_helpers import _render, _task, _vikunja_defaults, _yaml
 
 
+def _resolved(value, variables: dict):
+    """Render a nested template reference down to its value."""
+    while isinstance(value, str):
+        value = _render(value, variables)
+    return value
+
+
 def test_vikunja_agent_tiers_have_exact_identity_and_project_access():
     defaults = _vikunja_defaults()
     group_vars = _yaml("inventory/group_vars/vikunja_group.yml")
     tiers = {tier["id"]: tier for tier in defaults["vikunja_agent_tiers"]}
-    assert set(tiers) == {"vikunja-read", "vikunja-write"}
-    assert not {"svc-agent-ro", "svc-agent-rw"} & {
+    assert set(tiers) == {"vikunja-read", "vikunja-write", "vikunja-clerk"}
+    assert not {"svc-agent-ro", "svc-agent-rw", "svc-agent-clerk"} & {
         user["username"] for user in defaults["vikunja_service_users"]
     }
 
     expected = {
         "vikunja-read": ("svc-agent-ro", "vikunja_agent_read_password", "VIKUNJA_AGENT_READ_TOKEN", 0),
         "vikunja-write": ("svc-agent-rw", "vikunja_agent_write_password", "VIKUNJA_AGENT_WRITE_TOKEN", 1),
+        "vikunja-clerk": ("svc-agent-clerk", "vikunja_agent_clerk_password", "VIKUNJA_AGENT_CLERK_TOKEN", 1),
+    }
+    allowlists = {
+        "vikunja-read": "vikunja_agent_read_allowlist",
+        "vikunja-write": "vikunja_agent_write_allowlist",
+        "vikunja-clerk": "vikunja_clerk_project_allowlist",
     }
     for tier_id, (username, password_field, token_field, permission) in expected.items():
         tier = tiers[tier_id]
@@ -22,9 +35,7 @@ def test_vikunja_agent_tiers_have_exact_identity_and_project_access():
         assert tier["password_field"] == password_field
         assert tier["token_field"] == token_field
         assert tier["share_permission"] == permission
-        assert _render(tier["project_allowlist"], defaults) == defaults[
-            "vikunja_agent_read_allowlist" if permission == 0 else "vikunja_agent_write_allowlist"
-        ]
+        assert _resolved(tier["project_allowlist"], defaults) == _resolved(defaults[allowlists[tier_id]], defaults)
         assert tier["openbao_mount"] == "agent-tier"
         assert tier["openbao_path"] == tier_id
         assert password_field not in group_vars
@@ -69,7 +80,7 @@ def test_vikunja_agent_tiers_have_exact_identity_and_project_access():
         for project_id in [*defaults["vikunja_agent_read_allowlist"], forbidden_project_id]
     ]
     for tier in tiers.values():
-        allowlist = _render(tier["project_allowlist"], defaults)
+        allowlist = _resolved(tier["project_allowlist"], defaults)
         filtered_by_id = _render(
             id_filter_task["ansible.builtin.set_fact"]["vikunja_owned_projects"],
             {"vikunja_owned_projects": projects, "vikunja_share_project_ids": allowlist},
@@ -82,18 +93,23 @@ def test_vikunja_agent_tiers_have_exact_identity_and_project_access():
         assert [project["title"] for project in filtered_by_title] == ["Hermes"]
 
 
-def test_vikunja_tier_revoke_loop_skips_projects_the_tier_owns():
+def test_vikunja_tier_revoke_loop_skips_owned_and_allowlisted_projects():
     reconcile = _yaml("roles/vikunja/tasks/agent_tier_reconcile.yml")
-    revoke = _task(reconcile, "Remove every direct user share held by the tier account")
+    revoke = _task(reconcile, "Remove the tier account's direct shares outside its allowlist")
     projects = [
         {"id": 87, "title": "Inbox", "owner": {"username": "svc-agent-ro"}},
         {"id": 12, "title": "Shared", "owner": {"username": "svc-mcp-rw"}},
+        {"id": 13, "title": "Stray", "owner": {"username": "svc-mcp-rw"}},
     ]
     looped = _render(
         revoke["loop"],
-        {"vikunja_agent_visible_projects": projects, "vikunja_agent_tier": {"username": "svc-agent-ro"}},
+        {
+            "vikunja_agent_visible_projects": projects,
+            "vikunja_agent_tier": {"username": "svc-agent-ro"},
+            "vikunja_agent_allowed_project_ids": [12],
+        },
     )
-    assert [project["id"] for project in looped] == [12]
+    assert [project["id"] for project in looped] == [13]
 
 
 def test_vikunja_tier_visibility_check_ignores_projects_the_tier_owns():

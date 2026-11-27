@@ -4,37 +4,21 @@
  figure is on target, yellow when it is behind, red when it is failing or
  unmeasured. Targets:
    open pull requests: green at 30 or below, yellow from 31 to 40, red above 40
-   busy percent:       green at 50 or above, yellow from 25 to 49, red below 25
- The merged-in-the-last-hour and Hermes cron runs lines carry no target, so they are green
+ The merged-in-the-last-24-h and Hermes cron runs lines carry no target, so they are green
  when measured and red when unmeasured.
 
  Rendered from these variables:
    pr_status_generated_utc   the run time, formatted UTC
    pr_status_open_total      census total of open pull requests
-   pr_status_merged_total    census total merged in the last hour
-   pr_status_busy_series     the instant-query series: one {metric, value}
-                             per lane, or an empty list when unmeasured
+   pr_status_merged_total    census total merged in the last 24 h
    pr_status_jobs_measured   whether the jobs query returned a series
    pr_status_jobs_text       the jobs query value, or "unmeasured"
 
- Each busy series is named by the value of its `accelerator` label — the lane
- it measures — printed as a whole percent over the query's 4 h window, sorted
- by lane name so the order is stable hour to hour; a series without the label
- is named "unknown lane". Every line renders through status_line
- (templates/status-lines.j2).
+ Lane utilization belongs to the gpu status post alone. Every line renders
+ through status_line (templates/status-lines.j2).
 -#}
 {%- from 'status-lines.j2' import status_line -%}
-{%- set busy = namespace(rows=[]) -%}
-{%- for s in pr_status_busy_series -%}
-{%- set busy.rows = busy.rows + [{'lane': s.metric.get('accelerator') or 'unknown lane', 'busy': s.value[1] | float}] -%}
-{%- endfor -%}
-{{ pr_status_generated_utc }} pull-request and lane status
+{{ pr_status_generated_utc }} pull-request status
 {{ status_line({'component': 'open', 'label': 'pull requests:', 'green': 30, 'yellow': 40, 'higher_is_better': false}, pr_status_open_total, []) }}
-{{ status_line({'component': 'merged', 'label': 'in the last hour:'}, pr_status_merged_total, []) }}
-{% for r in busy.rows | sort(attribute='lane') %}
-{{ status_line({'component': r.lane, 'label': 'busy, 4 h:', 'green': 50, 'yellow': 25, 'unit': '%', 'decimals': 0}, r.busy, []) }}
-{% endfor %}
-{% if busy.rows | length == 0 %}
-{{ status_line({'component': 'busy', 'label': 'percent:'}, none, []) }}
-{% endif %}
+{{ status_line({'component': 'merged', 'label': 'in the last 24 h:'}, pr_status_merged_total, []) }}
 {{ status_line({'component': 'Hermes cron runs, last hour:'}, pr_status_jobs_text if pr_status_jobs_measured else none, []) }}

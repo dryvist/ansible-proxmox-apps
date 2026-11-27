@@ -52,7 +52,7 @@ class _FakeTime:
 
 def _wait(sentinel="sentinel-x", timeout=30):
     return helpers.wait_for_event(
-        "https://splunk.example.test:8089",
+        "https://splunk-mgmt.example.test",
         "user",
         "password",
         sentinel,

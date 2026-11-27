@@ -9,7 +9,7 @@ import yaml
 
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULTS = "roles/grafana_stack/defaults/main.yml"
+DEFAULTS = "roles/grafana_stack/defaults/main/00-core.yml"
 TASKS = "roles/grafana_stack/tasks/provisioning.yml"
 VERIFY = "playbooks/verify-grafana-dashboards.yml"
 RELEASE_TASKS = "playbooks/tasks/verify_grafana_release_rules.yml"
@@ -57,7 +57,7 @@ class GrafanaStackReleaseAlerting(unittest.TestCase):
 
     def test_the_verifier_reads_the_role_default_and_keeps_no_copy(self):
         play = next(p for p in _load(VERIFY) if p.get("name") == "Verify provisioned dashboards are loaded")
-        self.assertIn("../roles/grafana_stack/defaults/main.yml", play["vars_files"])
+        self.assertIn("../roles/grafana_stack/defaults/main/00-core.yml", play["vars_files"])
         self.assertNotIn(LIST_VAR, play.get("vars", {}))
         self.assertIn("tasks/verify_grafana_release_rules.yml", (REPO / VERIFY).read_text(encoding="utf-8"))
         self.assertIn(LIST_VAR, (REPO / RELEASE_TASKS).read_text(encoding="utf-8"))

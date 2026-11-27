@@ -1,9 +1,19 @@
 """Tier 1: service health smoke tests."""
 
+import urllib.error
+import urllib.request
+
 import pytest
 
 from .fixtures import SYSLOG_SOURCES, SYSLOG_SOURCE_IDS
 from .helpers import check_port_tcp, check_port_udp, splunk_hec_health
+
+
+class _StopAtRedirect(urllib.request.HTTPRedirectHandler):
+    """Return 3xx responses to the smoke test instead of following them."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 class TestHAProxy:
@@ -127,22 +137,18 @@ class TestCriblStreamLXC:
 class TestSplunk:
     """Splunk service port checks."""
 
-    def test_splunk_web(self, splunk_host, constants):
-        """Verify Splunk Web UI port is listening."""
-        port = constants["service_ports"]["splunk_web"]
-        result = check_port_tcp(splunk_host, port)
-        assert result, (
-            f"Splunk Web port {port} is not accepting "
-            f"connections on {splunk_host}: {result}"
-        )
-
-    def test_splunk_hec(self, splunk_host, constants):
-        """Verify Splunk HEC port is listening."""
-        port = constants["service_ports"]["splunk_hec"]
-        result = check_port_tcp(splunk_host, port)
-        assert result, (
-            f"Splunk HEC port {port} is not accepting "
-            f"connections on {splunk_host}: {result}"
+    def test_splunk_web(self, splunk_web_url):
+        """Verify the proxied Splunk Web route returns a reachable status."""
+        request = urllib.request.Request(splunk_web_url, method="GET")
+        opener = urllib.request.build_opener(_StopAtRedirect)
+        try:
+            with opener.open(request, timeout=10) as response:
+                status = response.status
+        except urllib.error.HTTPError as response:
+            status = response.code
+        assert 200 <= status < 400 or status == 401, (
+            f"Splunk Web proxy returned HTTP {status} for {splunk_web_url}; "
+            "expected a 2xx, 3xx, or 401 response"
         )
 
     def test_splunk_hec_health(self, splunk_hec_url):

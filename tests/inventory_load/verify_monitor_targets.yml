@@ -14,7 +14,9 @@
 - name: Replace vms with in-memory guests covering each branch
   ansible.builtin.set_fact:
     tofu_data: >-
-      {{ tofu_data | combine({'vms': _mt_vms, 'constants': {'service_state': {'hindsight_enabled': true}}},
+      {{ tofu_data | combine({'vms': _mt_vms,
+                              'splunk_vm': {'splunk': {'hostname': 'splunk', 'ip': '192.0.2.15'}},
+                              'constants': {'service_state': {'hindsight_enabled': true}}},
                              recursive=true) }}
   vars:
     _mt_vms:
@@ -131,6 +133,29 @@
          | map(attribute='port') | list)
         == [9420]
     fail_msg: The Cribl Edge health target must use the Cribl Edge API port the edge guests answer on.
+
+- name: Assert Splunk management and HEC use their portless HTTPS proxy names
+  ansible.builtin.assert:
+    that:
+      - monitor_targets_tcp | selectattr('name', 'equalto', 'splunk-mgmt') | list | length == 0
+      - monitor_targets_tcp | selectattr('name', 'equalto', 'splunk-hec') | list | length == 0
+      - _splunk_mgmt.fqdn == 'splunk-mgmt.' ~ ingress_domain
+      - _splunk_mgmt.scheme == 'https'
+      - _splunk_mgmt.path == '/services/server/info'
+      - _splunk_mgmt.expect_status == [401]
+      - "'port' not in _splunk_mgmt"
+      - _splunk_hec.fqdn == 'splunk-hec.' ~ ingress_domain
+      - _splunk_hec.scheme == 'https'
+      - _splunk_hec.path == '/services/collector/health/1.0'
+      - _splunk_hec.expect_status == [200]
+      - "'port' not in _splunk_hec"
+    fail_msg: >-
+      Both Splunk targets must use their portless HTTPS proxy names: management
+      must accept its unauthenticated response and HEC must answer 200 on its
+      health path.
+  vars:
+    _splunk_mgmt: "{{ monitor_targets.http | selectattr('name', 'equalto', 'splunk-mgmt') | first }}"
+    _splunk_hec: "{{ monitor_targets.http | selectattr('name', 'equalto', 'splunk-hec') | first }}"
 
 - name: Verify Hindsight target projection for enabled, disabled, and legacy inventory
   ansible.builtin.include_tasks: hindsight_monitor_state_case.yml

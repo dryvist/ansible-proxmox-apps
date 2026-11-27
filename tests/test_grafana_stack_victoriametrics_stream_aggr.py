@@ -11,8 +11,15 @@ ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "roles/grafana_stack"
 
 
+def _defaults():
+    merged = {}
+    for path in sorted((ROLE / "defaults/main").glob("*.yml")):
+        merged.update(yaml.safe_load(path.read_text(encoding="utf-8")))
+    return merged
+
+
 def test_stream_aggregation_rule_is_rendered_and_mounted_read_only():
-    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text(encoding="utf-8"))
+    defaults = _defaults()
     metrics = defaults["grafana_stack_vm_stream_aggr_metrics"]
     assert metrics == ["llm_span_.*", "agent_runs"]
 

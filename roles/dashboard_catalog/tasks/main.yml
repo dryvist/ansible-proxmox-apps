@@ -65,11 +65,12 @@
     _fqdn: >-
       {{ dashboard_catalog_base_domain if (item.apex | default(false))
          else (_host ~ '.' ~ dashboard_catalog_base_domain) }}
-    # Status widgets issue an UNAUTHENTICATED HEAD. Pointed at the public URL
-    # they are answered by Authelia's HTML login page and every service reads as
-    # down, so a probe addresses the guest directly. This is the same reason the
-    # homarr role talks to homarr_api_base rather than its own vhost. A probe is
-    # never a link: nothing a person clicks goes here.
+    # Status widgets issue an UNAUTHENTICATED HEAD. For routes protected by
+    # Authelia, a public URL returns its HTML login page and reads as down, so
+    # those probes address the guest directly. Splunk is the exception: its
+    # management route is public and unauthenticated, so the proxy's 401 proves
+    # the route reaches splunkd. A probe is never a link: nothing a person
+    # clicks goes here.
     #
     # Pool-backed rows carry `backends` instead of a single `ip`; the first
     # backend is a fine liveness target, and rows with neither get no probe
@@ -78,8 +79,10 @@
     _probe_scheme: "{{ item.scheme | default('http') }}"
     _probe_port: "{{ item.port | default('') | string }}"
     _probe_url: >-
-      {{ (_probe_host | length > 0)
-         | ternary(_probe_scheme ~ '://' ~ _probe_host ~ ':' ~ _probe_port, '') }}
+      {{ (splunk_mgmt_base_url ~ '/services/server/info')
+         if item.name == 'splunk' else
+         ((_probe_host | length > 0)
+          | ternary(_probe_scheme ~ '://' ~ _probe_host ~ ':' ~ _probe_port, '')) }}
   loop: "{{ dashboard_catalog_ingress }}"
   loop_control:
     label: "{{ item.name }} [{{ item.group | default('other', true) }}]"

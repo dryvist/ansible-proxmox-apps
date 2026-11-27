@@ -4,6 +4,35 @@
     name: dryvist.homelab.inventory_resolve
   vars:
     inventory_resolve_required_keys: [constants, nodes, domain]
+    # The object-store repair run carries its own explicit host fallback — the
+    # Nautobot object_storage_group membership — which the shared role's
+    # contract names as the one condition for relaxing the terminal failure.
+    # Every other run keeps the hard failure.
+    inventory_resolve_fail_when_unresolved: "{{ not (object_storage_repair_run | default(false)) }}"
+
+# The fallback needs one clear line in the log: without it a green repair run
+# whose loader produced no groups, facts or placement looks like a normal one.
+- name: WARN -- published inventory did not resolve, using the Nautobot fallback
+  ansible.builtin.debug:
+    msg: >-
+      The published OpenTofu inventory did not resolve this run and the run
+      is limited to the object-store repair play, so it proceeds on the
+      Nautobot object_storage_group membership instead. No loader-derived
+      groups, facts or placement exist this run: downstream tasks that read
+      tofu_data skip with a logged reason.
+  when:
+    - object_storage_repair_run | default(false)
+    - tofu_data is not defined
+
+# Ends the loader play for localhost in one place, so every downstream loader
+# include (host mapping, key pins, fact propagation) is skipped without each
+# one carrying its own tofu_data guard. The next play starts fresh; the
+# Nautobot inventory still supplies object_storage_group.
+- name: End the loader for the unresolved object-store repair run
+  ansible.builtin.meta: end_host
+  when:
+    - object_storage_repair_run | default(false)
+    - tofu_data is not defined
 
 - name: Validate tofu_data constants structure
   ansible.builtin.assert:

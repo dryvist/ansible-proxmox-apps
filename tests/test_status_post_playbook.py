@@ -196,7 +196,7 @@ def test_a_by_row_with_no_series_is_one_unmeasured_line():
 
 def test_the_gpu_spec_expands_every_row_by_accelerator():
     spec = yaml.safe_load((ROOT / "playbooks/vars/status-posts/gpu.yml").read_text(encoding="utf-8"))
-    assert spec["status_post_title"] == "Local LLM utilization, 4 h"
+    assert spec["status_post_title"] == "Local LLM utilization, 24 h"
     assert spec["status_post_rows"]
     assert all(row.get("query") and row.get("by") == "accelerator" for row in spec["status_post_rows"])
 
@@ -240,3 +240,19 @@ def test_the_gpu_rows_link_the_local_llm_scoreboard():
 
 def test_the_dashboard_base_is_the_grafana_vhost_from_the_environment():
     assert _play()["vars"]["status_post_dashboard_base"] == "https://grafana.{{ status_post_ingress_domain }}"
+
+
+def test_the_daily_post_reads_a_24_hour_window():
+    # The post runs once a day, so each figure and sparkline covers the whole day.
+    spec = yaml.safe_load((ROOT / "playbooks/vars/status-posts/gpu.yml").read_text(encoding="utf-8"))
+    assert all("[24h]" in row["query"] and "24 h" in row["label"] for row in spec["status_post_rows"])
+    assert "timestamp() - 86400" in (ROOT / "playbooks/status-post.yml").read_text(encoding="utf-8")
+
+
+def test_the_sparkline_draws_every_point_of_the_range_read():
+    # The range read alone sets the window; the macro must not drop its oldest points.
+    row = {"component": "lane", "label": "tokens:", "unit": "%", "decimals": 0, "sparkline": True}
+    history = [[i, str(i * 4)] for i in range(13)]
+    bars = _line(row, 48, history).split(" ")[-2]
+    assert len(bars) == 13
+    assert "step=7200" in (ROOT / "playbooks/status-post.yml").read_text(encoding="utf-8")

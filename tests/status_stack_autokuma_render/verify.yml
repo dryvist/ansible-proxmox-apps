@@ -63,8 +63,12 @@
       ansible.builtin.set_fact:
         _fixture_http: >-
           {{ (_fixture_http | default([]))
-             + [{'name': 'service-' ~ item, 'group': 'service', 'fqdn': ('service-' ~ item ~ '.invalid'),
-                 'port': 8080, 'path': '/', 'expect_status': [200]}] }}
+             + [{'name': ('splunk-mgmt' if item == 17 else 'service-' ~ item),
+                 'group': 'service',
+                 'fqdn': ('splunk-mgmt.invalid' if item == 17 else 'service-' ~ item ~ '.invalid'),
+                 'path': ('/services/server/info' if item == 17 else '/'),
+                 'expect_status': ([401] if item == 17 else [200])}
+                | combine({'scheme': 'https'} if item == 17 else {'port': 8080})] }}
       loop: "{{ range(1, 18) | list }}"
       loop_control:
         label: "service-{{ item }}"
@@ -86,6 +90,31 @@
 
     - name: Render and ship the AutoKuma static-monitor set
       ansible.builtin.include_tasks: "{{ playbook_dir }}/../../roles/status_stack/tasks/autokuma_static_monitors.yml"
+
+    - name: Read back an existing HTTP monitor and the portless HTTPS monitor
+      ansible.builtin.slurp:
+        src: "{{ status_stack_autokuma_static_monitors_dir }}/{{ item }}"
+      loop:
+        - http-service-1.json
+        - http-splunk-mgmt.json
+      register: _autokuma_http_monitors
+
+    - name: Assert AutoKuma keeps HTTP defaults and omits the HTTPS port
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - >-
+            (_autokuma_http_monitors.results[0].content | b64decode | from_json).url
+            == 'http://service-1.invalid:8080/'
+          - >-
+            (_autokuma_http_monitors.results[1].content | b64decode | from_json).url
+            == 'https://splunk-mgmt.invalid/services/server/info'
+          - >-
+            (_autokuma_http_monitors.results[1].content | b64decode | from_json).accepted_statuscodes
+            == ['401-401']
+        fail_msg: >-
+          AutoKuma must retain the default HTTP URL and render HTTPS without a
+          port when it is not specified.
 
     - name: List the rendered AutoKuma static-monitor files
       ansible.builtin.find:

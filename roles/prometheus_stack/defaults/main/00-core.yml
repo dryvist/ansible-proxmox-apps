@@ -26,7 +26,9 @@ prometheus_stack_port: >-
 # source is declared in inventory.
 prometheus_stack_remote_write_receiver_enabled: false
 
-prometheus_stack_scrape_interval: "15s"
+# 60 s baseline. Finer per-job intervals only where a burst would otherwise be invisible:
+# the blackbox latency probes, dcgm_exporter, llm_gpu_engine, llm_router and smokeping.
+prometheus_stack_scrape_interval: "60s"
 prometheus_stack_retention: "30d"
 
 prometheus_stack_blackbox_image: >-
@@ -82,22 +84,29 @@ prometheus_stack_legacy_blackbox_dir: /opt/blackbox-exporter
 # and the template then scrapes that string one character at a time.
 prometheus_stack_git_mirror_urls: "{{ hostvars['localhost'].get('tofu_data', {}).get('git_mirror_urls', {}) }}"
 prometheus_stack_blackbox_jobs:
+  # Each probe job pins interval: 15s — exception to the 60 s baseline: latency
+  # probes keep their finer pre-baseline resolution. A job without `interval`
+  # falls back to the global scrape interval in the template.
   - module: icmp
+    interval: 15s
     targets: >-
       {{ [prometheus_stack_modem_ip]
          + (wan_hop_discovery_isp_hops | default([]))
          + prometheus_stack_anycast_targets }}
   - module: http_2xx_tls
+    interval: 15s
     targets: >-
       {{ prometheus_stack_anycast_targets | map('regex_replace', '^', 'https://') | list
          + ([prometheus_stack_git_mirror_urls.public ~ '/dryvist/docs.git/info/refs?service=git-upload-pack']
             if prometheus_stack_git_mirror_urls.get('public', '') | length > 0 else [])
          + ['https://homebox.' ~ ingress_domain ~ '/api/v1/status'] }}
   - module: http_401_tls
+    interval: 15s
     targets: >-
       {{ [prometheus_stack_git_mirror_urls.all ~ '/dryvist/docs.git/info/refs?service=git-upload-pack']
          if prometheus_stack_git_mirror_urls.get('all', '') | length > 0 else [] }}
   - module: dns_udp
+    interval: 15s
     targets: "{{ prometheus_stack_anycast_targets }}"
 
 # Raw YAML appended to scrape_configs for exporters that land later

@@ -18,30 +18,11 @@ PIPELINE_TEMPLATE = (
     ROOT / "roles/cribl_stream/templates/pipelines/hermes_cron_to_metrics/conf.yml.j2"
 )
 
+# One sanitized Hermes log line per row; '#' rows are comments.
 SAMPLES = [
-    "<133>Nov 20 00:20:38 hermes-example hermes-file 2026-11-20 00:20:37,472 INFO cron.scheduler: Running job 'job-example' (ID: abcdef012345)",
-    "<133>Nov 20 00:20:38 hermes-example hermes-profile 2026-11-20 00:20:37,472 INFO cron.scheduler: Running job 'job-example' (ID: abcdef012345)",
-    "<133>Nov 20 00:01:39 hermes-example hermes-profile 2026-11-20 00:01:38,873 INFO cron.scheduler: Running job 'health-example' (ID: bcdef0123456)",
-    "<133>Nov 20 00:01:40 hermes-example hermes-file 2026-11-20 00:01:38,900 INFO cron.scheduler: Job 'bcdef0123456': using task-scoped workdir /var/lib/hermes/.hermes/profiles/profile-example",
-    "<133>Nov 20 00:01:40 hermes-example hermes-profile 2026-11-20 00:01:38,900 INFO cron.scheduler: Job 'bcdef0123456': using task-scoped workdir /var/lib/hermes/.hermes/profiles/profile-example",
-    "<133>Nov 20 00:20:38 hermes-example hermes-file 2026-11-20 00:20:37,688 INFO cron.scheduler: Job 'abcdef012345': using task-scoped workdir /var/lib/hermes/.hermes",
-    "<133>Nov 20 00:20:38 hermes-example hermes-profile 2026-11-20 00:20:37,688 INFO cron.scheduler: Job 'abcdef012345': using task-scoped workdir /var/lib/hermes/.hermes",
-    "<133>Nov 20 00:22:42 hermes-example hermes-file 2026-11-20 00:22:42,053 INFO cron.scheduler: Job 'cdef01234567': delivered to slack:C0EXAMPLE via live adapter thread=- message_id=1234567890.000001",
-    "<133>Nov 20 00:22:42 hermes-example hermes-file 2026-11-20 00:22:42,053 INFO cron.scheduler: Job 'cdef01234567': delivered to slack:C0EXAMPLE via live adapter thread=- message_id=1234567890.000001",
-    "<133>Nov 20 00:30:42 hermes-example hermes-file 2026-11-20 00:30:42,695 INFO __main__: Job 'def012345678': agent returned [SILENT] — skipping delivery",
-    "<133>Nov 20 00:30:39 hermes-example hermes-profile 2026-11-20 00:30:39,787 INFO __main__: Job 'ef0123456789' (no_agent): empty stdout — silent run",
-    "<133>Nov 20 00:30:39 hermes-example hermes-profile 2026-11-20 00:30:39,820 INFO __main__: Job 'ef0123456789': agent returned [SILENT] — skipping delivery",
-    "<133>Nov 20 00:40:00 hermes-example hermes-profile-profile-example 2026-11-20 00:40:00,100 INFO cron.scheduler: Job '0123456789ab': delivered to slack:C0EXAMPLE via live adapter thread=- message_id=1234567890.000002",
-    "<30>Nov 20 00:13:40 hermes-example hermes[123456]: 2026-11-20 00:13:40,222 WARNING cron.scheduler: Job 'f0123456789a': platform 'slack' not configured/enabled",
-    "<133>Nov 20 00:13:40 hermes-example hermes-profile 2026-11-20 00:13:40,222 WARNING cron.scheduler: Job 'f0123456789a': platform 'slack' not configured/enabled",
-    "<133>Nov 20 00:13:40 hermes-example hermes-profile 2026-11-20 00:13:40,222 WARNING cron.scheduler: Job 'f0123456789a': platform 'slack' not configured/enabled",
-    "<30>Nov 20 00:20:38 hermes-example hermes[123456]: 2026-11-20 00:20:37,688 ERROR cron.scheduler: Job 'job-example' failed: TypeError: helper() missing 1 required positional argument: 'job_name'",
-    "<133>Nov 20 00:20:38 hermes-example hermes-file 2026-11-20 00:20:37,688 ERROR cron.scheduler: Job 'job-example' failed: TypeError: helper() missing 1 required positional argument: 'job_name'",
-    "<133>Nov 20 00:20:38 hermes-example hermes-file 2026-11-20 00:20:37,689 INFO cron.scheduler: Job 'job-example' completed successfully",
-    "<133>Nov 20 00:20:38 hermes-example hermes-file 2026-11-20 00:20:37,690 ERROR cron.scheduler: Job 'job-example' session ended without a final assistant message (lifecycle=empty) — booking run as cron_incomplete_no_delivery",
-    "<133>Nov 20 00:20:38 hermes-example hermes-file 2026-11-20 00:20:37,691 INFO cron.scheduler: Cron job 'job-example' handed to restart-safe worker pid=1234 execution=abcdef012345 dispatch=scoped",
-    "<133>Nov 20 00:20:38 hermes-example hermes-file 2026-11-20 00:20:37,692 ERROR cron.scheduler: Traceback (most recent call last):",
-    "<133>Nov 20 00:20:38 hermes-example hermes-file 2026-11-20 00:20:37,693 ERROR __main__: RuntimeError: TypeError: timeout configuration failed",
+    line
+    for line in (ROOT / "tests/fixtures/hermes_cron_pipeline_samples.txt").read_text().splitlines()
+    if line and not line.startswith("#")
 ]
 
 NODE_EVAL = r"""
@@ -133,7 +114,8 @@ def test_pipeline_is_native_and_exports_only_the_contract_labels():
     assert profile["conf"]["fields"] == [
         {"inFieldName": "hermes_info_value", "outFieldExpr": "'hermes_cron_job_profile'", "metricType": "gauge"}
     ]
-    assert profile["conf"]["dimensions"] == ["agent", "job_id", "profile"]
+    assert profile["conf"]["dimensions"] == ["agent", "job", "profile"]
+    assert outcome["conf"]["dimensions"] == profile["conf"]["dimensions"][:2] + ["outcome"]
 
 
 def test_sanitized_hermes_lines_produce_contract_events_after_native_suppress():
@@ -171,10 +153,24 @@ def test_sanitized_hermes_lines_produce_contract_events_after_native_suppress():
         ("hermes-example/root", "def012345678", "silent"): 1,
         ("hermes-example/unknown", "ef0123456789", "silent"): 1,
         ("hermes-example/unknown", "f0123456789a", "undeliverable"): 1,
+        ("hermes-example/unknown", "bcdef0123456", "delivered"): 1,
         ("hermes-example/profile-example", "0123456789ab", "delivered"): 1,
         ("hermes-example/root", "job-example", "failed"): 1,
+        ("hermes-example/root", "job-idle-example", "failed"): 1,
+        ("hermes-example/root", "111111111111", "failed"): 1,
+        ("hermes-example/root", "222222222222", "failed"): 1,
+        ("hermes-example/root", "333333333333", "failed"): 1,
+        ("hermes-example/root", "444444444444", "failed"): 1,
+        ("hermes-example/root", "555555555555", "failed"): 1,
+        ("hermes-example/root", "666666666666", "failed"): 1,
+        ("hermes-example/root", "777777777777", "failed"): 1,
+        ("hermes-example/root", "888888888888", "failed"): 1,
+        ("hermes-example/root", "999999999999", "failed"): 1,
+        ("hermes-example/root", "aaaaaaaaaaaa", "failed"): 1,
+        ("hermes-example/root", "job-blocked-example", "failed"): 1,
+        ("hermes-example/root", "job-scanner-example", "failed"): 1,
     }
-    assert len(outcomes) == 6
+    assert len(outcomes) == 20
     assert len(starts) == 2
     assert {
         (event["agent"], event["job_id"], event["job_name"])
@@ -198,6 +194,10 @@ def test_sanitized_hermes_lines_produce_contract_events_after_native_suppress():
         ("hermes-example/root", "abcdef012345", "root"),
         ("hermes-example/profile-example", "bcdef0123456", "profile-example"),
     }
+    # Both series publish the job under the same label, so a profile joins to its runs:
+    # the health job's profile event and its delivered outcome share job bcdef0123456.
+    assert all(event["job"] == event["job_id"] for event in profiles)
+    assert {event["job"] for event in outcomes} & {event["job"] for event in profiles} == {"bcdef0123456"}
     assert all(event["hermes_info_value"] == 1 for event in profile_copies)
 
     ignored = [

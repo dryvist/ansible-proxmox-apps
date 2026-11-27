@@ -72,7 +72,7 @@ class GitMirrorContract(unittest.TestCase):
         self.assertIn("http_401_tls", (ROOT / "roles/prometheus_stack/defaults/main/00-core.yml").read_text())
 
     def test_grafana_git_mirror_alerts_check_freshness_and_sync_status(self):
-        defaults = yaml.safe_load((ROOT / "roles/grafana_stack/defaults/main.yml").read_text())
+        defaults = yaml.safe_load((ROOT / "roles/grafana_stack/defaults/main/00-core.yml").read_text())
         template = Environment().from_string(
             (ROOT / "roles/grafana_stack/templates/alerting/rules-git-mirror.yml.j2").read_text()
         )

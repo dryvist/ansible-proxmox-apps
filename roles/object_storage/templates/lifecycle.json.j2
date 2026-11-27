@@ -1,3 +1,4 @@
+{% if item.lifecycle_enabled | default(true) | bool %}
 {
   "Rules": [
     {
@@ -7,7 +8,7 @@
       "NoncurrentVersionExpiration": {"NoncurrentDays": {{ item.noncurrent_expiration_days | default(object_storage_noncurrent_expiration_days) }}}{% if item.expire_delete_markers | default(false) %},
       "Expiration": {"ExpiredObjectDeleteMarker": true}{% endif %}
 
-    }{% for _rule in item.prefix_lifecycle_rules | default([]) %},
+    }{% for _rule in item.prefix_lifecycle_rules | default([]) %}{% if _rule.noncurrent_expiration_days is defined %},
     {
       "ID": "expire-noncurrent-{{ _rule.prefix | replace("/", "-") | trim("-") }}",
       "Status": "Enabled",
@@ -15,6 +16,13 @@
       "NoncurrentVersionExpiration": {"NoncurrentDays": {{ _rule.noncurrent_expiration_days }}}{% if _rule.expire_delete_markers | default(false) %},
       "Expiration": {"ExpiredObjectDeleteMarker": true}{% endif %}
 
-    }{# +% keeps the newline Ansible's trim_blocks would otherwise eat #}{% endfor +%}
+    }{% endif %}{% if _rule.expiration_days is defined %},
+    {
+      "ID": "expire-current-{{ _rule.prefix | replace("/", "-") | trim("-") }}",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "{{ _rule.prefix }}"},
+      "Expiration": {"Days": {{ _rule.expiration_days }}}
+    }{% endif %}{# +% keeps the newline Ansible's trim_blocks would otherwise eat #}{% endfor +%}
   ]
 }
+{% endif %}
