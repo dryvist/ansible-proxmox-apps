@@ -93,18 +93,23 @@ def test_vikunja_agent_tiers_have_exact_identity_and_project_access():
         assert [project["title"] for project in filtered_by_title] == ["Hermes"]
 
 
-def test_vikunja_tier_revoke_loop_skips_projects_the_tier_owns():
+def test_vikunja_tier_revoke_loop_skips_owned_and_allowlisted_projects():
     reconcile = _yaml("roles/vikunja/tasks/agent_tier_reconcile.yml")
-    revoke = _task(reconcile, "Remove every direct user share held by the tier account")
+    revoke = _task(reconcile, "Remove the tier account's direct shares outside its allowlist")
     projects = [
         {"id": 87, "title": "Inbox", "owner": {"username": "svc-agent-ro"}},
         {"id": 12, "title": "Shared", "owner": {"username": "svc-mcp-rw"}},
+        {"id": 13, "title": "Stray", "owner": {"username": "svc-mcp-rw"}},
     ]
     looped = _render(
         revoke["loop"],
-        {"vikunja_agent_visible_projects": projects, "vikunja_agent_tier": {"username": "svc-agent-ro"}},
+        {
+            "vikunja_agent_visible_projects": projects,
+            "vikunja_agent_tier": {"username": "svc-agent-ro"},
+            "vikunja_agent_allowed_project_ids": [12],
+        },
     )
-    assert [project["id"] for project in looped] == [12]
+    assert [project["id"] for project in looped] == [13]
 
 
 def test_vikunja_tier_visibility_check_ignores_projects_the_tier_owns():
