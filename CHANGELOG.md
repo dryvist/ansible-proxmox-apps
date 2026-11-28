@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.91.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.91.0...v5.91.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **vikunja:** build the project catalog once, before both share reconcilers ([#4084](https://github.com/dryvist/ansible-proxmox-apps/issues/4084)) ([e8c15cf](https://github.com/dryvist/ansible-proxmox-apps/commit/e8c15cf47c107aed838a1a67a8883cab44aba1fd))
+
 ## [5.91.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.90.0...v5.91.0) (2026-11-28)
 
 
