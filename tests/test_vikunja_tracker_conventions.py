@@ -105,11 +105,13 @@ def test_every_write_request_is_gated_and_none_runs_in_check_mode():
             assert task.get("check_mode") is not False, task["name"]
 
 
-# --- 7: main.yml includes both reconciles, labels first -------------------------
+# --- 7: main.yml includes the conventions file; it runs labels first -------------------------
 
 
 def test_main_yml_includes_both_convention_reconciles_labels_first():
-    tasks = list(_task_tree(_yaml("roles/vikunja/tasks/main.yml")))
+    main = [t.get("ansible.builtin.include_tasks") for t in _task_tree(_yaml("roles/vikunja/tasks/main.yml"))]
+    assert main.count("tracker_conventions.yml") == 1
+    tasks = list(_task_tree(_yaml("roles/vikunja/tasks/tracker_conventions.yml")))
     includes = [t.get("ansible.builtin.include_tasks") for t in tasks]
     labels, board = includes.index("tracker_labels.yml"), includes.index("tracker_board.yml")
     assert labels < board
