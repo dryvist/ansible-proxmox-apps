@@ -191,7 +191,13 @@ class OpenHandsUvToolchain(unittest.TestCase):
         self.assertEqual(pip["name"], "uv=={{ openhands_uv_version }}")
         self.assertEqual(pip["virtualenv"], "{{ openhands_uv_venv }}")
         self.assertEqual(
-            pip["extra_args"], "--index-url {{ openhands_pypi_cache_url }}"
+            pip["extra_args"],
+            "--index-url {{ openhands_pypi_index_url }}"
+            " --trusted-host {{ openhands_pypi_cache_url | urlsplit('hostname') }}",
+        )
+        self.assertEqual(
+            _defaults()["openhands_pypi_index_url"],
+            "{{ openhands_pypi_cache_url | regex_replace('/+$', '') }}/root/pypi/+simple/",
         )
 
     def test_uv_and_uvx_sit_on_the_default_path(self):
@@ -222,7 +228,7 @@ class OpenHandsUvToolchain(unittest.TestCase):
             self.assertEqual(copy[owner_key], "{{ openhands_user }}")
         self.assertEqual(copy["mode"], "0640")
         self.assertIn("[[index]]", copy["content"])
-        self.assertIn('url = "{{ openhands_pypi_cache_url }}"', copy["content"])
+        self.assertIn('url = "{{ openhands_pypi_index_url }}"', copy["content"])
         self.assertIn("default = true", copy["content"])
 
 
