@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.90.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.89.0...v5.90.0) (2026-11-28)
+
+
+### Features
+
+* **vikunja:** feed task change events to a capped HTTP source of the stream role ([#4077](https://github.com/dryvist/ansible-proxmox-apps/issues/4077)) ([9f13ca3](https://github.com/dryvist/ansible-proxmox-apps/commit/9f13ca361f5584a9f991dbf0647ee970a4dba243))
+
 ## [5.89.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.88.1...v5.89.0) (2026-11-28)
 
 

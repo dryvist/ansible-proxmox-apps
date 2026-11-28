@@ -1,0 +1,61 @@
+---
+# Keep the project event envelope's useful fields and discard the source body.
+output: vikunja_task_events_splunk
+streamtags: []
+groups: {}
+asyncFuncTimeout: 1000
+functions:
+  - id: eval
+    filter: "true"
+    disabled: false
+    conf:
+      add:
+        - name: event
+          value: event_name
+        - name: doer
+          value: "data && data.doer ? data.doer.username : undefined"
+        - name: task_id
+          value: "data && data.task ? data.task.id : undefined"
+        - name: project_id
+          value: >-
+            data && data.task ? data.task.project_id :
+            data && data.project ? data.project.id : undefined
+        - name: _time
+          value: >-
+            Number.isFinite(Date.parse(time)) ? Date.parse(time) / 1000 : _time
+        - name: task_title
+          value: >-
+            data && data.task && typeof data.task.title === 'string'
+            ? data.task.title.slice(0, 200) : undefined
+        - name: comment_text
+          value: >-
+            data && data.comment && typeof data.comment.comment === 'string'
+            ? data.comment.comment.slice(0, 200) : undefined
+        - name: index
+          value: "'{{ cribl_stream_vikunja_task_events_index }}'"
+        - name: sourcetype
+          value: "'{{ cribl_stream_vikunja_task_events_sourcetype }}'"
+      keep:
+        - _time
+        - time
+        - event
+        - doer
+        - task_id
+        - project_id
+        - task_title
+        - comment_text
+        - index
+        - sourcetype
+      remove:
+        - '*'
+  # The daily cap as an hourly event count: events past it are dropped.
+  # shortcut: the count is per worker process, so a node with several workers allows that many times
+  # the cap; move to a byte-based cap when the feed needs more than one worker.
+  - id: suppress
+    filter: "true"
+    disabled: false
+    conf:
+      keyExpr: "'vikunja_task_events'"
+      numAllowed: {{ cribl_stream_vikunja_task_events_hourly_event_cap }}
+      suppressPeriodSec: 3600
+      dropEvents: true
