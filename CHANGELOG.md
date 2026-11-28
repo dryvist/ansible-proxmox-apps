@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.84.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.84.0...v5.84.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **openhands:** default the Canvas model to the medium capability ([#4051](https://github.com/dryvist/ansible-proxmox-apps/issues/4051)) ([d882af3](https://github.com/dryvist/ansible-proxmox-apps/commit/d882af3d08fab8b96c6acbe25006610c9a16c56a))
+
 ## [5.84.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.83.2...v5.84.0) (2026-11-27)
 
 
