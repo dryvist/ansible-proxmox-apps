@@ -53,7 +53,7 @@ create it or manage its client secret.
 | `youtrack_hub_auth_module_fields` | See `defaults/main.yml` | Desired managed module fields |
 | `youtrack_hub_identity_links` | `DEFAULT_USERNAME` for both login and identifier | Hub logins and matching provider usernames to link |
 | `youtrack_validate_certs` | `true` | TLS validation for the service-token collection role |
-| `youtrack_agent_token_publish_openbao` | `false`; true in `inventory/group_vars/all/youtrack.yml` | Enables the agent-token publisher |
+| `youtrack_agent_token_publish_openbao` | `false`; true in `playbooks/site/04e-youtrack.yml` | Enables the agent-token publisher |
 | `youtrack_agent_write_login` | `svc-ai` | Existing YouTrack service-user login for the token |
 | `youtrack_agent_write_token_name` | `agent-tier-youtrack-write` | Permanent YouTrack token name |
 | `youtrack_agent_write_token_remint` | `false` | Deletes and re-creates the named token when explicitly enabled |
