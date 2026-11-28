@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.92.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.91.5...v5.92.0) (2026-11-28)
+
+
+### Features
+
+* **zammad:** declare an Acceptance group for evaluation runs ([#4098](https://github.com/dryvist/ansible-proxmox-apps/issues/4098)) ([7770fd3](https://github.com/dryvist/ansible-proxmox-apps/commit/7770fd32956cbfc633bc4be9472a80c9a9099f80))
+
 ## [5.91.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.91.4...v5.91.5) (2026-11-28)
 
 
