@@ -145,6 +145,29 @@
   changed_when: true
   no_log: true
 
+- name: Create Vikunja agent role users (idempotent — skipped if already present)
+  ansible.builtin.command:
+    argv:
+      - "{{ vikunja_binary_path }}"
+      - user
+      - create
+      - "--username={{ vikunja_agent_role.username }}"
+      - "--email={{ vikunja_agent_role.username }}@{{ tofu_data.domain }}"
+      - "--password={{ lookup('vars', vikunja_agent_role.password_field) }}"
+  loop: >-
+    {{ vikunja_agent_roles
+       | selectattr('role', 'in', vikunja_agent_roles_enabled) | list }}
+  loop_control:
+    loop_var: vikunja_agent_role
+    label: "{{ vikunja_agent_role.role }}"
+  when:
+    - lookup('vars', vikunja_agent_role.password_field) | length > 0
+    - >-
+      not (vikunja_user_list.stdout | default('', true)
+           | regex_search('(?:^|\\s|\\|)' ~ vikunja_agent_role.username ~ '(?:\\s|\\||$)'))
+  changed_when: true
+  no_log: true
+
 # Validate per-user MCP API token scopes on every ordinary converge. Token
 # mutation and OpenBao publication remain deferred behind the publication flag.
 # Runs before both project-share reconciles, which read shares project by

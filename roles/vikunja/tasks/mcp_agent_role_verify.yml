@@ -1,0 +1,273 @@
+---
+- name: Verify MCP tool listing for agent role
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v2/mcp"
+    method: POST
+    headers:
+      Content-Type: application/json
+      Accept: application/json, text/event-stream
+      Authorization: "Bearer {{ vikunja_agent_role_token }}"
+    body_format: json
+    body:
+      jsonrpc: "2.0"
+      id: 1
+      method: tools/list
+    return_content: true
+    status_code: [200, 400]
+  register: vikunja_agent_role_mcp_list_initial
+  when: not ansible_check_mode
+  no_log: true
+
+- name: Initialize MCP session when the server requires it
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v2/mcp"
+    method: POST
+    headers:
+      Content-Type: application/json
+      Accept: application/json, text/event-stream
+      Authorization: "Bearer {{ vikunja_agent_role_token }}"
+    body_format: json
+    body:
+      jsonrpc: "2.0"
+      id: 0
+      method: initialize
+      params:
+        protocolVersion: "2025-06-18"
+        capabilities: {}
+        clientInfo:
+          name: role-verify
+          version: "1"
+    return_content: true
+    status_code: [200]
+  register: vikunja_agent_role_mcp_initialize
+  when:
+    - not ansible_check_mode
+    - >-
+      'not initialized' in (vikunja_agent_role_mcp_list_initial.content | default('', true) | lower)
+      or 'initialization required' in (vikunja_agent_role_mcp_list_initial.content | default('', true) | lower)
+      or 'initialize first' in (vikunja_agent_role_mcp_list_initial.content | default('', true) | lower)
+  no_log: true
+
+- name: Verify MCP tool listing after initialization
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v2/mcp"
+    method: POST
+    headers:
+      Content-Type: application/json
+      Accept: application/json, text/event-stream
+      Authorization: "Bearer {{ vikunja_agent_role_token }}"
+    body_format: json
+    body:
+      jsonrpc: "2.0"
+      id: 1
+      method: tools/list
+    return_content: true
+    status_code: [200]
+  register: vikunja_agent_role_mcp_list_after_initialize
+  when:
+    - not ansible_check_mode
+    - vikunja_agent_role_mcp_initialize is not skipped
+  no_log: true
+
+- name: Parse MCP tool listing response for agent role
+  ansible.builtin.set_fact:
+    vikunja_agent_role_mcp_response: >-
+      {{ vikunja_agent_role_mcp_list_after_initialize
+         if vikunja_agent_role_mcp_initialize is not skipped else
+         vikunja_agent_role_mcp_list_initial }}
+    vikunja_agent_role_mcp_reply: >-
+      {% set _response = (vikunja_agent_role_mcp_list_after_initialize
+                          if vikunja_agent_role_mcp_initialize is not skipped else
+                          vikunja_agent_role_mcp_list_initial) %}
+      {{ _response.json | default(
+           ((_response.content | default('{}'))
+            | regex_findall('(?m)^data: (\{.*\})\s*$')
+            | first | default(_response.content | default('{}'), true))
+           | from_json, true) }}
+  when: not ansible_check_mode
+  no_log: true
+
+- name: Assert MCP tool listing is available for agent role
+  ansible.builtin.assert:
+    that:
+      - vikunja_agent_role_mcp_response.status | int == 200
+      - (vikunja_agent_role_mcp_reply.result.tools | default([])) | length > 0
+    fail_msg: >-
+      Agent role {{ vikunja_mcp_user.role }} cannot list MCP tools with its
+      declared token.
+    quiet: true
+  when: not ansible_check_mode
+  no_log: true
+
+- name: Resolve project sets for agent role share verification
+  ansible.builtin.set_fact:
+    vikunja_agent_role_project_ids: >-
+      {{ vikunja_mcp_user.project_permissions.keys()
+         | map('extract', vikunja_agent_project_sets)
+         | flatten | map('int') | unique | list }}
+    vikunja_agent_role_outside_project_ids: >-
+      {{ (vikunja_agent_project_sets.values() | list
+          | flatten | map('int') | list)
+         | reject('in', vikunja_agent_role_project_ids) | list }}
+  when:
+    - not ansible_check_mode
+    - vikunja_mcp_user.role not in ['untrusted', 'inbox']
+    - vikunja_agent_role_verify_shares | default(false) | bool
+  no_log: true
+
+- name: Require a configured project for enabled agent role share verification
+  ansible.builtin.assert:
+    that:
+      - vikunja_agent_role_project_ids | length > 0
+    fail_msg: >-
+      Agent role {{ vikunja_mcp_user.role }} has no configured project IDs in
+      its declared project sets.
+    quiet: true
+  when:
+    - not ansible_check_mode
+    - vikunja_mcp_user.role not in ['untrusted', 'inbox']
+    - vikunja_agent_role_verify_shares | default(false) | bool
+  no_log: true
+
+- name: Verify agent role can read a project in its own sets
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_agent_role_project_ids | first }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_agent_role_token }}"
+    status_code: [200]
+  register: vikunja_agent_role_project_inside
+  when:
+    - not ansible_check_mode
+    - vikunja_mcp_user.role not in ['untrusted', 'inbox']
+    - vikunja_agent_role_verify_shares | default(false) | bool
+  no_log: true
+
+- name: Assert agent role can read a project in its own sets
+  ansible.builtin.assert:
+    that:
+      - vikunja_agent_role_project_inside.status | int == 200
+    fail_msg: >-
+      Agent role {{ vikunja_mcp_user.role }} cannot read a project in its own
+      configured sets.
+    quiet: true
+  when:
+    - not ansible_check_mode
+    - vikunja_mcp_user.role not in ['untrusted', 'inbox']
+    - vikunja_agent_role_verify_shares | default(false) | bool
+  no_log: true
+
+- name: Note agent role outside-share check is skipped when it covers every set
+  ansible.builtin.debug:
+    msg: >-
+      Agent role {{ vikunja_mcp_user.role }} covers the union of configured
+      project sets; skipping the outside-share check.
+  when:
+    - not ansible_check_mode
+    - vikunja_mcp_user.role not in ['untrusted', 'inbox']
+    - vikunja_agent_role_verify_shares | default(false) | bool
+    - vikunja_agent_role_outside_project_ids | length == 0
+
+- name: Verify agent role is denied a project outside its sets
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_agent_role_outside_project_ids | first }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_agent_role_token }}"
+    status_code: [403]
+  register: vikunja_agent_role_project_outside
+  when:
+    - not ansible_check_mode
+    - vikunja_mcp_user.role not in ['untrusted', 'inbox']
+    - vikunja_agent_role_verify_shares | default(false) | bool
+    - vikunja_agent_role_outside_project_ids | length > 0
+  no_log: true
+
+- name: Assert agent role is denied a project outside its sets
+  ansible.builtin.assert:
+    that:
+      - vikunja_agent_role_project_outside.status | int == 403
+    fail_msg: >-
+      Agent role {{ vikunja_mcp_user.role }} can read a project outside its
+      configured sets.
+    quiet: true
+  when:
+    - not ansible_check_mode
+    - vikunja_mcp_user.role not in ['untrusted', 'inbox']
+    - vikunja_agent_role_verify_shares | default(false) | bool
+    - vikunja_agent_role_outside_project_ids | length > 0
+  no_log: true
+
+- name: Verify create-only agent role cannot list tasks
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/tasks"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_agent_role_token }}"
+    status_code: [401, 403]
+  register: vikunja_agent_role_task_list
+  when:
+    - not ansible_check_mode
+    - vikunja_mcp_user.role in ['untrusted', 'inbox']
+  no_log: true
+
+- name: Assert create-only agent role has no task read access
+  ansible.builtin.assert:
+    that:
+      - vikunja_agent_role_task_list.status | int in [401, 403]
+    fail_msg: >-
+      Create-only agent role {{ vikunja_mcp_user.role }} can list tasks.
+    quiet: true
+  when:
+    - not ansible_check_mode
+    - vikunja_mcp_user.role in ['untrusted', 'inbox']
+  no_log: true
+
+- name: Require an inbox project for the opt-in create probe
+  ansible.builtin.assert:
+    that:
+      - vikunja_agent_project_sets.inbox | length > 0
+    fail_msg: >-
+      Agent role {{ vikunja_mcp_user.role }} create verification is enabled
+      but the inbox project set is empty.
+    quiet: true
+  when:
+    - not ansible_check_mode
+    - vikunja_mcp_user.role in ['untrusted', 'inbox']
+    - vikunja_agent_role_verify_create | default(false) | bool
+  no_log: true
+
+- name: Verify create-only agent role can create an inbox task
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_agent_project_sets.inbox | first }}/tasks
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ vikunja_agent_role_token }}"
+    body_format: json
+    body:
+      title: "role-verify {{ vikunja_mcp_user.role }}"
+    status_code: "{{ range(200, 300) | list }}"
+  register: vikunja_agent_role_task_create
+  when:
+    - not ansible_check_mode
+    - vikunja_mcp_user.role in ['untrusted', 'inbox']
+    - vikunja_agent_role_verify_create | default(false) | bool
+  no_log: true
+
+- name: Assert create-only agent role can create an inbox task
+  ansible.builtin.assert:
+    that:
+      - vikunja_agent_role_task_create.status | int >= 200
+      - vikunja_agent_role_task_create.status | int < 300
+    fail_msg: >-
+      Create-only agent role {{ vikunja_mcp_user.role }} cannot create an
+      inbox task.
+    quiet: true
+  when:
+    - not ansible_check_mode
+    - vikunja_mcp_user.role in ['untrusted', 'inbox']
+    - vikunja_agent_role_verify_create | default(false) | bool
+  no_log: true
