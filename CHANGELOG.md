@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.86.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.85.0...v5.86.0) (2026-11-28)
+
+
+### Features
+
+* **openhands:** load scheduled automations with the CI-fix automations ([#4052](https://github.com/dryvist/ansible-proxmox-apps/issues/4052)) ([6485d88](https://github.com/dryvist/ansible-proxmox-apps/commit/6485d88de310f41b186c8e0256f57bd395a86e79))
+
 ## [5.85.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.84.1...v5.85.0) (2026-11-28)
 
 
