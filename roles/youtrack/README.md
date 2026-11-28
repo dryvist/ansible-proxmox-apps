@@ -3,8 +3,9 @@
 This role preserves selected YouTrack Hub settings through the Hub REST API.
 It runs from the Ansible controller and does not enter the YouTrack container.
 Read requests run during check mode; writes are limited to detected drift and
-check mode reports drift without sending writes. Agent-token publication is a
-separate opt-in task and uses the converge identity for its OpenBao writes.
+check mode reports drift without sending writes. The repository inventory enables
+the agent-token publication task for the localhost play; the role default
+remains false for runs without that inventory.
 
 The `Configure YouTrack Hub settings` play in
 `playbooks/site/04e-youtrack.yml` runs on `localhost` with a local
@@ -52,7 +53,7 @@ create it or manage its client secret.
 | `youtrack_hub_auth_module_fields` | See `defaults/main.yml` | Desired managed module fields |
 | `youtrack_hub_identity_links` | `DEFAULT_USERNAME` for both login and identifier | Hub logins and matching provider usernames to link |
 | `youtrack_validate_certs` | `true` | TLS validation for the service-token collection role |
-| `youtrack_agent_token_publish_openbao` | `false` | Enables the opt-in agent-token publisher |
+| `youtrack_agent_token_publish_openbao` | `false`; true in `playbooks/site/04e-youtrack.yml` | Enables the agent-token publisher |
 | `youtrack_agent_write_login` | `svc-ai` | Existing YouTrack service-user login for the token |
 | `youtrack_agent_write_token_name` | `agent-tier-youtrack-write` | Permanent YouTrack token name |
 | `youtrack_agent_write_token_remint` | `false` | Deletes and re-creates the named token when explicitly enabled |
@@ -62,9 +63,9 @@ create it or manage its client secret.
 | `youtrack_openbao_addr` | `BAO_ADDR` controller environment variable | OpenBao API address for publication |
 | `youtrack_openbao_token` | `BAO_TOKEN` controller environment variable | Converge identity token for publication |
 
-The publication task runs with the role under `--tags youtrack` and requires
-`-e youtrack_agent_token_publish_openbao=true`. To recover a token that exists
-in Hub while its agent-tier field is empty, run once with
+With the repository inventory, the publication task runs under `--tags youtrack`
+without an extra flag. To recover a token that exists in Hub while its
+agent-tier field is empty, run once with
 `-e youtrack_agent_write_token_remint=true`.
 
 An empty `DEFAULT_USERNAME` skips the default identity link. Supply an explicit

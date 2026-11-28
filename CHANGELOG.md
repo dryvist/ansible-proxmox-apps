@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.88.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.87.0...v5.88.0) (2026-11-28)
+
+
+### Features
+
+* **openhands:** enable the Canvas automations on the OpenHands host ([#4064](https://github.com/dryvist/ansible-proxmox-apps/issues/4064)) ([7b6f0d2](https://github.com/dryvist/ansible-proxmox-apps/commit/7b6f0d28e7701ea37f112c2cdfb0ba7b68273ea9))
+* **youtrack:** publish the agent tier value from the YouTrack play ([#4060](https://github.com/dryvist/ansible-proxmox-apps/issues/4060)) ([d955510](https://github.com/dryvist/ansible-proxmox-apps/commit/d955510db110dff1a8a10a92b08ed790acd05f81))
+
 ## [5.87.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.86.0...v5.87.0) (2026-11-28)
 
 
