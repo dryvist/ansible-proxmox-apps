@@ -112,3 +112,108 @@
   loop_control:
     label: "{{ item.vikunja_agent_tier.id }}"
   no_log: true
+
+- name: Read each enabled agent role password from its provisioner-only login leaf
+  ansible.builtin.uri:
+    url: >-
+      {{ vikunja_token_openbao_addr }}/v1/{{ vikunja_agent_role.openbao_mount
+      }}/data/{{ vikunja_agent_role.openbao_login_path }}
+    method: GET
+    headers:
+      X-Vault-Token: "{{ vikunja_token_openbao_token }}"
+    ca_path: "{{ openbao_ca_path }}"
+    status_code: [200, 403, 404]
+  loop: >-
+    {{ vikunja_agent_roles_active }}
+  loop_control:
+    loop_var: vikunja_agent_role
+    label: "{{ vikunja_agent_role.role }}"
+  register: vikunja_agent_role_login_reads
+  changed_when: false
+  check_mode: false
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+
+- name: Read each existing enabled agent role token from its token leaf
+  ansible.builtin.uri:
+    url: >-
+      {{ vikunja_token_openbao_addr }}/v1/{{ vikunja_agent_role.openbao_mount
+      }}/data/{{ vikunja_agent_role.openbao_path }}
+    method: GET
+    headers:
+      X-Vault-Token: "{{ vikunja_token_openbao_token }}"
+    ca_path: "{{ openbao_ca_path }}"
+    status_code: [200, 404]
+  loop: >-
+    {{ vikunja_agent_roles_active }}
+  loop_control:
+    loop_var: vikunja_agent_role
+    label: "{{ vikunja_agent_role.role }}"
+  register: vikunja_agent_role_token_reads
+  changed_when: false
+  check_mode: false
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+
+- name: Require every enabled agent role login leaf and password field to exist
+  ansible.builtin.assert:
+    that:
+      - item.status | default(0) == 200
+      - >-
+        (item.json | default({}, true)).get('data', {}).get('data', {})
+        .get(item.vikunja_agent_role.password_field, '') | string | length > 0
+    fail_msg: >-
+      OpenBao does not contain the required login password for agent role
+      {{ item.vikunja_agent_role.role }}.
+    quiet: true
+  loop: "{{ vikunja_agent_role_login_reads.results }}"
+  loop_control:
+    label: "{{ item.vikunja_agent_role.role }}"
+  no_log: true
+
+- name: Store enabled agent role login passwords for account and token tasks
+  ansible.builtin.set_fact:
+    vikunja_agent_tier_secret_values: >-
+      {{ (vikunja_agent_tier_secret_values | default({}, true))
+         | combine({item.vikunja_agent_role.password_field:
+                    item.json.data.data[item.vikunja_agent_role.password_field]}) }}
+  loop: "{{ vikunja_agent_role_login_reads.results }}"
+  loop_control:
+    label: "{{ item.vikunja_agent_role.role }}"
+  no_log: true
+
+- name: Store existing enabled agent role tokens from their token leaves
+  ansible.builtin.set_fact:
+    vikunja_agent_tier_secret_values: >-
+      {{ (vikunja_agent_tier_secret_values | default({}, true))
+         | combine({item.vikunja_agent_role.token_field:
+                    (item.json.data.data.get(item.vikunja_agent_role.token_field, '')
+                     if item.status | default(0) == 200 else '')}) }}
+  loop: "{{ vikunja_agent_role_token_reads.results }}"
+  loop_control:
+    label: "{{ item.vikunja_agent_role.role }}"
+  no_log: true
+
+- name: Require every present enabled agent role token leaf to contain its declared token field
+  ansible.builtin.assert:
+    that:
+      - >-
+        item.status | default(0) == 404 or
+        item.vikunja_agent_role.token_field not in item.json.data.data or
+        (item.json.data.data[item.vikunja_agent_role.token_field] | string | length > 0)
+    fail_msg: >-
+      OpenBao's token leaf for agent role {{ item.vikunja_agent_role.role }}
+      is present without its declared token field.
+    quiet: true
+  loop: "{{ vikunja_agent_role_token_reads.results }}"
+  loop_control:
+    label: "{{ item.vikunja_agent_role.role }}"
+  no_log: true

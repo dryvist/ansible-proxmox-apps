@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.87.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.86.0...v5.87.0) (2026-11-28)
+
+
+### Features
+
+* **vikunja:** declare one bot user per calling role and verify each role's token ([#4058](https://github.com/dryvist/ansible-proxmox-apps/issues/4058)) ([7f58e8b](https://github.com/dryvist/ansible-proxmox-apps/commit/7f58e8b0584fa38b1bffe5718515831d4ba63012))
+
 ## [5.86.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.85.0...v5.86.0) (2026-11-28)
 
 
