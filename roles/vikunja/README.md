@@ -30,8 +30,9 @@ The per-caller roles are `workstation`, `hermes`, `pepper`, `untrusted`,
 `vikunja_agent_roles_enabled` is the on/off list and defaults to empty. The
 `vikunja_agent_project_sets` map names `domain`, `work`, `inbox`, `windows`,
 `jobs`, `hermes_board`, `donna_board` and `acceptance`; each list defaults to
-empty and inventory supplies integer project IDs through
-`VIKUNJA_AGENT_PROJECT_SETS`.
+empty. The role merges the JSON object in `VIKUNJA_AGENT_PROJECT_SETS` over
+those lists, rejects unknown set names, and gives each enabled role bot exactly
+the direct project shares and rights in its `project_permissions` map.
 
 ## OpenHands trigger
 
