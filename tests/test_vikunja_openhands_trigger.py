@@ -155,7 +155,10 @@ def test_the_token_row_is_never_published_to_the_shared_vikunja_path():
 
 
 def test_the_token_row_joins_the_existing_mint_loop():
-    loop = _render(find(MCP_LOOP, MCP_TOKENS)["loop"], defaults())
+    variables = dict(defaults())
+    # A role default that is itself a template renders only when trusted.
+    variables["vikunja_agent_roles_active"] = _trusted(variables["vikunja_agent_roles_active"])
+    loop = _render(find(MCP_LOOP, MCP_TOKENS)["loop"], variables)
     assert loop == (
         defaults()["vikunja_mcp_token_users"]
         + defaults()["vikunja_clerk_token_users"]

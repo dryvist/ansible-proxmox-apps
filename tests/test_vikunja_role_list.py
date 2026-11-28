@@ -130,3 +130,25 @@ def test_role_token_flow_includes_mcp_verification():
         for task in verification_tasks
     )
     assert "/api/v2/mcp" in str(verification_tasks)
+
+
+def test_active_rows_derive_user_and_store_names_from_the_role_name():
+    defaults = _vikunja_defaults()
+    assert _render(defaults["vikunja_agent_roles_active"], defaults) == []
+
+    enabled = defaults | {"vikunja_agent_roles_enabled": ["workstation", "nightly"]}
+    rows = {row["role"]: row for row in _render(defaults["vikunja_agent_roles_active"], enabled)}
+    assert set(rows) == {"workstation", "nightly"}
+    mount = defaults["vikunja_agent_tiers"][0]["openbao_mount"]
+    assert {
+        key: rows["nightly"][key]
+        for key in ("username", "password_field", "openbao_mount", "openbao_path", "openbao_login_path", "token_field")
+    } == {
+        "username": "svc-agent-nightly",
+        "password_field": "vikunja_agent_nightly_password",
+        "openbao_mount": mount,
+        "openbao_path": "vikunja-nightly",
+        "openbao_login_path": "vikunja-nightly-login",
+        "token_field": "VIKUNJA_AGENT_NIGHTLY_TOKEN",
+    }
+    assert rows["workstation"]["project_permissions"]["domain"] == 1
