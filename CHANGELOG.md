@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.91.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.91.1...v5.91.2) (2026-11-28)
+
+
+### Bug Fixes
+
+* **zammad:** read the triage and clerk service values from the app document ([#4087](https://github.com/dryvist/ansible-proxmox-apps/issues/4087)) ([3380592](https://github.com/dryvist/ansible-proxmox-apps/commit/3380592984a50ef4a891468b0fc72ce595a0d682))
+
 ## [5.91.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.91.0...v5.91.1) (2026-11-28)
 
 
