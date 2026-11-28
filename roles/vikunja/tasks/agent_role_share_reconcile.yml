@@ -1,0 +1,39 @@
+---
+- name: Require every role project set to be declared
+  ansible.builtin.assert:
+    that:
+      - item in vikunja_agent_project_sets
+    fail_msg: "Vikunja agent role {{ vikunja_agent_role.role }} names unknown project set '{{ item }}'."
+    quiet: true
+  loop: "{{ vikunja_agent_role.project_permissions.keys() | list }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Build the project ID to right map for the Vikunja agent role
+  ansible.builtin.set_fact:
+    vikunja_agent_role_share_permissions: >-
+      {%- set _permissions = namespace(value={}) -%}
+      {%- for _set_name, _permission in vikunja_agent_role.project_permissions.items() -%}
+      {%- for _project_id in vikunja_agent_project_sets[_set_name] -%}
+      {%- set _key = _project_id | string -%}
+      {%- set _right = _permission | int -%}
+      {%- if _key not in _permissions.value or _right > (_permissions.value[_key] | int) -%}
+      {%- set _permissions.value = _permissions.value | combine({_key: _right}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ _permissions.value }}
+  no_log: true
+
+- name: Reconcile the role's exact project share map
+  ansible.builtin.include_tasks: agent_tier_reconcile.yml
+  vars:
+    vikunja_agent_tier:
+      id: "role-{{ vikunja_agent_role.role }}"
+      username: "{{ vikunja_agent_role.username }}"
+      password_field: "{{ vikunja_agent_role.password_field }}"
+      project_allowlist: "{{ vikunja_agent_role_share_permissions.keys() | map('int') | list }}"
+      project_permission_map: "{{ vikunja_agent_role_share_permissions }}"
+      share_permission: 0
+  when: lookup('vars', vikunja_agent_role.password_field, default='') | length > 0
+  no_log: true

@@ -212,6 +212,7 @@
     vikunja_share_grantee_username: "{{ vikunja_agent_tier.username }}"
     vikunja_share_permission: "{{ vikunja_agent_tier.share_permission }}"
     vikunja_share_project_ids: "{{ vikunja_agent_tier.project_allowlist }}"
+    vikunja_share_project_permission_map: "{{ vikunja_agent_tier.project_permission_map | default({}) }}"
   when: >-
     vikunja_project_share_owner_password_map.get(vikunja_share_owner, '')
     | default('', true) | length > 0
@@ -290,4 +291,21 @@
       Vikunja app-agent {{ vikunja_agent_tier.id }} holds an effective permission
       other than {{ vikunja_agent_tier.share_permission }} on a visible project.
     quiet: true
+  when: vikunja_agent_tier.project_permission_map is not defined
+  no_log: true
+
+- name: Assert the tier account holds each configured per-project permission
+  ansible.builtin.assert:
+    that:
+      - >-
+        item.x_max_permission | int
+        == vikunja_agent_tier.project_permission_map[item.item | string] | int
+    fail_msg: >-
+      Vikunja app-agent {{ vikunja_agent_tier.id }} holds an effective permission
+      other than its configured permission on project {{ item.item }}.
+    quiet: true
+  loop: "{{ vikunja_agent_permission_readback.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: vikunja_agent_tier.project_permission_map is defined
   no_log: true
