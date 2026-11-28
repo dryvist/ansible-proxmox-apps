@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.91.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.91.4...v5.91.5) (2026-11-28)
+
+
+### Bug Fixes
+
+* **vikunja:** resolve the outside-project list of the role share check in its own task ([#4099](https://github.com/dryvist/ansible-proxmox-apps/issues/4099)) ([c416648](https://github.com/dryvist/ansible-proxmox-apps/commit/c416648b8131f863bcf23b498227c1d219745a88))
+
 ## [5.91.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.91.3...v5.91.4) (2026-11-28)
 
 
