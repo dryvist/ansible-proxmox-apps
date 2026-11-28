@@ -117,6 +117,14 @@ key from `openhands_router_key_file`. Then it saves an agent profile that
 references it. The config then also needs `route_public` and `route_private`,
 the router model aliases for the two profiles.
 
+The same load also creates each entry of `openhands_scheduled_automations` as a
+cron automation (UTC) on the agent profile its `profile` key names. The default
+entry, `repo-fit-audit`, runs Monday 05:23 UTC. It audits one public repository
+of the configured owners per week, read-only, and ends with its findings. Each
+prompt is read on the controller from the prompt catalog at
+`openhands_prompt_catalog_commit` (Renovate bumps it); the role appends the
+owners as its last line.
+
 Automations match by name. Only the prompt, profile, timeout, tags and trigger
 are managed, so switching an automation on by hand survives later converges.
 Check mode prints the profile report and the plan and writes nothing; a profile

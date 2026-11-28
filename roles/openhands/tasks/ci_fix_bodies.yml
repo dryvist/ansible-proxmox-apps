@@ -1,5 +1,5 @@
 ---
-# Build the two automation request bodies as a fact from the validated config
+# Build the CI-fix and scheduled automation request bodies as a fact from the validated config
 # and the resolved profile ids (_openhands_ci_fix_profile_ids). No API calls.
 
 - name: Render the CI-fix trigger filter for each visibility
@@ -35,3 +35,34 @@
       - >-
         {{ _common | combine({'name': 'ci-fix-private', 'agent_profile_id': _ids[_openhands_ci_fix.profile_private],
            'trigger': _trigger | combine({'filter': _openhands_ci_fix_filter | replace('PRIVATE', 'true')})}) }}
+
+# The controller reads each prompt once; a prompt already in the fact is kept.
+- name: Read the scheduled automation prompts from the pinned prompt catalog
+  ansible.builtin.set_fact:
+    _openhands_scheduled_prompts: >-
+      {{ _openhands_scheduled_prompts | default({}) | combine({item.name:
+           lookup('ansible.builtin.url', openhands_prompt_catalog_base ~ '/' ~ item.prompt_file, split_lines=false)
+           | regex_replace('(?s)^---\n.*?\n---\n+', '')}) }}
+  loop: "{{ openhands_scheduled_automations }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.name not in (_openhands_scheduled_prompts | default({}))
+
+- name: Add the scheduled automation request bodies
+  ansible.builtin.set_fact:
+    _openhands_ci_fix_bodies: >-
+      {{ _openhands_ci_fix_bodies + [{
+           'name': item.name,
+           'enabled': item.enabled | default(false) | bool,
+           'timeout': item.timeout | default(1800) | int,
+           'tags': ['scheduled'],
+           'prompt': _openhands_scheduled_prompts[item.name] | trim ~ _newline
+                     ~ 'Owners: ' ~ (_openhands_ci_fix.owners | join(', ')),
+           'agent_profile_id': _openhands_ci_fix_profile_ids[_openhands_ci_fix[item.profile]],
+           'trigger': {'type': 'cron', 'schedule': item.schedule, 'timezone': 'UTC'}}] }}
+  loop: "{{ openhands_scheduled_automations }}"
+  loop_control:
+    label: "{{ item.name }}"
+  vars:
+    # A '\n' inside the folded template above stays a literal backslash-n.
+    _newline: "\n"
