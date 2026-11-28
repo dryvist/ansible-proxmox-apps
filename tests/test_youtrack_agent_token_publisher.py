@@ -6,6 +6,8 @@ from app_agent_helpers import _render, _task, _task_tree, _yaml
 def test_youtrack_agent_token_publisher_is_gated_and_uses_the_collection_contract():
     defaults = _yaml("roles/youtrack/defaults/main.yml")
     assert defaults["youtrack_agent_token_publish_openbao"] is False
+    inventory = _yaml("inventory/group_vars/all/youtrack.yml")
+    assert inventory["youtrack_agent_token_publish_openbao"] is True
     assert defaults["youtrack_agent_write_login"] == "svc-ai"
     assert defaults["youtrack_agent_write_token_name"] == "agent-tier-youtrack-write"
     assert defaults["youtrack_agent_write_token_remint"] is False
