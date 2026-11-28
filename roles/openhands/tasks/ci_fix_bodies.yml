@@ -36,6 +36,12 @@
         {{ _common | combine({'name': 'ci-fix-private', 'agent_profile_id': _ids[_openhands_ci_fix.profile_private],
            'trigger': _trigger | combine({'filter': _openhands_ci_fix_filter | replace('PRIVATE', 'true')})}) }}
 
+# The scheduled-automation prompt lives in a Jinja template next to the role
+# (templates/repo-fit-audit.prompt.md.j2), not in the defaults. The agent-platform
+# conformance schema caps every prompt value in role YAML at five logical lines,
+# so the defaults carry only a short loader and the full audit text is rendered
+# here, at body-build time, into the request body.
+
 - name: Add the scheduled automation request bodies
   ansible.builtin.set_fact:
     _openhands_ci_fix_bodies: >-
@@ -44,9 +50,13 @@
            'enabled': item.enabled | default(false) | bool,
            'timeout': item.timeout | default(1800) | int,
            'tags': ['scheduled'],
-           'prompt': item.prompt,
+           'prompt': lookup('ansible.builtin.template', _openhands_repo_fit_audit_template),
            'agent_profile_id': _openhands_ci_fix_profile_ids[_openhands_ci_fix[item.profile]],
            'trigger': {'type': 'cron', 'schedule': item.schedule, 'timezone': 'UTC'}}] }}
   loop: "{{ openhands_scheduled_automations }}"
   loop_control:
     label: "{{ item.name }}"
+  vars:
+    _openhands_repo_fit_audit_template: >-
+      {{ (role_path | default('', true) or playbook_dir + '/../../../roles/openhands')
+         + '/templates/repo-fit-audit.prompt.md.j2' }}
