@@ -23,6 +23,16 @@ Narrow a run with `--skip-tags` on `vikunja_operator_access`,
 loop to named identities with
 `-e '{"vikunja_mcp_token_only_users": ["svc-mcp-clerk"]}'` (empty means all).
 
+## Agent roles
+
+The per-caller roles are `workstation`, `hermes`, `pepper`, `untrusted`,
+`machines`, `jobs`, `inbox`, `acceptance`, `triage`, `nightly` and `windows`.
+`vikunja_agent_roles_enabled` is the on/off list and defaults to empty. The
+`vikunja_agent_project_sets` map names `domain`, `work`, `inbox`, `windows`,
+`jobs`, `hermes_board`, `donna_board` and `acceptance`; each list defaults to
+empty and inventory supplies integer project IDs through
+`VIKUNJA_AGENT_PROJECT_SETS`.
+
 ## OpenHands trigger
 
 The role provisions the `openhands` bot for the hand-created trigger project:

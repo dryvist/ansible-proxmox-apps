@@ -67,7 +67,8 @@ def test_vikunja_interactive_and_agent_tokens_publish_to_separate_leaves():
         "Mint and publish MCP and app-agent tokens per identity",
     )
     assert " ".join(token_loop["loop"].split()) == (
-        "{{ vikunja_mcp_token_users + vikunja_clerk_token_users + vikunja_openhands_token_users + vikunja_agent_tiers }}"
+        "{{ vikunja_mcp_token_users + vikunja_clerk_token_users + vikunja_openhands_token_users + vikunja_agent_tiers "
+        "+ vikunja_agent_roles_active }}"
     )
 
 

@@ -66,3 +66,147 @@ vikunja_agent_tiers:
     permissions: "{{ vikunja_hermes_clerk_permissions }}"
     share_permission: 1
     project_allowlist: "{{ vikunja_clerk_project_allowlist }}"
+
+# Per-calling-role bot passwords are loaded from their exact login leaves by
+# tasks/read_agent_tier_values.yml before account creation or token login.
+vikunja_agent_workstation_password: >-
+  {{ (vikunja_agent_tier_secret_values | default({}, true)).get('vikunja_agent_workstation_password', '') }}
+vikunja_agent_hermes_password: >-
+  {{ (vikunja_agent_tier_secret_values | default({}, true)).get('vikunja_agent_hermes_password', '') }}
+vikunja_agent_pepper_password: >-
+  {{ (vikunja_agent_tier_secret_values | default({}, true)).get('vikunja_agent_pepper_password', '') }}
+vikunja_agent_untrusted_password: >-
+  {{ (vikunja_agent_tier_secret_values | default({}, true)).get('vikunja_agent_untrusted_password', '') }}
+vikunja_agent_machines_password: >-
+  {{ (vikunja_agent_tier_secret_values | default({}, true)).get('vikunja_agent_machines_password', '') }}
+vikunja_agent_jobs_password: >-
+  {{ (vikunja_agent_tier_secret_values | default({}, true)).get('vikunja_agent_jobs_password', '') }}
+vikunja_agent_inbox_password: >-
+  {{ (vikunja_agent_tier_secret_values | default({}, true)).get('vikunja_agent_inbox_password', '') }}
+vikunja_agent_acceptance_password: >-
+  {{ (vikunja_agent_tier_secret_values | default({}, true)).get('vikunja_agent_acceptance_password', '') }}
+vikunja_agent_triage_password: >-
+  {{ (vikunja_agent_tier_secret_values | default({}, true)).get('vikunja_agent_triage_password', '') }}
+vikunja_agent_nightly_password: >-
+  {{ (vikunja_agent_tier_secret_values | default({}, true)).get('vikunja_agent_nightly_password', '') }}
+vikunja_agent_windows_password: >-
+  {{ (vikunja_agent_tier_secret_values | default({}, true)).get('vikunja_agent_windows_password', '') }}
+
+# Token scopes are shared by role families; each role row selects one map.
+vikunja_agent_role_workstation_permissions:
+  mcp: [access]
+  labels: [read_all, read_one]
+  projects: [read_all, read_one, views_buckets, views_buckets_tasks, views_buckets_tasks_update]
+  projects_views: [read_all, read_one]
+  projects_views_tasks: [read_all]
+  tasks: [create, read_all, read_one, update]
+  tasks_assignees: [create, delete, read_all]
+  tasks_comments: [create, read_all, read_one]
+  tasks_labels: [create, delete, read_all]
+  tasks_relations: [create, delete]
+vikunja_agent_role_create_permissions:
+  mcp: [access]
+  tasks: [create]
+vikunja_agent_role_machines_permissions:
+  mcp: [access]
+  labels: [read_all]
+  projects: [read_all, read_one]
+  tasks: [create, read_all, read_one, update]
+  tasks_labels: [create, read_all]
+vikunja_agent_role_jobs_permissions:
+  mcp: [access]
+  labels: [read_all]
+  projects: [read_all, read_one]
+  tasks: [create, read_all, read_one, update]
+  tasks_comments: [create, read_all]
+  tasks_labels: [create, read_all]
+
+vikunja_agent_roles_enabled: []
+vikunja_agent_roles:
+  - role: workstation
+    project_permissions:
+      windows: 0
+      jobs: 0
+      hermes_board: 0
+      donna_board: 0
+      domain: 1
+      work: 1
+      inbox: 1
+    permissions: "{{ vikunja_agent_role_workstation_permissions }}"
+  - role: hermes
+    project_permissions:
+      domain: 0
+      hermes_board: 1
+      inbox: 1
+    permissions: "{{ vikunja_agent_role_workstation_permissions }}"
+  - role: pepper
+    project_permissions:
+      domain: 1
+      work: 1
+      inbox: 1
+      windows: 1
+      jobs: 1
+      hermes_board: 1
+      donna_board: 1
+      acceptance: 1
+    permissions: "{{ vikunja_agent_role_workstation_permissions }}"
+  - role: untrusted
+    project_permissions:
+      inbox: 1
+    permissions: "{{ vikunja_agent_role_create_permissions }}"
+  - role: machines
+    project_permissions:
+      windows: 1
+    permissions: "{{ vikunja_agent_role_machines_permissions }}"
+  - role: jobs
+    project_permissions:
+      jobs: 1
+      inbox: 1
+    permissions: "{{ vikunja_agent_role_jobs_permissions }}"
+  - role: inbox
+    project_permissions:
+      inbox: 1
+    permissions: "{{ vikunja_agent_role_create_permissions }}"
+  - role: acceptance
+    project_permissions:
+      acceptance: 1
+    permissions: "{{ vikunja_agent_role_workstation_permissions }}"
+  - role: triage
+    project_permissions:
+      inbox: 1
+      domain: 1
+    permissions: "{{ vikunja_agent_role_workstation_permissions }}"
+  - role: nightly
+    project_permissions:
+      domain: 1
+    permissions: "{{ vikunja_agent_role_workstation_permissions }}"
+  - role: windows
+    project_permissions:
+      windows: 1
+    permissions: "{{ vikunja_agent_role_jobs_permissions }}"
+
+# A role's bot user, store leaves and field names all follow from its name,
+# so no row states them. Consumers loop over this list, never the rows above.
+vikunja_agent_roles_active: >-
+  {%- set _rows = [] -%}
+  {%- for _row in vikunja_agent_roles if _row.role in vikunja_agent_roles_enabled -%}
+  {%- set _discard = _rows.append({
+        'username': 'svc-agent-' ~ _row.role,
+        'password_field': 'vikunja_agent_' ~ _row.role ~ '_password',
+        'openbao_mount': vikunja_agent_tiers[0].openbao_mount,
+        'openbao_path': 'vikunja-' ~ _row.role,
+        'openbao_login_path': 'vikunja-' ~ _row.role ~ '-login',
+        'token_field': 'VIKUNJA_AGENT_' ~ (_row.role | upper) ~ '_TOKEN',
+      } | combine(_row)) -%}
+  {%- endfor -%}
+  {{ _rows }}
+
+vikunja_agent_project_sets:
+  domain: []
+  work: []
+  inbox: []
+  windows: []
+  jobs: []
+  hermes_board: []
+  donna_board: []
+  acceptance: []
