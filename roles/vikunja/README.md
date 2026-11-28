@@ -102,3 +102,14 @@ as the project's automation owner when absent and never deleted. Each is
 signed with the route-only secret `vikunja_task_webhook_secret` (default: env
 `VIKUNJA_TASK_WEBHOOK_SECRET`); the run fails if rows are set and the secret is
 empty, or if a live webhook's events differ from its row.
+
+Set `vikunja_task_events_enabled: true` to create or update one Basic-auth
+webhook on every project visible to `vikunja_task_events_owner`. The default
+owner is the first entry in `vikunja_mcp_ro_share_owner_usernames`. The target
+URL uses the Cribl Stream worker and published task-event source port by default; set
+`vikunja_task_events_url` only to override it. Set
+`VIKUNJA_TASK_EVENTS_PASSWORD` in the converge environment for both Vikunja and
+Cribl. The default Basic user is `vikunja-task-events`; override
+`vikunja_task_events_basic_user` only when both roles use the same value. Enable
+`cribl_stream_vikunja_task_events_enabled` on the Cribl role to accept the
+computed Basic header.
