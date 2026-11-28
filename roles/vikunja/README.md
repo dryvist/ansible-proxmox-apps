@@ -50,6 +50,34 @@ ownership, and no share is ever revoked. The share runs independently of the
 operator block, so the tracker keeps its reads even when the human operator
 account is not provisioned.
 
+## Tracker conventions
+
+Agents and people follow one set of tracker conventions, and the role keeps
+the tracker matching it on every run. Two lists live in
+`defaults/main/17-tracker-conventions.yml`: `vikunja_tracker_labels` declares
+the labels `epic`, `needs-split`, `needs-info`, `from-untrusted` and
+`operator-step`, each with a colour and a description, and
+`vikunja_tracker_buckets` declares the kanban buckets `Backlog`, `Ready`,
+`In progress`, `Blocked` and `Done` — only `Ready` carries a work-in-progress
+limit (10; 0 means no limit). The declared default bucket is `Backlog` and the
+declared done bucket is `Done`.
+
+`vikunja_tracker_bucket_renames` maps old titles to declared ones for a board
+that still uses them (`To-Do` to `Backlog`, `Doing` to `In progress`): a
+bucket still carrying its old title is renamed while the new title does not
+exist yet on that view, and never recreated. `vikunja_tracker_board_projects`
+lists the project ids the board reconcile runs on — derived from the app-agent
+domain project set when one is declared, and empty by default, which leaves
+the buckets untouched.
+
+The reconciles create missing labels and buckets, align the declared buckets'
+limits and positions so the declared five come first in the declared order,
+and point each project's kanban view at the declared default and done buckets
+(it fails loudly on a project without a kanban view rather than creating one).
+They never delete a label or a bucket: an existing label is left exactly as it
+is, and a bucket outside the declarations keeps its place after the declared
+five and is never renamed, emptied or deleted.
+
 ## Outgoing requests
 
 Webhooks may target private network addresses. This rests on two assumptions:
