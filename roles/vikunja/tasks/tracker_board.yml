@@ -1,0 +1,35 @@
+---
+# Bring every project listed in vikunja_tracker_board_projects onto the
+# shared tracker board: the same five kanban buckets
+# (defaults/main/17-tracker-conventions.yml) in the declared order, with the
+# declared default and done bucket on the view. The login below is the one
+# session every project's reconcile (tracker_board_one.yml) reads through.
+# The list is empty by default, which makes this file do nothing.
+#
+# Strictly additive: a bucket is renamed or created, never deleted or
+# emptied, and a bucket outside the declared list is only ever read.
+
+- name: Log in to Vikunja as the managing user
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/login"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ vikunja_admin_user }}"
+      password: "{{ vikunja_admin_password }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  # A login creates no tracker state, so it must not report changed on a run
+  # where every write below is already satisfied.
+  register: vikunja_tracker_board_login
+  changed_when: false
+  check_mode: false
+  no_log: true
+  when: vikunja_tracker_board_projects | length > 0
+
+- name: Reconcile the declared buckets on each board project
+  ansible.builtin.include_tasks: tracker_board_one.yml
+  loop: "{{ vikunja_tracker_board_projects }}"
+  loop_control:
+    loop_var: vikunja_tracker_board_project
+    label: "{{ vikunja_tracker_board_project }}"

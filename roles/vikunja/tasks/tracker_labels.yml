@@ -1,0 +1,119 @@
+---
+# Reconcile the declared tracker labels
+# (defaults/main/17-tracker-conventions.yml) as the role's managing user:
+# list the tracker's labels, create every declared title that does not exist,
+# and leave every existing label exactly as it is — an existing label keeps
+# its colour and description even when the declaration differs. Strictly
+# additive: nothing here ever deletes a label.
+#
+# The login and the reads carry check_mode: false so a --check run still
+# reads the tracker and the note at the bottom can report what a real run
+# would create; the create itself never runs there.
+
+- name: Log in to Vikunja as the managing user
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/login"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ vikunja_admin_user }}"
+      password: "{{ vikunja_admin_password }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  # A login creates no tracker state, so it must not report changed on a run
+  # where every write below is already satisfied.
+  register: vikunja_tracker_labels_login
+  changed_when: false
+  check_mode: false
+  no_log: true
+  when: vikunja_tracker_labels | length > 0
+
+- name: Read page one of the tracker labels
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/labels?page=1"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_tracker_labels_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_tracker_labels_p1
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Read the remaining tracker label pages
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/labels?page={{ item }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_tracker_labels_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  loop: >-
+    {{ range(2, (vikunja_tracker_labels_p1.x_pagination_total_pages
+                 | default(1, true) | int) + 1) | list }}
+  register: vikunja_tracker_labels_rest
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Merge the label pages into one list
+  ansible.builtin.set_fact:
+    vikunja_tracker_labels_live: >-
+      {{ (vikunja_tracker_labels_p1.json | default([], true))
+         + (vikunja_tracker_labels_rest.results | default([], true)
+            | map(attribute='json') | select('iterable') | list | flatten) }}
+
+- name: List the declared labels the tracker does not have yet
+  ansible.builtin.set_fact:
+    vikunja_tracker_labels_missing: >-
+      {{ vikunja_tracker_labels
+         | rejectattr('title', 'in',
+                      (vikunja_tracker_labels_live | map(attribute='title') | list))
+         | list }}
+
+- name: Create each missing declared label
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/labels"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ vikunja_tracker_labels_login.json.token }}"
+    body_format: json
+    body:
+      title: "{{ item.title }}"
+      hex_color: "{{ item.hex_color }}"
+      description: "{{ item.description }}"
+    status_code: [200, 201]
+    timeout: "{{ vikunja_api_timeout }}"
+  loop: "{{ vikunja_tracker_labels_missing }}"
+  loop_control:
+    label: "{{ item.title }}"
+  when:
+    - not ansible_check_mode
+    - vikunja_tracker_labels_missing | length > 0
+  changed_when: true
+  no_log: true
+  register: vikunja_tracker_labels_created
+
+- name: Map each declared label title to its tracker id
+  ansible.builtin.set_fact:
+    vikunja_tracker_label_ids: >-
+      {{ (vikunja_tracker_labels_live
+          | selectattr('title', 'in',
+                       (vikunja_tracker_labels | map(attribute='title') | list))
+          | items2dict(key_name='title', value_name='id'))
+         | combine((vikunja_tracker_labels_created.results | default([], true)
+                    | selectattr('json', 'defined')
+                    | map(attribute='json') | list
+                    | items2dict(key_name='title', value_name='id'))) }}
+
+- name: Note the labels check mode would create
+  ansible.builtin.debug:
+    msg: >-
+      Check mode: would create the missing declared label(s)
+      {{ vikunja_tracker_labels_missing | map(attribute='title') | join(', ') }}.
+      Run without --check to create them; existing labels are never changed or
+      deleted.
+  when:
+    - ansible_check_mode
+    - vikunja_tracker_labels_missing | length > 0
