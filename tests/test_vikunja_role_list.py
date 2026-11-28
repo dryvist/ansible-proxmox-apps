@@ -132,6 +132,15 @@ def test_role_token_flow_includes_mcp_verification():
     assert "/api/v2/mcp" in str(verification_tasks)
 
 
+def test_role_verification_facts_never_read_a_sibling_key_of_the_same_task():
+    # A fact set in one task is not visible to the other keys of that task.
+    for task in _yaml("roles/vikunja/tasks/mcp_agent_role_verify.yml"):
+        facts = task.get("ansible.builtin.set_fact", {})
+        for key, value in facts.items():
+            for sibling in facts:
+                assert sibling == key or sibling not in str(value), (task["name"], key, sibling)
+
+
 def test_active_rows_derive_user_and_store_names_from_the_role_name():
     defaults = _vikunja_defaults()
     assert _render(defaults["vikunja_agent_roles_active"], defaults) == []
