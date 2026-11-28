@@ -1,0 +1,278 @@
+---
+# One board project (the loop in tracker_board.yml): reconcile the project's
+# kanban view to the declared buckets — rename buckets still carrying a
+# pre-conventions title, create the missing ones, align limits and positions
+# so the declared five come first in the declared order, and point the view's
+# default and done bucket at the declared ones.
+#
+# Every write's when is computed from a live read, so a second run on a
+# matching board reports changed=0, and in check mode the reads still run so
+# the note at the bottom can report what a real run would change. A bucket
+# outside the declared list is never renamed, emptied or deleted; it is only
+# re-read and listed.
+
+- name: "Read the views of project {{ vikunja_tracker_board_project }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_tracker_board_project }}/views"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_tracker_board_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_board_views
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: "Pick the kanban view of project {{ vikunja_tracker_board_project }}"
+  ansible.builtin.set_fact:
+    vikunja_board_view: >-
+      {{ vikunja_board_views.json | default([], true)
+         | selectattr('view_kind', 'equalto', 'kanban')
+         | first | default({}, true) }}
+
+- name: "Fail on a missing kanban view for project {{ vikunja_tracker_board_project }}"
+  ansible.builtin.fail:
+    msg: >-
+      Project {{ vikunja_tracker_board_project }} has no kanban view, so the
+      declared tracker buckets cannot be reconciled on it. The tracker
+      conventions never create views: create a kanban view on the project,
+      then rerun.
+  when: vikunja_board_view | length == 0
+
+- name: "Read the kanban view buckets on project {{ vikunja_tracker_board_project }}"
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_tracker_board_project }}/views/{{
+      vikunja_board_view.id }}/buckets
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_tracker_board_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_board_buckets_pre
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: "List the current bucket titles on project {{ vikunja_tracker_board_project }}"
+  ansible.builtin.set_fact:
+    vikunja_board_pre_titles: >-
+      {{ vikunja_board_buckets_pre.json | default([], true)
+         | map(attribute='title') | list }}
+
+- name: "Derive the still-needed bucket renames on project {{ vikunja_tracker_board_project }}"
+  ansible.builtin.set_fact:
+    # A rename applies only while the old title exists and the new title does
+    # not exist yet on this view — the once-per-untouched-board case. A pair
+    # in any other state is left alone.
+    vikunja_board_renames: >-
+      {{ vikunja_tracker_bucket_renames | dict2items
+         | selectattr('key', 'in', vikunja_board_pre_titles)
+         | rejectattr('value', 'in', vikunja_board_pre_titles) | list }}
+
+- name: "Derive the missing declared buckets on project {{ vikunja_tracker_board_project }}"
+  ansible.builtin.set_fact:
+    # Not present under its declared title AND not the target of a rename
+    # above, so a renamed bucket is never also created.
+    vikunja_board_missing: >-
+      {{ vikunja_tracker_buckets
+         | rejectattr('title', 'in', vikunja_board_pre_titles)
+         | rejectattr('title', 'in',
+                      (vikunja_board_renames | map(attribute='value') | list))
+         | list }}
+
+- name: "Rename buckets still carrying their old titles on project {{ vikunja_tracker_board_project }}"
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_tracker_board_project }}/views/{{
+      vikunja_board_view.id }}/buckets/{{
+        (vikunja_board_buckets_pre.json | selectattr('title', 'equalto', item.key)
+         | map(attribute='id') | first) }}
+    method: POST
+    headers:
+      Authorization: "Bearer {{ vikunja_tracker_board_login.json.token }}"
+    body_format: json
+    # Limit and position are the bucket's own current values: the update
+    # carries the whole bucket so the rename cannot disturb either.
+    body:
+      title: "{{ item.value }}"
+      limit: >-
+        {{ vikunja_board_buckets_pre.json | selectattr('title', 'equalto', item.key)
+           | map(attribute='limit') | first | default(0) }}
+      position: >-
+        {{ vikunja_board_buckets_pre.json | selectattr('title', 'equalto', item.key)
+           | map(attribute='position') | first | default(0) }}
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  loop: "{{ vikunja_board_renames }}"
+  loop_control:
+    label: "{{ item.key }} -> {{ item.value }}"
+  when:
+    - not ansible_check_mode
+    - vikunja_board_renames | length > 0
+  changed_when: true
+  no_log: true
+
+- name: "Create the missing declared buckets on project {{ vikunja_tracker_board_project }}"
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_tracker_board_project }}/views/{{
+      vikunja_board_view.id }}/buckets
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ vikunja_tracker_board_login.json.token }}"
+    body_format: json
+    body:
+      title: "{{ item.title }}"
+      limit: "{{ item.limit }}"
+    status_code: [200, 201]
+    timeout: "{{ vikunja_api_timeout }}"
+  loop: "{{ vikunja_board_missing }}"
+  loop_control:
+    label: "{{ item.title }}"
+  when:
+    - not ansible_check_mode
+    - vikunja_board_missing | length > 0
+  changed_when: true
+  no_log: true
+
+- name: "Read back the kanban view buckets on project {{ vikunja_tracker_board_project }}"
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_tracker_board_project }}/views/{{
+      vikunja_board_view.id }}/buckets
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_tracker_board_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_board_buckets
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: "Index the live buckets by title on project {{ vikunja_tracker_board_project }}"
+  ansible.builtin.set_fact:
+    vikunja_board_live_titles: >-
+      {{ vikunja_board_buckets.json | default([], true) | map(attribute='title') | list }}
+    vikunja_board_live_ids: >-
+      {{ dict((vikunja_board_buckets.json | default([], true) | map(attribute='title') | list)
+              | zip(vikunja_board_buckets.json | default([], true) | map(attribute='id') | list)) }}
+    vikunja_board_live_limits: >-
+      {{ dict((vikunja_board_buckets.json | default([], true) | map(attribute='title') | list)
+              | zip(vikunja_board_buckets.json | default([], true) | map(attribute='limit') | list)) }}
+    vikunja_board_live_positions: >-
+      {{ dict((vikunja_board_buckets.json | default([], true) | map(attribute='title') | list)
+              | zip(vikunja_board_buckets.json | default([], true) | map(attribute='position') | list)) }}
+
+- name: "Derive the wanted positions and the undeclared buckets of project {{ vikunja_tracker_board_project }}"
+  ansible.builtin.set_fact:
+    # The declared buckets take positions 0..4 in declared order; an
+    # undeclared bucket keeps whatever position it already holds, after them.
+    vikunja_board_positions_wanted: >-
+      {{ dict((vikunja_tracker_buckets | map(attribute='title') | list)
+              | zip(range(vikunja_tracker_buckets | length))) }}
+    vikunja_board_extras: >-
+      {{ vikunja_board_buckets.json | default([], true)
+         | rejectattr('title', 'in', (vikunja_tracker_buckets | map(attribute='title') | list))
+         | map(attribute='title') | list }}
+
+- name: "Align each declared bucket's limit on project {{ vikunja_tracker_board_project }}"
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_tracker_board_project }}/views/{{
+      vikunja_board_view.id }}/buckets/{{ vikunja_board_live_ids[item.title] }}
+    method: POST
+    headers:
+      Authorization: "Bearer {{ vikunja_tracker_board_login.json.token }}"
+    body_format: json
+    # The position is the bucket's own current value: the update carries the
+    # whole bucket so the limit change cannot disturb it.
+    body:
+      title: "{{ item.title }}"
+      limit: "{{ item.limit }}"
+      position: "{{ vikunja_board_live_positions[item.title] }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  loop: "{{ vikunja_tracker_buckets }}"
+  loop_control:
+    label: "{{ item.title }}"
+  when:
+    - not ansible_check_mode
+    - item.title in vikunja_board_live_titles
+    - vikunja_board_live_limits.get(item.title) != item.limit
+  changed_when: true
+  no_log: true
+
+- name: "Move each declared bucket into its declared position on project {{ vikunja_tracker_board_project }}"
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_tracker_board_project }}/views/{{
+      vikunja_board_view.id }}/buckets/{{ vikunja_board_live_ids[item.title] }}
+    method: POST
+    headers:
+      Authorization: "Bearer {{ vikunja_tracker_board_login.json.token }}"
+    body_format: json
+    body:
+      title: "{{ item.title }}"
+      limit: "{{ item.limit }}"
+      position: "{{ vikunja_board_positions_wanted[item.title] }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  loop: "{{ vikunja_tracker_buckets }}"
+  loop_control:
+    label: "{{ item.title }}"
+  when:
+    - not ansible_check_mode
+    - item.title in vikunja_board_live_titles
+    - vikunja_board_live_positions.get(item.title) != vikunja_board_positions_wanted[item.title]
+  changed_when: true
+  no_log: true
+
+- name: "Point the view's default and done buckets at the declared ones on project {{ vikunja_tracker_board_project }}"
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_tracker_board_project }}/views/{{
+      vikunja_board_view.id }}
+    method: POST
+    headers:
+      Authorization: "Bearer {{ vikunja_tracker_board_login.json.token }}"
+    body_format: json
+    # The view's other fields go back exactly as they were read.
+    body: >-
+      {{ vikunja_board_view | combine({
+           'default_bucket_id': vikunja_board_live_ids.get(vikunja_tracker_default_bucket),
+           'done_bucket_id': vikunja_board_live_ids.get(vikunja_tracker_done_bucket) }) }}
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  when:
+    - not ansible_check_mode
+    - >-
+      vikunja_board_view.get('default_bucket_id')
+      != vikunja_board_live_ids.get(vikunja_tracker_default_bucket)
+      or vikunja_board_view.get('done_bucket_id')
+      != vikunja_board_live_ids.get(vikunja_tracker_done_bucket)
+  changed_when: true
+  no_log: true
+
+- name: "List the undeclared buckets left in place on project {{ vikunja_tracker_board_project }}"
+  ansible.builtin.debug:
+    msg: >-
+      Project {{ vikunja_tracker_board_project }} kanban view {{
+        vikunja_board_view.id }}: undeclared bucket(s) {{ vikunja_board_extras | join(', ') }}
+      keep their place after the declared five and are never renamed, emptied
+      or deleted.
+  when: vikunja_board_extras | length > 0
+
+- name: "Note what check mode would change on project {{ vikunja_tracker_board_project }}"
+  ansible.builtin.debug:
+    msg: >-
+      Check mode: project {{ vikunja_tracker_board_project }} would get the
+      renames {{ vikunja_board_renames }}, the new buckets
+      {{ vikunja_board_missing | map(attribute='title') | list }}, the declared
+      limits {{ vikunja_tracker_buckets | map(attribute='limit') | list }} and
+      positions {{ range(vikunja_tracker_buckets | length) | list }} wherever
+      the live board differs, and the declared default and done buckets on its
+      kanban view. Run without --check to apply.
+  when: ansible_check_mode
