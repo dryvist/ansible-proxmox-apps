@@ -105,12 +105,29 @@ def test_every_write_request_is_gated_and_none_runs_in_check_mode():
             assert task.get("check_mode") is not False, task["name"]
 
 
-# --- 7: main.yml ends with the two includes, labels first -----------------------
+# --- 7: main.yml includes both reconciles, labels first -------------------------
 
 
-def test_main_ymls_last_two_tasks_are_the_convention_includes():
+def test_main_yml_includes_both_convention_reconciles_labels_first():
     tasks = list(_task_tree(_yaml("roles/vikunja/tasks/main.yml")))
-    assert tasks[-2]["ansible.builtin.include_tasks"] == "tracker_labels.yml"
-    assert tasks[-1]["ansible.builtin.include_tasks"] == "tracker_board.yml"
-    for task in tasks[-2:]:
+    includes = [t.get("ansible.builtin.include_tasks") for t in tasks]
+    labels, board = includes.index("tracker_labels.yml"), includes.index("tracker_board.yml")
+    assert labels < board
+    for task in (tasks[labels], tasks[board]):
         assert "vikunja_tracker_conventions" in task.get("tags", []), task["name"]
+
+
+# --- 8: every session the reconciles read through is registered -----------------
+
+
+def test_every_login_is_registered_under_the_name_its_readers_use():
+    for path, name in (
+        (TASK_FILES[0], "vikunja_tracker_labels_login"),
+        (TASK_FILES[1], "vikunja_tracker_board_login"),
+    ):
+        logins = [t for t in _uri_tasks(path) if t["ansible.builtin.uri"]["url"].endswith("/login")]
+        assert [t.get("register") for t in logins] == [name], path
+    for path in TASK_FILES:
+        text = path.read_text(encoding="utf-8")
+        for used in set(re.findall(r"(vikunja_tracker_\w+_login)\.json", text)):
+            assert used in ("vikunja_tracker_labels_login", "vikunja_tracker_board_login"), used
