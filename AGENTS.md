@@ -7,33 +7,6 @@ Configure applications on Proxmox VMs and LXC containers.
 VMs/containers are provisioned by `tofu-proxmox`;
 this repo handles app config only.
 
-## CI: Leak review gate (AI Merge Gate)
-
-The `gate / Leak review` policy gate scans the PR diff with an LLM rubric
-(`.ai-workflows/.github/` + `leak-prompt.yml` in the JacobPEvans/.github-ai
-repo). Four categories: `credential`, `private_host_or_ip`,
-`internal_topology`, `incident_detail`. Findings are advisory before
-`LEAK_ADVISORY_END_DATE` and blocking on/after that date.
-
-`internal_topology` = "the diff reveals the layout of private
-infrastructure: which hosts exist, how they connect, what depends on what".
-This is **diff-scoped but context-aware**: the LLM reads the whole repo
-context, so a list of short internal names (e.g. role names already
-declared in `roles/.../defaults/`) can be flagged when an accompanying
-comment explains how they map to a private service layout ("one bot
-user, token and share set per calling role ... login leaf in the
-store"). Names alone without topology-explaining prose may pass or
-fail depending on model version — treat the gate as non-deterministic.
-
-Resolution patterns that have worked:
-- Remove or rephrase the topology-explaining comment; keep the data
-  lines. The LLM then typically stops flagging the list.
-- Request the `leak-review-override` PR label (human action) only
-  when the flagged content is intentionally part of the public diff
-  (e.g. names that already exist in committed role defaults).
-
-Do not "fix" the gate by weakening the rubric or the date.
-
 ## Container-runtime exceptions
 
 Guests are system containers by default. These roles run Docker because the
