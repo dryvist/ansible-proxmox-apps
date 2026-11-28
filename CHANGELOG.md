@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.88.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.88.0...v5.88.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **openhands:** trust the PyPI cache host when installing uv ([#4068](https://github.com/dryvist/ansible-proxmox-apps/issues/4068)) ([ec6ba15](https://github.com/dryvist/ansible-proxmox-apps/commit/ec6ba1544c4c41f7d8db064b9e1a95e5c3cbb15f))
+
 ## [5.88.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.87.0...v5.88.0) (2026-11-28)
 
 

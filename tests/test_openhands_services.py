@@ -54,7 +54,7 @@ class OpenHandsServiceInstall(unittest.TestCase):
         install = _task(_load(SERVICES), "Install the agent server and automation through the PyPI cache")
         argv = install["ansible.builtin.command"]["argv"]
         self.assertEqual(argv[0], "{{ openhands_uv_venv }}/bin/uv")
-        self.assertIn("--index-url={{ openhands_pypi_cache_url }}", argv)
+        self.assertIn("--index-url={{ openhands_pypi_index_url }}", argv)
         self.assertIn(
             "openhands-agent-server=={{ openhands_agent_server_version }}", argv
         )
