@@ -138,16 +138,33 @@ def test_enabled_role_reconcile_is_between_user_creation_and_mcp_tokens_and_skip
     main = yaml.safe_load((ROOT / "roles/vikunja/tasks/main.yml").read_text(encoding="utf-8"))
     names = [task.get("name") for task in main]
     users = names.index("Create Vikunja agent role users (idempotent — skipped if already present)")
+    catalog = names.index("Build the visible Vikunja project catalog")
     shares = names.index("Reconcile Vikunja agent role project shares")
     tokens = names.index("Validate MCP API token scopes and publish when enabled")
     reconcile = main[shares]
 
-    assert shares == users + 1
+    assert catalog == users + 1
+    assert shares == catalog + 1
     assert tokens == shares + 1
     assert "vikunja_agent_roles_active | length > 0" in reconcile["when"]
     assert "not ansible_check_mode" in reconcile["when"]
     defaults = yaml.safe_load((ROOT / "roles/vikunja/defaults/main/10-agent-tiers.yml").read_text(encoding="utf-8"))
     assert _render(defaults["vikunja_agent_roles_active"], defaults) == []
+
+
+def test_project_catalog_is_built_once_before_both_share_reconcilers():
+    main = yaml.safe_load((ROOT / "roles/vikunja/tasks/main.yml").read_text(encoding="utf-8"))
+    names = [task.get("name") for task in main]
+    catalog = names.index("Build the visible Vikunja project catalog")
+    shares = names.index("Reconcile Vikunja agent role project shares")
+    access = names.index("Reconcile app-agent Vikunja project access")
+
+    assert catalog < shares < access
+    assert main[catalog]["tags"] == main[shares]["tags"] == main[access]["tags"]
+    assert "not ansible_check_mode" in main[catalog]["when"]
+    for name in ("agent_read_access.yml", "agent_role_shares.yml", "agent_tier_reconcile.yml"):
+        text = (ROOT / "roles/vikunja/tasks" / name).read_text(encoding="utf-8")
+        assert "vikunja_agent_project_catalog: []" not in text
 
 
 def test_per_project_rights_reuse_the_existing_share_requests_and_preserve_scalar_fallback():
