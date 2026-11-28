@@ -1,7 +1,22 @@
 ---
-# Declared project webhooks (vikunja_task_webhooks). Reads run in check mode,
-# so a check run lists each project's current webhooks; the create is a PUT
-# and is skipped there.
+# Declared project webhooks (vikunja_task_webhooks) and the optional live
+# task-event feed. Reads run in check mode, so a check run still lists current
+# state while writes are skipped.
+
+- name: Require the task-event target and shared Basic password
+  ansible.builtin.assert:
+    that:
+      - vikunja_task_events_url | default('', true) | length > 0
+      - vikunja_task_events_basic_user | default('', true) | length > 0
+      - vikunja_task_events_basic_password | default('', true) | length > 0
+      - vikunja_task_events_owner | default('', true) | length > 0
+      - vikunja_task_events_events | length > 0
+    fail_msg: >-
+      vikunja_task_events_enabled requires a Cribl target URL, a non-empty
+      Basic user and VIKUNJA_TASK_EVENTS_PASSWORD, and at least one event.
+    quiet: true
+  no_log: true
+  when: vikunja_task_events_enabled | bool
 
 - name: Require the route-only webhook secret
   ansible.builtin.assert:
@@ -11,10 +26,23 @@
       no webhook is created unsigned.
     quiet: true
   no_log: true
+  when: vikunja_task_webhooks | length > 0
 
 - name: Build the owner credential map for the webhook owners
   ansible.builtin.include_tasks: project_share_owner_password_map.yml
   no_log: true
+  when: vikunja_task_webhooks | length > 0 or vikunja_task_events_enabled | bool
+
+- name: Require credentials for the task-event project owner
+  ansible.builtin.assert:
+    that:
+      - vikunja_project_share_owner_password_map.get(vikunja_task_events_owner, '') | length > 0
+    fail_msg: >-
+      vikunja_task_events_owner must be present in the role's project-owner
+      password map when vikunja_task_events_enabled is true.
+    quiet: true
+  no_log: true
+  when: vikunja_task_events_enabled | bool
 
 - name: Reconcile each declared project webhook
   ansible.builtin.include_tasks: task_webhook_one.yml
@@ -22,3 +50,68 @@
   loop_control:
     loop_var: vikunja_task_webhook
     label: "project {{ vikunja_task_webhook.project_id }}"
+  when: vikunja_task_webhooks | length > 0
+
+- name: Log in to Vikunja to list task-event projects
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/login"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ vikunja_task_events_owner }}"
+      password: "{{ vikunja_project_share_owner_password_map.get(vikunja_task_events_owner, '') }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_task_events_login
+  check_mode: false
+  no_log: true
+  when: vikunja_task_events_enabled | bool
+
+- name: List the first page of projects visible to the task-event owner
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects?page=1"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_task_events_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_task_events_projects_p1
+  changed_when: false
+  check_mode: false
+  no_log: true
+  when: vikunja_task_events_enabled | bool
+
+- name: List the remaining pages of task-event projects
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects?page={{ item }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_task_events_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  loop: >-
+    {{ range(2, (vikunja_task_events_projects_p1.x_pagination_total_pages
+                 | default(1, true) | int) + 1) | list }}
+  register: vikunja_task_events_projects_rest
+  changed_when: false
+  check_mode: false
+  no_log: true
+  when: vikunja_task_events_enabled | bool
+
+- name: Reconcile the task-event webhook on every visible project
+  ansible.builtin.include_tasks: task_webhook_one.yml
+  loop: >-
+    {{ (vikunja_task_events_projects_p1.json | default([], true))
+       + (vikunja_task_events_projects_rest.results | default([], true)
+          | map(attribute='json') | select('iterable') | list | flatten) }}
+  loop_control:
+    loop_var: vikunja_task_events_project
+    label: "project {{ vikunja_task_events_project.id }}"
+  vars:
+    vikunja_task_webhook:
+      project_id: "{{ vikunja_task_events_project.id }}"
+      owner: "{{ vikunja_task_events_owner }}"
+      target_url: "{{ vikunja_task_events_url }}"
+      events: "{{ vikunja_task_events_events }}"
+      task_events: true
+  when: vikunja_task_events_enabled | bool

@@ -1,6 +1,7 @@
 ---
-# One declared project webhook, acting as its owner via a password JWT (the
-# same login operator_access_one.yml uses). Matched by target_url.
+# One declared project webhook. Existing declarations log in as their owner;
+# the live task-event feed reuses the admin token that listed its projects.
+# Both paths match only target_url, so another target is never modified.
 
 - name: "Log in to Vikunja as {{ vikunja_task_webhook.owner }}"
   ansible.builtin.uri:
@@ -15,13 +16,17 @@
   register: vikunja_task_webhook_login
   check_mode: false
   no_log: true
+  when: not (vikunja_task_webhook.task_events | default(false) | bool)
 
 - name: "Read the webhooks on project {{ vikunja_task_webhook.project_id }}"
   ansible.builtin.uri:
     url: "http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_task_webhook.project_id }}/webhooks"
     method: GET
     headers:
-      Authorization: "Bearer {{ vikunja_task_webhook_login.json.token }}"
+      Authorization: >-
+        Bearer {{ vikunja_task_events_login.json.token
+                  if vikunja_task_webhook.task_events | default(false) | bool
+                  else vikunja_task_webhook_login.json.token }}
     status_code: [200]
     timeout: "{{ vikunja_api_timeout }}"
   register: vikunja_task_webhook_current
@@ -34,30 +39,73 @@
     url: "http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_task_webhook.project_id }}/webhooks"
     method: PUT
     headers:
-      Authorization: "Bearer {{ vikunja_task_webhook_login.json.token }}"
+      Authorization: >-
+        Bearer {{ vikunja_task_events_login.json.token
+                  if vikunja_task_webhook.task_events | default(false) | bool
+                  else vikunja_task_webhook_login.json.token }}
     body_format: json
     body:
       target_url: "{{ vikunja_task_webhook.target_url }}"
       events: "{{ vikunja_task_webhook.events }}"
-      secret: "{{ vikunja_task_webhook_secret }}"
+      secret: "{{ vikunja_task_webhook_secret if not _feed | bool else omit }}"
+      basic_auth_user: "{{ vikunja_task_events_basic_user if _feed | bool else omit }}"
+      basic_auth_password: "{{ vikunja_task_events_basic_password if _feed | bool else omit }}"
     status_code: [200, 201]
     timeout: "{{ vikunja_api_timeout }}"
-  when: >-
-    vikunja_task_webhook.target_url not in
-    (vikunja_task_webhook_current.json | default([], true) | map(attribute='target_url') | list)
+  when: _matches | length == 0
   changed_when: true
   no_log: true
+  vars:
+    _feed: "{{ vikunja_task_webhook.task_events | default(false) | bool }}"
+    _matches: >-
+      {{ vikunja_task_webhook_current.json | default([], true)
+         | selectattr('target_url', 'equalto', vikunja_task_webhook.target_url) | list }}
 
-# Readback: the API never returns the secret, so the proof is the target and
-# its events. The GET runs in check mode too (check_mode: false), so a check
-# run still lists what is there; the assert below is skipped there, which
-# cannot verify a webhook the skipped create did not make.
+# Update only a webhook whose target matches ours. The API does not return the
+# Basic password, so password rotation cannot be compared from readback.
+- name: "Update the task-event webhook that drifted on project {{ vikunja_task_webhook.project_id }}"
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ vikunja_port }}/api/v1/projects/{{
+      vikunja_task_webhook.project_id }}/webhooks/{{ (_matches | first).id }}
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ vikunja_task_events_login.json.token }}"
+    body_format: json
+    body:
+      target_url: "{{ vikunja_task_webhook.target_url }}"
+      events: "{{ vikunja_task_webhook.events }}"
+      basic_auth_user: "{{ vikunja_task_events_basic_user }}"
+      basic_auth_password: "{{ vikunja_task_events_basic_password }}"
+    status_code: [200, 201]
+    timeout: "{{ vikunja_api_timeout }}"
+  when:
+    - vikunja_task_webhook.task_events | default(false) | bool
+    - _matches | length == 1
+    - >-
+      ((_matches | first).events | default([], true) | sort)
+      != (vikunja_task_webhook.events | sort)
+      or (_matches | first).basic_auth_user | default('', true)
+      != vikunja_task_events_basic_user
+  changed_when: true
+  no_log: true
+  vars:
+    _matches: >-
+      {{ vikunja_task_webhook_current.json | default([], true)
+         | selectattr('target_url', 'equalto', vikunja_task_webhook.target_url) | list }}
+
+# Readback: the API never returns the signing secret or Basic password, so the
+# proof is the target, events and Basic user. The GET runs in check mode too;
+# the assert is skipped there because a check run skips writes.
 - name: "Read back the webhooks on project {{ vikunja_task_webhook.project_id }}"
   ansible.builtin.uri:
     url: "http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_task_webhook.project_id }}/webhooks"
     method: GET
     headers:
-      Authorization: "Bearer {{ vikunja_task_webhook_login.json.token }}"
+      Authorization: >-
+        Bearer {{ vikunja_task_events_login.json.token
+                  if vikunja_task_webhook.task_events | default(false) | bool
+                  else vikunja_task_webhook_login.json.token }}
     status_code: [200]
     timeout: "{{ vikunja_api_timeout }}"
   register: vikunja_task_webhook_readback
@@ -76,9 +124,13 @@
       - >-
         (_matches | first).events | default([], true) | sort
         == vikunja_task_webhook.events | sort
+      - >-
+        not (vikunja_task_webhook.task_events | default(false) | bool)
+        or (_matches | first).basic_auth_user | default('', true)
+           == vikunja_task_events_basic_user
     fail_msg: >-
       Project {{ vikunja_task_webhook.project_id }} has {{ _matches | length }} webhook(s) for the
-      declared target; events must equal {{ vikunja_task_webhook.events | sort }}.
+      declared target; events and Basic user must match the declaration.
     quiet: true
   vars:
     _matches: >-

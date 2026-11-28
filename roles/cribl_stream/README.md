@@ -240,6 +240,17 @@ while only `critical` events reach the direct Slack webhook through
 `grafana_alerts_slack` as a readable one-line summary. That direct leg keeps
 its existing persistent-queue and backpressure settings.
 
+### Vikunja task events
+
+`cribl_stream_vikunja_task_events_enabled` defaults to false. When enabled, the
+HTTP source accepts one Basic sign-on built from `VIKUNJA_TASK_EVENTS_PASSWORD`, routes compact
+project task events to a dedicated Splunk HEC destination, keeps event time,
+actor, task and project IDs, and trims task titles and comment text to 200
+characters. `service_ports.vikunja_task_events` supplies the listener port. The
+pipeline's suppress function turns the 20 MiB daily cap into an hourly event
+count (cap / 24 / 2,048 bytes per event) and drops events past it. The count
+is per worker process.
+
 ## Tasks
 
 - Install Cribl Stream package
