@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.91.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.90.0...v5.91.0) (2026-11-28)
+
+
+### Features
+
+* **vikunja:** enable the eleven agent roles ([#4079](https://github.com/dryvist/ansible-proxmox-apps/issues/4079)) ([9110cb3](https://github.com/dryvist/ansible-proxmox-apps/commit/9110cb38123e4350c564742984502857e4962e73))
+
 ## [5.90.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.89.0...v5.90.0) (2026-11-28)
 
 
