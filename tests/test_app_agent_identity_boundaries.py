@@ -140,7 +140,9 @@ def test_every_token_or_password_variable_in_app_tasks_is_no_log():
 
 def test_zammad_tracker_agents_get_their_own_users_tokens_and_exact_group_access():
     defaults = _defaults("zammad")
-    assert defaults["zammad_clerk_groups"] == ["{{ zammad_groups[0] }}"]
+    assert defaults["zammad_clerk_groups"] == ["{{ zammad_groups[0] }}", "Acceptance"]
+    assert "Acceptance" in defaults["zammad_groups"]
+    assert "Acceptance" not in defaults["zammad_agent_write_groups"]
     assert defaults["zammad_triage_api_token"] == "{{ lookup('env', 'ZAMMAD_TRIAGE_API_TOKEN') }}"
     assert defaults["zammad_clerk_api_token"] == "{{ lookup('env', 'ZAMMAD_CLERK_API_TOKEN') }}"
     users = (ROOT / "roles/zammad/files/zammad_bootstrap/10-admin-and-users.rb").read_text()
