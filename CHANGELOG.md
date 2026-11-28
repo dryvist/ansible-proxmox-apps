@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.91.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.91.2...v5.91.3) (2026-11-28)
+
+
+### Bug Fixes
+
+* **vikunja:** retry a sign-in the per-minute limit refused ([#4091](https://github.com/dryvist/ansible-proxmox-apps/issues/4091)) ([b000b90](https://github.com/dryvist/ansible-proxmox-apps/commit/b000b9050c94dacb99b2eb90be3b8c4483a2b62e))
+
 ## [5.91.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.91.1...v5.91.2) (2026-11-28)
 
 
