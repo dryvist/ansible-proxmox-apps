@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.85.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.84.1...v5.85.0) (2026-11-28)
+
+
+### Features
+
+* **vikunja:** declare tracker labels and kanban buckets ([#4054](https://github.com/dryvist/ansible-proxmox-apps/issues/4054)) ([85ddd87](https://github.com/dryvist/ansible-proxmox-apps/commit/85ddd87f2f2a6dab9e47b548fb048c05429cf2c4))
+
 ## [5.84.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.84.0...v5.84.1) (2026-11-28)
 
 
