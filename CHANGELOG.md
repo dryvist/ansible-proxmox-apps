@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.91.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.91.3...v5.91.4) (2026-11-28)
+
+
+### Bug Fixes
+
+* **youtrack:** use collection release v0.7.1 ([#4095](https://github.com/dryvist/ansible-proxmox-apps/issues/4095)) ([ab345a7](https://github.com/dryvist/ansible-proxmox-apps/commit/ab345a752638b65d7768e0e577b724a2afdb8ca4))
+
 ## [5.91.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.91.2...v5.91.3) (2026-11-28)
 
 
