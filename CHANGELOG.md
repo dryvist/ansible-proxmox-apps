@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.89.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.88.1...v5.89.0) (2026-11-28)
+
+
+### Features
+
+* **vikunja:** share each role's projects with its bot by a per-project right map ([#4073](https://github.com/dryvist/ansible-proxmox-apps/issues/4073)) ([657366c](https://github.com/dryvist/ansible-proxmox-apps/commit/657366c3c7c212437a055bd0933f34cea299e435))
+
+
+### Bug Fixes
+
+* **openhands:** install through the PyPI cache simple index path ([#4074](https://github.com/dryvist/ansible-proxmox-apps/issues/4074)) ([e0c17d8](https://github.com/dryvist/ansible-proxmox-apps/commit/e0c17d8fd544274796294a28e647d4e6e0aab4d7))
+* **openhands:** install through the PyPI cache's simple index path ([e0c17d8](https://github.com/dryvist/ansible-proxmox-apps/commit/e0c17d8fd544274796294a28e647d4e6e0aab4d7))
+
 ## [5.88.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.88.0...v5.88.1) (2026-11-28)
 
 
