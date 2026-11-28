@@ -1,0 +1,25 @@
+---
+- name: Merge environment project IDs into the named agent project sets
+  ansible.builtin.set_fact:
+    vikunja_agent_project_sets: >-
+      {{ vikunja_agent_project_sets
+         | combine(lookup('env', 'VIKUNJA_AGENT_PROJECT_SETS')
+                   | default('{}', true) | from_json) }}
+  no_log: true
+
+- name: Reject unknown Vikunja agent project set names
+  ansible.builtin.assert:
+    that:
+      - item in ['domain', 'work', 'inbox', 'windows', 'jobs', 'hermes_board', 'donna_board', 'acceptance']
+    fail_msg: "Unknown Vikunja agent project set '{{ item }}'."
+    quiet: true
+  loop: "{{ vikunja_agent_project_sets.keys() | list }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Reconcile shares for each enabled Vikunja agent role
+  ansible.builtin.include_tasks: agent_role_share_reconcile.yml
+  loop: "{{ vikunja_agent_roles_active }}"
+  loop_control:
+    loop_var: vikunja_agent_role
+    label: "{{ vikunja_agent_role.role }}"
