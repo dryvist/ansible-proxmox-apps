@@ -229,7 +229,7 @@ class OpenHandsRouterLLM(unittest.TestCase):
             defaults["openhands_router_base_url"],
             "https://llm.{{ ingress_domain }}/v1",
         )
-        self.assertEqual(defaults["openhands_router_model"], "small")
+        self.assertEqual(defaults["openhands_router_model"], "medium")
         text = UNIT.read_text(encoding="utf-8")
         self.assertNotIn("openhands_router_key_file", text)
         self.assertNotIn("LLM_API_KEY", text)
